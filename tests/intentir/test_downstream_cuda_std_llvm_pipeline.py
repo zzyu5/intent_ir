@@ -242,6 +242,34 @@ CASES = [
         ),
         {"M": 4, "N": 8},
     ),
+    (
+        "grouped_row_sum2d",
+        _intent(
+            {
+                "name": "grouped_row_sum2d",
+                "tensors": {
+                    "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "G"], "layout": "row_major"},
+                },
+                "ops": [
+                    {
+                        "op": "reshape",
+                        "inputs": ["inp"],
+                        "output": "inp_reshaped",
+                        "attrs": {"shape": ["M", "G", "GROUP_SIZE"]},
+                    },
+                    {
+                        "op": "reduce_sum",
+                        "inputs": ["inp_reshaped"],
+                        "output": "out",
+                        "attrs": {"dims": [2]},
+                    },
+                ],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "G": 2, "N": 8, "GROUP_SIZE": 4},
+    ),
 ]
 
 

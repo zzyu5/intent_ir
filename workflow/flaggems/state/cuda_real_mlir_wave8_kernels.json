@@ -43,6 +43,7 @@
     "gather2d",
     "ge2d",
     "gelu2d",
+    "grouped_row_sum2d",
     "gt2d",
     "hstack2d",
     "identity2d",

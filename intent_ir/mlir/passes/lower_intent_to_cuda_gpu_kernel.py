@@ -1597,6 +1597,7 @@ def lower_intent_to_cuda_gpu_kernel(
     row_reduce_any_axis1: dict[str, Any] | None = None
     row_softmax_axis1: dict[str, Any] | None = None
     row_masked_softmax_axis1: dict[str, Any] | None = None
+    row_grouped_row_sum2d: dict[str, Any] | None = None
     row_layer_norm_persistent: dict[str, Any] | None = None
     row_layer_norm_residual2d: dict[str, Any] | None = None
     row_rms_norm2d: dict[str, Any] | None = None
@@ -1837,6 +1838,69 @@ def lower_intent_to_cuda_gpu_kernel(
                             "out": str(out_name),
                             "reduce_n": int(out_n),
                         }
+
+    # Grouped row sum (reshape+reduce): out[m, g] = sum_k inp[m, g*group_size + k]
+    #
+    # Intent pattern (Triton native):
+    #   reshape inp[M,N] -> inp_reshaped[M,G,GROUP_SIZE]
+    #   reduce_sum(axis=2) -> out[M,G]
+    if intent_name == "grouped_row_sum2d" and out_rank == 2 and out_m is not None and out_n is not None:
+        ops = list(intent.ops or [])
+        if len(ops) == 2:
+            op0, op1 = ops[0], ops[1]
+            if str(getattr(op0, "op", "")).strip() == "reshape" and str(getattr(op1, "op", "")).strip() == "reduce_sum":
+                red_attrs = dict(getattr(op1, "attrs", {}) or {})
+                dims_raw = red_attrs.get("dims")
+                dims_list = list(dims_raw) if isinstance(dims_raw, list) else []
+                axis_raw = red_attrs.get("axis")
+                axis_i = None
+                try:
+                    if axis_raw is not None:
+                        axis_i = int(axis_raw)
+                except Exception:
+                    axis_i = None
+                if dims_list == [2] or axis_i == 2:
+                    if "inp" in arg_specs and str(out_name) in arg_specs:
+                        in_dims = list(arg_specs["inp"].get("dims") or [])
+                        out_dims2 = list(arg_specs[str(out_name)].get("dims") or [])
+                        if len(in_dims) == 2 and len(out_dims2) == 2:
+                            in_m, in_n = int(in_dims[0]), int(in_dims[1])
+                            out_m2, out_g = int(out_dims2[0]), int(out_dims2[1])
+                            if in_m != int(out_m) or out_m2 != int(out_m) or out_g != int(out_n):
+                                raise RuntimeError(
+                                    "grouped_row_sum2d shape mismatch: "
+                                    f"inp_dims={in_dims} out_dims={out_dims2} expected_out=[{out_m},{out_n}]"
+                                )
+                            if str(arg_specs["inp"].get("memref_elem_ty")) != "f32" or str(
+                                arg_specs[str(out_name)].get("memref_elem_ty")
+                            ) != "f32":
+                                raise RuntimeError("grouped_row_sum2d expects f32 inp/out tensors")
+                            if int(out_g) <= 0 or int(in_n) <= 0:
+                                raise RuntimeError(f"grouped_row_sum2d expects positive dims (G={out_g}, N={in_n})")
+                            if int(in_n) % int(out_g) != 0:
+                                raise RuntimeError(
+                                    "grouped_row_sum2d expects N divisible by G "
+                                    f"(N={in_n}, G={out_g}, N%G={int(in_n)%int(out_g)})"
+                                )
+                            group_size = int(int(in_n) // int(out_g))
+                            gs_bind = bindings.get("GROUP_SIZE")
+                            if gs_bind is not None:
+                                try:
+                                    if int(gs_bind) != int(group_size):
+                                        raise RuntimeError(
+                                            "grouped_row_sum2d GROUP_SIZE binding mismatch: "
+                                            f"binding={int(gs_bind)} inferred={int(group_size)}"
+                                        )
+                                except Exception:
+                                    pass
+                            row_grouped_row_sum2d = {
+                                "inp": "inp",
+                                "out": str(out_name),
+                                "M": int(out_m),
+                                "G": int(out_g),
+                                "N": int(in_n),
+                                "GROUP_SIZE": int(group_size),
+                            }
 
     # Row-wise norms (multi-output): implement as dedicated kernels instead of
     # trying to interpret the full op graph.
@@ -2164,6 +2228,84 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %e = math.exp %xc{fm} : f32")
         lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
         lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif row_grouped_row_sum2d is not None:
+        kernel_kind = "grouped_row_sum_axis2_v1"
+        assert out_m is not None
+        assert out_n is not None
+
+        inp_name = str(row_grouped_row_sum2d.get("inp") or "inp")
+        out_name2 = str(row_grouped_row_sum2d.get("out") or out_name)
+        in_n = int(row_grouped_row_sum2d.get("N") or 0)
+        group_size = int(row_grouped_row_sum2d.get("GROUP_SIZE") or 0)
+        out_g = int(row_grouped_row_sum2d.get("G") or int(out_n))
+        total_out = int(out_total)
+        if in_n <= 0 or group_size <= 0 or out_g <= 0:
+            raise RuntimeError(
+                "grouped_row_sum2d invalid dims: "
+                f"N={in_n} GROUP_SIZE={group_size} G={out_g} out_total={total_out}"
+            )
+
+        in_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        # One block per (row, group) output.
+        launch_override = {"block": [256, 1, 1], "grid": [int(total_out), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cTotal = arith.constant {int(total_out)} : index")
+        lines.append(f"      %cG = arith.constant {int(out_g)} : index")
+        lines.append(f"      %cN = arith.constant {int(in_n)} : index")
+        lines.append(f"      %cGS = arith.constant {int(group_size)} : index")
+        lines.append("      %pred = arith.cmpi ult, %bid, %cTotal : index")
+        lines.append("      scf.if %pred {")
+        lines.append("        %row = arith.divui %bid, %cG : index")
+        lines.append("        %grp = arith.remui %bid, %cG : index")
+        lines.append("        %row_off = arith.muli %row, %cN : index")
+        lines.append("        %grp_off = arith.muli %grp, %cGS : index")
+        lines.append("        %base = arith.addi %row_off, %grp_off : index")
+
+        # partial sum
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %partial_sum = scf.for %k = %tid to %cGS step %bdim iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %k : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %acc_next = arith.addf %acc, %x{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xf32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        memref.store %partial_sum, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_sum_{stride}"
+            pS = f"%pS_sum_{stride}"
+            tid2 = f"%tid_sum_{stride}"
+            a = f"%a_sum_{stride}"
+            b = f"%b_sum_{stride}"
+            s = f"%s_sum_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        %sumv = memref.load %sh[%c0] : memref<256xf32, 3>")
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is0 {")
+        lines.append(f"          memref.store %sumv, {arg_ssa[out_name2]}[%bid] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif row_layer_norm_persistent is not None:
