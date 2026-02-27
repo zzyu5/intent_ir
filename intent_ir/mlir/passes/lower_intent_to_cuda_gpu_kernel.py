@@ -1533,6 +1533,7 @@ def lower_intent_to_cuda_gpu_kernel(
     row_reduce_max_axis1: dict[str, Any] | None = None
     row_reduce_any_axis1: dict[str, Any] | None = None
     row_softmax_axis1: dict[str, Any] | None = None
+    row_masked_softmax_axis1: dict[str, Any] | None = None
     if out_rank in {1, 2}:
         red_sum_ops: list[tuple[int, Any]] = []
         red_max_ops: list[tuple[int, Any]] = []
@@ -1714,6 +1715,62 @@ def lower_intent_to_cuda_gpu_kernel(
                                             "reduce_n": int(out_n),
                                         }
 
+    # Pattern: masked_softmax2d (triton-native) -> fuse mask+softmax in one kernel.
+    #
+    # Intent graph typically materializes:
+    #   cast(mask)->broadcast->where(mask, inp, -1e9)->softmax(axis=1)
+    #
+    # We avoid depending on the exact SSA names and just require:
+    # - kernel name matches
+    # - external inputs include `inp` (f32 [M,N]) and `mask` ([N] int/bool)
+    # - the final op is a softmax(axis=1) producing the output
+    if str(kernel_name) == "masked_softmax2d" and out_rank == 2 and out_m is not None and out_n is not None:
+        ops = list(intent.ops or [])
+        # Backend legalize currently decomposes softmax into reduce_max/reduce_sum,
+        # so do not rely on the presence of an explicit `softmax` op.
+        seen_max = False
+        seen_sum = False
+        for op in ops:
+            name = str(getattr(op, "op", "")).strip()
+            if name not in {"reduce_max", "reduce_sum"}:
+                continue
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            dims = list(attrs.get("dims") or []) if isinstance(attrs.get("dims"), list) else []
+            if dims != [1]:
+                continue
+            if name == "reduce_max":
+                seen_max = True
+            elif name == "reduce_sum":
+                seen_sum = True
+        if seen_max and seen_sum and "inp" in arg_specs and "mask" in arg_specs and str(out_name) in arg_specs:
+            in_tt = (intent.tensors or {}).get("inp")
+            out_tt = (intent.tensors or {}).get(str(out_name))
+            mask_tt = (intent.tensors or {}).get("mask")
+            if in_tt is not None and out_tt is not None and mask_tt is not None:
+                in_shape = list(getattr(in_tt, "shape", []) or [])
+                out_shape = list(getattr(out_tt, "shape", []) or [])
+                mask_shape = list(getattr(mask_tt, "shape", []) or [])
+                if (
+                    len(in_shape) == 2
+                    and len(out_shape) == 2
+                    and len(mask_shape) == 1
+                    and _resolve_dim_int(in_shape[0], bindings) == int(out_m)
+                    and _resolve_dim_int(in_shape[1], bindings) == int(out_n)
+                    and _resolve_dim_int(out_shape[0], bindings) == int(out_m)
+                    and _resolve_dim_int(out_shape[1], bindings) == int(out_n)
+                    and _resolve_dim_int(mask_shape[0], bindings) == int(out_n)
+                ):
+                    in_ty = _dtype_to_mlir(str(getattr(in_tt, "dtype", "f32")))
+                    out_ty = _dtype_to_mlir(str(getattr(out_tt, "dtype", "f32")))
+                    mask_elem_ty = str(arg_specs["mask"].get("memref_elem_ty") or "")
+                    if in_ty == "f32" and out_ty == "f32" and mask_elem_ty in {"i8", "i32", "i64"}:
+                        row_masked_softmax_axis1 = {
+                            "inp": "inp",
+                            "mask": "mask",
+                            "out": str(out_name),
+                            "reduce_n": int(out_n),
+                        }
+
     # Assemble module text.
     launch_override: dict[str, Any] | None = None
     kernel_kind = "elementwise_v1"
@@ -1731,7 +1788,125 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  gpu.module @kernels {")
     gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
-    if row_softmax_axis1 is not None:
+    if row_masked_softmax_axis1 is not None:
+        kernel_kind = "row_masked_softmax_axis1_v1"
+        assert out_m is not None
+        assert out_n is not None
+        inp_name = str(row_masked_softmax_axis1["inp"])
+        mask_name = str(row_masked_softmax_axis1["mask"])
+        out_name2 = str(row_masked_softmax_axis1["out"])
+        red_n = int(row_masked_softmax_axis1["reduce_n"])
+        in_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        mask_memref = str(arg_specs[mask_name]["memref"])
+        mask_elem_ty = str(arg_specs[mask_name].get("memref_elem_ty") or "")
+
+        # One block per output row; compute masked max/sum reductions in shared memory.
+        launch_override = {"block": [256, 1, 1], "grid": [int(out_m), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(out_m)} : index")
+        lines.append(f"      %cN = arith.constant {int(red_n)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN : index")
+
+        # Mask constants: treat any non-zero value as true.
+        if mask_elem_ty not in {"i8", "i32", "i64"}:
+            raise RuntimeError(f"masked_softmax2d unsupported mask elem type: {mask_elem_ty}")
+        lines.append(f"        %mask0 = arith.constant 0 : {mask_elem_ty}")
+        lines.append("        %neg = arith.constant -1.0e9 : f32")
+
+        # partial max
+        lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
+        lines.append("        %partial_max = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %init_max) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %mraw = memref.load {arg_ssa[mask_name]}[%j] : {mask_memref}")
+        lines.append(f"          %m = arith.cmpi ne, %mraw, %mask0 : {mask_elem_ty}")
+        lines.append("          %mx = arith.select %m, %x, %neg : f32")
+        lines.append(f"          %acc_next = arith.maximumf %acc, %mx{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xf32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        memref.store %partial_max, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_max_{stride}"
+            pS = f"%pS_max_{stride}"
+            tid2 = f"%tid_max_{stride}"
+            a = f"%a_max_{stride}"
+            b = f"%b_max_{stride}"
+            s = f"%s_max_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.maximumf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        %maxv = memref.load %sh[%c0] : memref<256xf32, 3>")
+
+        # partial sum(exp(masked_x - max))
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %mraw = memref.load {arg_ssa[mask_name]}[%j] : {mask_memref}")
+        lines.append(f"          %m = arith.cmpi ne, %mraw, %mask0 : {mask_elem_ty}")
+        lines.append("          %mx = arith.select %m, %x, %neg : f32")
+        lines.append(f"          %xc = arith.subf %mx, %maxv{fm} : f32")
+        lines.append(f"          %e = math.exp %xc{fm} : f32")
+        lines.append(f"          %acc_next = arith.addf %acc, %e{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+
+        lines.append("        memref.store %partial_sum, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_sum_{stride}"
+            pS = f"%pS_sum_{stride}"
+            tid2 = f"%tid_sum_{stride}"
+            a = f"%a_sum_{stride}"
+            b = f"%b_sum_{stride}"
+            s = f"%s_sum_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        %sumv = memref.load %sh[%c0] : memref<256xf32, 3>")
+
+        # final output
+        lines.append("        scf.for %j = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %mraw = memref.load {arg_ssa[mask_name]}[%j] : {mask_memref}")
+        lines.append(f"          %m = arith.cmpi ne, %mraw, %mask0 : {mask_elem_ty}")
+        lines.append("          %mx = arith.select %m, %x, %neg : f32")
+        lines.append(f"          %xc = arith.subf %mx, %maxv{fm} : f32")
+        lines.append(f"          %e = math.exp %xc{fm} : f32")
+        lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
+        lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif row_softmax_axis1 is not None:
         kernel_kind = "row_softmax_axis1_v1"
         assert out_m is not None
         assert out_n is not None
