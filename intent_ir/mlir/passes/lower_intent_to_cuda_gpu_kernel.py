@@ -1482,12 +1482,24 @@ def lower_intent_to_cuda_gpu_kernel(
             if op_name == "where":
                 if len(in_ssa) != 3:
                     raise RuntimeError("where expects 3 inputs")
-                if in_ty[0] != "i1":
-                    raise RuntimeError(f"where condition must be bool/i1, got {in_ty[0]}")
+                cond_ssa = str(in_ssa[0])
+                cond_ty = str(in_ty[0])
+                if cond_ty != "i1":
+                    # Some providers materialize boolean masks as i32 (0/1). Treat any
+                    # non-zero value as true.
+                    if cond_ty in {"i8", "i32", "i64"}:
+                        c0 = _fresh("c0")
+                        out_lines.append(f"        {c0} = arith.constant 0 : {cond_ty}")
+                        cond_i1 = _fresh("cond")
+                        out_lines.append(f"        {cond_i1} = arith.cmpi ne, {cond_ssa}, {c0} : {cond_ty}")
+                        cond_ssa = cond_i1
+                        cond_ty = "i1"
+                    else:
+                        raise RuntimeError(f"where condition must be bool/i1, got {cond_ty}")
                 if in_ty[1] != "f32" or in_ty[2] != "f32":
                     raise RuntimeError("where currently supports f32 branches only")
                 dst = _fresh("where")
-                out_lines.append(f"        {dst} = arith.select {in_ssa[0]}, {in_ssa[1]}, {in_ssa[2]} : f32")
+                out_lines.append(f"        {dst} = arith.select {cond_ssa}, {in_ssa[1]}, {in_ssa[2]} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
