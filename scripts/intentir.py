@@ -214,6 +214,9 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             "--resume" if args.resume else "--no-resume",
             "--stream" if args.stream else "--no-stream",
         )
+        intent_artifact_dir = str(getattr(args, "gpu_perf_intent_artifact_dir", "") or "").strip()
+        if intent_artifact_dir:
+            cmd.extend(["--intent-artifact-dir", str(intent_artifact_dir)])
         if str(args.gpu_perf_policy_json).strip():
             cmd.extend(["--policy-json", str(args.gpu_perf_policy_json)])
         for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
