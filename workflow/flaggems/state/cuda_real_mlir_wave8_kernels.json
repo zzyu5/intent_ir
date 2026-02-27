@@ -85,6 +85,7 @@
     "row_all",
     "row_max",
     "row_mean",
+    "rowmask_where2d",
     "row_sum",
     "rsqrt2d",
     "sigmoid2d",
