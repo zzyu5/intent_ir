@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-27T15:33:49+00:00",
+  "updated_at": "2026-02-27T15:42:48+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "fb8f0d3 perf(cuda): assume memref alignment for vectorized real-mlir\n2db003d workflow: refresh state\nb1558eb fix(cuda): correct vector.splat syntax in real-mlir vectorize\n6c872d4 workflow: refresh state\n1625bc5 perf(cuda): vectorize f32 elementwise real-mlir kernels\n562b757 workflow: refresh state\n921817f perf(cuda): run opt -O3 in downstream LLVM pipelines\n6d88e2c workflow: refresh state\n28e8f8f perf(cuda): unroll elems per thread in real-mlir kernels\n8d338d7 workflow: refresh state\n386cbf0 pipeline(cuda): auto-detect SM for llc; stamp cuda_sm in artifacts\nca54a60 workflow: refresh state\n6a89b5d workflow(cuda): remove min2d from real-mlir wave2\n1b5744c workflow: refresh state\n8f50dc6 fix(cuda): preserve PTX arg order; support i1->i32 cast in real-mlir\n7331b05 fix(cuda): prefer std_llvm PTX contracts + minimal libdevice link\n42e2020 workflow: refresh state after cuda ptxas policy change\n51a67ae pipeline(cuda): make ptxas validation opt-in; optional libdevice linking\n38d6b8b workflow: refresh state after cuda real-mlir wave2 update\n635b29c backend(cuda,real-mlir): extend wave ops (const/math/cmp) + add wave2",
+  "git_log_short": "81505c3 perf(cuda): optional fastmath for real-mlir kernel lowering\n03f0164 workflow: refresh state\nfb8f0d3 perf(cuda): assume memref alignment for vectorized real-mlir\n2db003d workflow: refresh state\nb1558eb fix(cuda): correct vector.splat syntax in real-mlir vectorize\n6c872d4 workflow: refresh state\n1625bc5 perf(cuda): vectorize f32 elementwise real-mlir kernels\n562b757 workflow: refresh state\n921817f perf(cuda): run opt -O3 in downstream LLVM pipelines\n6d88e2c workflow: refresh state\n28e8f8f perf(cuda): unroll elems per thread in real-mlir kernels\n8d338d7 workflow: refresh state\n386cbf0 pipeline(cuda): auto-detect SM for llc; stamp cuda_sm in artifacts\nca54a60 workflow: refresh state\n6a89b5d workflow(cuda): remove min2d from real-mlir wave2\n1b5744c workflow: refresh state\n8f50dc6 fix(cuda): preserve PTX arg order; support i1->i32 cast in real-mlir\n7331b05 fix(cuda): prefer std_llvm PTX contracts + minimal libdevice link\n42e2020 workflow: refresh state after cuda ptxas policy change\n51a67ae pipeline(cuda): make ptxas validation opt-in; optional libdevice linking",
   "progress_tail": [
     {
       "ts": "2026-02-26T16:26:31+00:00",
