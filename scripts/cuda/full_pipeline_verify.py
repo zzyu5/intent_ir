@@ -15,12 +15,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.cuda.core import default_kernel_specs, run_pipeline_for_spec
+from pipeline.cuda.core import coverage_kernel_specs, default_kernel_specs, run_pipeline_for_spec
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", action="append", default=None, help="Run a single kernel by name (repeatable)")
+    ap.add_argument("--suite", choices=["smoke", "coverage"], default="smoke")
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default=None)
@@ -30,13 +31,19 @@ def main() -> None:
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "cuda_full_pipeline")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    suites = {
+        "smoke": default_kernel_specs,
+        "coverage": coverage_kernel_specs,
+    }
+    specs = list(suites[str(args.suite)]())
+
     if args.list:
-        for s in default_kernel_specs():
+        for s in specs:
             print(s.name)
         return
     wanted = set(args.kernel or [])
 
-    for spec in default_kernel_specs():
+    for spec in specs:
         if wanted and spec.name not in wanted:
             continue
         print(f"\n=== {spec.name} ===")
