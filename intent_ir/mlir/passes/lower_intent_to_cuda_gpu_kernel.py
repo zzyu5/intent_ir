@@ -640,11 +640,25 @@ def lower_intent_to_cuda_gpu_kernel(
         )
         return out_lines
 
-    def _emit_elementwise_for_index(idx_ssa: str) -> list[str]:
+    def _emit_elementwise_for_index(
+        idx_ssa: str,
+        *,
+        precomputed: dict[str, tuple[str, str]] | None = None,
+        skip_rank2_outputs: bool = False,
+    ) -> list[str]:
         loaded: dict[str, str] = {}
         loaded_ty: dict[str, str] = {}
         computed: dict[str, str] = {}
         computed_ty: dict[str, str] = {}
+
+        if precomputed:
+            for name, pair in dict(precomputed).items():
+                if not (isinstance(pair, tuple) and len(pair) == 2):
+                    continue
+                ssa, ty = str(pair[0]), str(pair[1])
+                if ssa and ty:
+                    computed[str(name)] = ssa
+                    computed_ty[str(name)] = ty
 
         row_ssa = ""
         col_ssa = ""
@@ -812,6 +826,17 @@ def lower_intent_to_cuda_gpu_kernel(
             attrs = dict(getattr(op, "attrs", {}) or {})
             if not op_name or not outv:
                 raise RuntimeError("invalid op in intent")
+
+            if skip_rank2_outputs:
+                tt_out = (intent.tensors or {}).get(outv)
+                out_shape_raw = list(getattr(tt_out, "shape", []) or []) if tt_out is not None else []
+                if len(out_shape_raw) > 1:
+                    continue
+
+            if op_name in {"reduce_sum", "reduce_prod", "reduce_max", "reduce_min", "reduce_any", "reduce_all"}:
+                if outv in computed:
+                    continue
+                raise RuntimeError(f"unsupported reduction op in cuda real-mlir wave: {op_name}")
 
             # Non-elementwise ops: handle explicit indexing first so we don't try to
             # load broadcast="none" tensors with elementwise rules.
@@ -1447,7 +1472,42 @@ def lower_intent_to_cuda_gpu_kernel(
         out_lines.append(f"        memref.store {store_ssa}, {arg_ssa[str(out_name)]}[{idx_ssa}] : {out_memref}")
         return out_lines
 
+    row_reduce_sum_axis1: dict[str, Any] | None = None
+    if out_rank == 1:
+        red_ops: list[tuple[int, Any]] = []
+        for i, op in enumerate(list(intent.ops or [])):
+            if str(getattr(op, "op", "")).strip() == "reduce_sum":
+                red_ops.append((int(i), op))
+        if len(red_ops) == 1:
+            red_op_idx, red_op = red_ops[0]
+            red_out = str(getattr(red_op, "output", "")).strip()
+            red_inputs = [str(x) for x in list(getattr(red_op, "inputs", []) or []) if str(x).strip()]
+            red_attrs = dict(getattr(red_op, "attrs", {}) or {})
+            dims = red_attrs.get("dims")
+            dims_list = list(dims) if isinstance(dims, list) else []
+            if dims_list == [1] and red_out and len(red_inputs) == 1:
+                red_in = str(red_inputs[0])
+                red_in_tt = (intent.tensors or {}).get(red_in)
+                red_out_tt = (intent.tensors or {}).get(red_out)
+                if red_in_tt is not None and red_out_tt is not None:
+                    red_in_shape = list(getattr(red_in_tt, "shape", []) or [])
+                    red_out_shape = list(getattr(red_out_tt, "shape", []) or [])
+                    if len(red_in_shape) == 2 and len(red_out_shape) == 1:
+                        m0 = _resolve_dim_int(red_in_shape[0], bindings)
+                        n0 = _resolve_dim_int(red_in_shape[1], bindings)
+                        if m0 == int(out_total) and n0 is not None and int(n0) > 0:
+                            red_out_ty = _dtype_to_mlir(str(getattr(red_out_tt, "dtype", "f32")))
+                            if red_out_ty == "f32":
+                                row_reduce_sum_axis1 = {
+                                    "op_index": int(red_op_idx),
+                                    "red_in": str(red_in),
+                                    "red_out": str(red_out),
+                                    "reduce_n": int(n0),
+                                }
+
     # Assemble module text.
+    launch_override: dict[str, Any] | None = None
+    kernel_kind = "elementwise_v1"
     lines: list[str] = []
     lines.append("module attributes {")
     lines.append("  gpu.container_module,")
@@ -1459,51 +1519,276 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("} {")
     lines.append("  gpu.module @kernels {")
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
-    lines.append("      %tid = gpu.thread_id x")
-    lines.append("      %bid = gpu.block_id x")
-    lines.append("      %bdim = gpu.block_dim x")
-    lines.append("      %tmp = arith.muli %bid, %bdim : index")
-    lines.append("      %lin = arith.addi %tmp, %tid : index")
-    lines.append("      %c0 = arith.constant 0 : index")
-    if need_out_rowcol:
-        assert out_n is not None
-        lines.append(f"      %cN = arith.constant {int(out_n)} : index")
-    lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
-    if elems_per_thread == 1:
-        idx_ssa = "%lin"
-        lines.append(f"      %pred = arith.cmpi ult, {idx_ssa}, %c_total : index")
-        lines.append("      scf.if %pred {")
-        lines.extend(_emit_elementwise_for_index(idx_ssa))
+    if row_reduce_sum_axis1 is not None:
+        kernel_kind = "row_reduce_sum_axis1_v1"
+        # One block per output row; let each block reduce across the N dimension.
+        # This keeps global loads coalesced (threads iterate columns).
+        launch_override = {"block": [256, 1, 1], "grid": [int(out_total), 1, 1]}
+
+        red_in = str(row_reduce_sum_axis1["red_in"])
+        red_out = str(row_reduce_sum_axis1["red_out"])
+        red_op_index = int(row_reduce_sum_axis1["op_index"])
+        red_n = int(row_reduce_sum_axis1["reduce_n"])
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(out_total)} : index")
+        lines.append(f"      %cN_red = arith.constant {int(red_n)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN_red : index")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        # Per-thread partial sum.
+        lines.append("        %partial = scf.for %j = %tid to %cN_red step %bdim iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+
+        # Pre-reduction elementwise evaluation up to the reduce_sum op (limited subset).
+        elem_lines: list[str] = []
+        computed: dict[str, str] = {}
+        computed_ty: dict[str, str] = {}
+        loaded: dict[str, str] = {}
+        loaded_ty: dict[str, str] = {}
+
+        def _infer_elem_ty(name: str) -> str:
+            if name in computed_ty:
+                return str(computed_ty[name])
+            if name in loaded_ty:
+                return str(loaded_ty[name])
+            tt = (intent.tensors or {}).get(name)
+            if tt is None:
+                return "f32"
+            return _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
+
+        def _load_elem(name: str) -> str:
+            if name in computed:
+                return computed[name]
+            if name in loaded:
+                return loaded[name]
+            spec = arg_specs.get(name)
+            if spec is None:
+                raise RuntimeError(f"unknown tensor referenced in row-reduce: {name}")
+            dims = list(spec.get("dims") or [])
+            idx = "%idx"
+            if bool(spec.get("scalar")) or len(dims) == 0:
+                idx = "%c0"
+            elif len(dims) == 1 and int(dims[0]) == int(out_total):
+                idx = "%bid"
+            elif len(dims) == 1 and int(dims[0]) == int(red_n):
+                idx = "%j"
+            elif len(dims) == 2 and int(dims[0]) == int(out_total) and int(dims[1]) == int(red_n):
+                idx = "%idx"
+            else:
+                raise RuntimeError(
+                    "row-reduce supports only scalar/[M]/[N]/[M,N] external tensors; "
+                    f"tensor={name} dims={dims} M={int(out_total)} N={int(red_n)}"
+                )
+            memref = str(spec["memref"])
+            memref_elem_ty = str(spec.get("memref_elem_ty") or "")
+            scalar_ty = str(spec.get("scalar_ty") or "")
+            ssa_loaded = _fresh(f"{name}_loaded")
+            ssa_value = _fresh(f"{name}_v")
+            elem_lines.append(f"          {ssa_loaded} = memref.load {arg_ssa[str(name)]}[{idx}] : {memref}")
+            if scalar_ty and memref_elem_ty and scalar_ty != memref_elem_ty:
+                if scalar_ty == "i1" and memref_elem_ty == "i8":
+                    c0i8 = _fresh("c0i8")
+                    elem_lines.append(f"          {c0i8} = arith.constant 0 : i8")
+                    elem_lines.append(f"          {ssa_value} = arith.cmpi ne, {ssa_loaded}, {c0i8} : i8")
+                    loaded[name] = ssa_value
+                    loaded_ty[name] = "i1"
+                    return ssa_value
+                raise RuntimeError(
+                    "unsupported memref->scalar conversion in row-reduce: "
+                    f"{memref_elem_ty} -> {scalar_ty} for tensor={name}"
+                )
+            loaded[name] = ssa_loaded
+            loaded_ty[name] = scalar_ty or memref_elem_ty or "f32"
+            return ssa_loaded
+
+        def _coerce_elem(ssa: str, src_ty: str, dst_ty: str) -> str:
+            if src_ty == dst_ty:
+                return ssa
+            out = _fresh("cast")
+            if src_ty in {"f16", "bf16"} and dst_ty == "f32":
+                elem_lines.append(f"          {out} = arith.extf {ssa} : {src_ty} to f32")
+                return out
+            if src_ty == "f32" and dst_ty in {"f16", "bf16"}:
+                elem_lines.append(f"          {out} = arith.truncf {ssa} : f32 to {dst_ty}")
+                return out
+            if src_ty == "i1" and dst_ty in {"i32", "i64"}:
+                elem_lines.append(f"          {out} = arith.extui {ssa} : i1 to {dst_ty}")
+                return out
+            if src_ty in {"i32", "i64"} and dst_ty == "f32":
+                elem_lines.append(f"          {out} = arith.sitofp {ssa} : {src_ty} to f32")
+                return out
+            if src_ty == "f32" and dst_ty in {"i32", "i64"}:
+                elem_lines.append(f"          {out} = arith.fptosi {ssa} : f32 to {dst_ty}")
+                return out
+            if src_ty == "i32" and dst_ty == "i64":
+                elem_lines.append(f"          {out} = arith.extsi {ssa} : i32 to i64")
+                return out
+            if src_ty == "i64" and dst_ty == "i32":
+                elem_lines.append(f"          {out} = arith.trunci {ssa} : i64 to i32")
+                return out
+            raise RuntimeError(f"unsupported cast in row-reduce: {src_ty} -> {dst_ty}")
+
+        def _value_elem(name: str) -> tuple[str, str]:
+            if name in computed:
+                return computed[name], str(computed_ty[name])
+            v = _load_elem(name)
+            return v, _infer_elem_ty(name)
+
+        # Evaluate ops up to reduce_sum to materialize `red_in` at this element.
+        for op in list(intent.ops or [])[:red_op_index]:
+            op_name = str(getattr(op, "op", "")).strip()
+            inputs = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+            outv = str(getattr(op, "output", "")).strip()
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            if not op_name or not outv:
+                raise RuntimeError("invalid op in intent (row-reduce pre-eval)")
+            if op_name == "const":
+                if inputs:
+                    raise RuntimeError("const expects 0 inputs")
+                out_ty = _infer_elem_ty(outv)
+                dst = _fresh("const")
+                if out_ty in {"i32", "i64"}:
+                    iv = _resolve_symbolic_int(attrs.get("value"))
+                    elem_lines.append(f"          {dst} = arith.constant {int(iv)} : {out_ty}")
+                elif out_ty == "f32":
+                    raw = attrs.get("value")
+                    sym_iv = _resolve_dim_int(raw, bindings)
+                    if sym_iv is not None:
+                        raw = float(sym_iv)
+                    elem_lines.append(f"          {dst} = arith.constant {_as_f32_const(raw)} : f32")
+                else:
+                    raise RuntimeError(f"const unsupported dtype in row-reduce: {out_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = out_ty
+                continue
+            if op_name == "cast":
+                if len(inputs) != 1:
+                    raise RuntimeError("cast expects 1 input")
+                src_v, src_ty = _value_elem(inputs[0])
+                to_ty = _dtype_to_mlir(str(attrs.get("to") or _infer_elem_ty(outv) or "f32"))
+                dst = _coerce_elem(src_v, src_ty, str(to_ty))
+                computed[outv] = dst
+                computed_ty[outv] = str(to_ty)
+                continue
+            if op_name in {"identity", "reshape", "broadcast_in_dim"}:
+                if len(inputs) != 1:
+                    raise RuntimeError(f"{op_name} expects 1 input")
+                src_v, src_ty = _value_elem(inputs[0])
+                computed[outv] = src_v
+                computed_ty[outv] = src_ty
+                continue
+            if op_name in {"add", "sub", "mul", "div"}:
+                if len(inputs) != 2:
+                    raise RuntimeError(f"{op_name} expects 2 inputs")
+                a_v, a_ty = _value_elem(inputs[0])
+                b_v, b_ty = _value_elem(inputs[1])
+                out_ty = _infer_elem_ty(outv)
+                if out_ty != "f32":
+                    raise RuntimeError(f"{op_name} row-reduce pre-eval supports f32 outputs only (out_ty={out_ty})")
+                a = _coerce_elem(a_v, a_ty, "f32")
+                b = _coerce_elem(b_v, b_ty, "f32")
+                dst = _fresh(op_name)
+                arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
+                elem_lines.append(f"          {dst} = {arith} {a}, {b}{fm} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+            raise RuntimeError(f"unsupported op in row-reduce pre-eval: {op_name}")
+
+        val_ssa, val_ty = _value_elem(red_in)
+        if val_ty != "f32":
+            raise RuntimeError(f"row-reduce expects f32 reduction input, got {val_ty} for {red_in}")
+        elem_lines.append(f"          %acc_next = arith.addf %acc, {val_ssa}{fm} : f32")
+        elem_lines.append("          scf.yield %acc_next : f32")
+
+        lines.extend(elem_lines)
+        lines.append("        }")
+
+        # Shared-memory reduce across threads in the block (assume block.x==256).
+        lines.append("        %sh = memref.alloca() : memref<256xf32, 3>")
+        lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_{stride}"
+            pS = f"%pS_{stride}"
+            tid2 = f"%tid_{stride}"
+            a = f"%a_{stride}"
+            b = f"%b_{stride}"
+            s = f"%s_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is0 {")
+        lines.append("          %sum0 = memref.load %sh[%c0] : memref<256xf32, 3>")
+        body_lines = _emit_elementwise_for_index(
+            "%bid",
+            precomputed={red_out: ("%sum0", "f32")},
+            skip_rank2_outputs=True,
+        )
+        for l in body_lines:
+            lines.append("  " + l)
+        lines.append("        }")
         lines.append("      }")
     else:
-        lines.append(f"      %c_elems = arith.constant {int(elems_per_thread)} : index")
-        lines.append("      %base = arith.muli %lin, %c_elems : index")
-        if vectorize:
-            # Assume base pointer alignment to unlock aligned vector memory ops
-            # downstream (load/store <N x f32>). Since %base is a multiple of
-            # elems_per_thread, this is safe for contiguous tensors.
-            align_bytes = int(elems_per_thread) * 4
-            for name, spec in arg_specs.items():
-                aligned = f"%{_mlir_ident(name)}_aligned"
-                original = f"%{_mlir_ident(name)}"
-                memref_ty = str(spec["memref"])
-                lines.append(f"      {aligned} = memref.assume_alignment {original}, {align_bytes} : {memref_ty}")
-                arg_ssa[str(name)] = str(aligned)
-            lines.append("      %pred_vec = arith.cmpi ult, %base, %c_total : index")
-            lines.append("      scf.if %pred_vec {")
-            lines.extend(_emit_elementwise_vector_for_base("%base"))
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        if need_out_rowcol:
+            assert out_n is not None
+            lines.append(f"      %cN = arith.constant {int(out_n)} : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        if elems_per_thread == 1:
+            idx_ssa = "%lin"
+            lines.append(f"      %pred = arith.cmpi ult, {idx_ssa}, %c_total : index")
+            lines.append("      scf.if %pred {")
+            lines.extend(_emit_elementwise_for_index(idx_ssa))
             lines.append("      }")
         else:
-            for lane in range(int(elems_per_thread)):
-                lane_c = f"%c_lane_{lane}"
-                lane_i = f"%i_{lane}"
-                lane_p = f"%pred_{lane}"
-                lines.append(f"      {lane_c} = arith.constant {int(lane)} : index")
-                lines.append(f"      {lane_i} = arith.addi %base, {lane_c} : index")
-                lines.append(f"      {lane_p} = arith.cmpi ult, {lane_i}, %c_total : index")
-                lines.append(f"      scf.if {lane_p} {{")
-                lines.extend(_emit_elementwise_for_index(lane_i))
+            lines.append(f"      %c_elems = arith.constant {int(elems_per_thread)} : index")
+            lines.append("      %base = arith.muli %lin, %c_elems : index")
+            if vectorize:
+                # Assume base pointer alignment to unlock aligned vector memory ops
+                # downstream (load/store <N x f32>). Since %base is a multiple of
+                # elems_per_thread, this is safe for contiguous tensors.
+                align_bytes = int(elems_per_thread) * 4
+                for name, spec in arg_specs.items():
+                    aligned = f"%{_mlir_ident(name)}_aligned"
+                    original = f"%{_mlir_ident(name)}"
+                    memref_ty = str(spec["memref"])
+                    lines.append(f"      {aligned} = memref.assume_alignment {original}, {align_bytes} : {memref_ty}")
+                    arg_ssa[str(name)] = str(aligned)
+                lines.append("      %pred_vec = arith.cmpi ult, %base, %c_total : index")
+                lines.append("      scf.if %pred_vec {")
+                lines.extend(_emit_elementwise_vector_for_base("%base"))
                 lines.append("      }")
+            else:
+                for lane in range(int(elems_per_thread)):
+                    lane_c = f"%c_lane_{lane}"
+                    lane_i = f"%i_{lane}"
+                    lane_p = f"%pred_{lane}"
+                    lines.append(f"      {lane_c} = arith.constant {int(lane)} : index")
+                    lines.append(f"      {lane_i} = arith.addi %base, {lane_c} : index")
+                    lines.append(f"      {lane_p} = arith.cmpi ult, {lane_i}, %c_total : index")
+                    lines.append(f"      scf.if {lane_p} {{")
+                    lines.extend(_emit_elementwise_for_index(lane_i))
+                    lines.append("      }")
     lines.append("      gpu.return")
     lines.append("    }")
     lines.append("  }")
@@ -1525,6 +1810,9 @@ def lower_intent_to_cuda_gpu_kernel(
     out.meta["cuda_real_mlir_output_total"] = int(out_total)
     out.meta["cuda_real_mlir_elems_per_thread"] = int(elems_per_thread)
     out.meta["cuda_real_mlir_elems_per_thread_source"] = str(elems_per_thread_source)
+    out.meta["cuda_real_mlir_kernel_kind"] = str(kernel_kind)
+    if launch_override:
+        out.meta["cuda_real_mlir_launch_override"] = dict(launch_override)
     if repair_actions:
         out.meta["cuda_real_mlir_intent_repair_actions"] = list(repair_actions)
     return out

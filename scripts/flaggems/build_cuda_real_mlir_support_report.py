@@ -146,6 +146,7 @@ SUPPORTED_OPS = {
     "pad",
     "gather",
     "iota",
+    "reduce_sum",
 }
 
 
@@ -237,6 +238,27 @@ def _check_gather(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     return []
 
 
+def _check_reduce_sum(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["reduce_sum_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dims = attrs.get("dims")
+    dims_list = list(dims) if isinstance(dims, list) else []
+    if dims_list != [1]:
+        return ["reduce_sum_dims_not_axis1"]
+    outs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
+    if len(outs) != 1:
+        return ["reduce_sum_requires_single_output"]
+    final_out = outs[0]
+    if len(_tensor_shape(intent, final_out)) != 1:
+        return ["reduce_sum_requires_rank1_final_output"]
+    out = str(op.get("output") or "").strip()
+    if out and len(_tensor_shape(intent, out)) != 1:
+        return ["reduce_sum_output_not_rank1"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     if len(outputs) != 1:
@@ -264,6 +286,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_pad(intent, o))
         elif name == "gather":
             reasons.extend(_check_gather(intent, o))
+        elif name == "reduce_sum":
+            reasons.extend(_check_reduce_sum(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

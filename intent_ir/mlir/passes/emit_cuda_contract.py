@@ -18,6 +18,23 @@ def _infer_cuda_launch_from_meta(meta: Mapping[str, Any]) -> dict[str, Any]:
 
     if not isinstance(meta, Mapping):
         return {}
+    override = meta.get("cuda_real_mlir_launch_override")
+    if isinstance(override, Mapping):
+        grid = override.get("grid")
+        block = override.get("block")
+        shared_mem = override.get("shared_mem", 0)
+        if isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3:
+            try:
+                gx, gy, gz = int(grid[0]), int(grid[1]), int(grid[2])
+                bx, by, bz = int(block[0]), int(block[1]), int(block[2])
+            except Exception:
+                gx = gy = gz = bx = by = bz = 0
+            if gx > 0 and gy > 0 and gz > 0 and bx > 0 and by > 0 and bz > 0:
+                return {
+                    "block": [int(bx), int(by), int(bz)],
+                    "grid": [int(gx), int(gy), int(gz)],
+                    "shared_mem": int(shared_mem),
+                }
     if not bool(meta.get("cuda_real_mlir_kernel_emitted")):
         return {}
     try:
