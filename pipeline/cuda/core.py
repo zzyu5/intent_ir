@@ -1499,28 +1499,75 @@ def run_pipeline_for_spec(
         "out_of_contract": [c.shapes for c in cases.out_of_contract],
     }
 
+    def _pack_diff_results(case_list: List[TestCase], diffs: List[Any], *, ok: bool) -> Dict[str, Any]:
+        if not diffs:
+            return {"ok": False, "error": "no diff results"}
+        worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
+        return {
+            "ok": bool(ok),
+            "worst": {
+                "summary": str(worst.summary),
+                "max_abs": float(worst.max_abs_err),
+                "max_rel": float(worst.max_rel_err),
+            },
+            "results": [
+                {
+                    "case_shapes": dict(case_list[i].shapes),
+                    "ok": bool(diffs[i].ok),
+                    "summary": str(diffs[i].summary),
+                    "max_abs": float(diffs[i].max_abs_err),
+                    "max_rel": float(diffs[i].max_rel_err),
+                }
+                for i in range(min(len(case_list), len(diffs)))
+            ],
+        }
+
+    def _apply_diff_reports(
+        *,
+        diffs_in_local: List[Any],
+        diffs_out_local: List[Any],
+        cex_in_local: List[Any],
+        cex_out_local: List[Any],
+    ) -> bool:
+        in_ok = bool(diffs_in_local) and all(d.ok for d in diffs_in_local)
+        report["diff"] = _pack_diff_results(cases.in_contract, diffs_in_local, ok=in_ok)
+        if diffs_out_local:
+            out_ok = all(d.ok for d in diffs_out_local)
+            report["diff_out_of_contract"] = _pack_diff_results(cases.out_of_contract, diffs_out_local, ok=out_ok)
+        else:
+            report.pop("diff_out_of_contract", None)
+        if cex_in_local:
+            report["counterexamples"] = [
+                {"shapes": dict(cx.case.shapes), "summary": str(cx.diff.summary), "hints": list(cx.hints)} for cx in cex_in_local[:3]
+            ]
+        else:
+            report.pop("counterexamples", None)
+        if cex_out_local:
+            report["out_of_contract_counterexamples"] = [
+                {"shapes": dict(cx.case.shapes), "summary": str(cx.diff.summary), "hints": list(cx.hints)} for cx in cex_out_local[:3]
+            ]
+        else:
+            report.pop("out_of_contract_counterexamples", None)
+        return bool(in_ok)
+
     diffs_in, cex_in = run_diff(cand_for_run.intent, spec.runner, cases.in_contract, constraints=constraints, tolerances=tolerances)
     diffs_out, cex_out = run_diff(cand_for_run.intent, spec.runner, cases.out_of_contract, constraints=constraints, tolerances=tolerances)
-    all_diffs = diffs_in + diffs_out
-    diff_ok = all(d.ok for d in all_diffs) if all_diffs else True
-    worst_abs = max((d.max_abs_err for d in all_diffs), default=0.0)
-    worst_rel = max((d.max_rel_err for d in all_diffs), default=0.0)
-    report["diff"] = {
-        "ok": bool(diff_ok),
-        "worst": {"summary": ("ok" if diff_ok else "mismatch"), "max_abs": float(worst_abs), "max_rel": float(worst_rel)},
-        "results": [{"case_shapes": dict(cases.in_contract[i].shapes), "ok": bool(diffs_in[i].ok), "summary": diffs_in[i].summary, "max_abs": float(diffs_in[i].max_abs_err), "max_rel": float(diffs_in[i].max_rel_err)} for i in range(len(diffs_in))]
-        + [{"case_shapes": dict(cases.out_of_contract[i].shapes), "ok": bool(diffs_out[i].ok), "summary": diffs_out[i].summary, "max_abs": float(diffs_out[i].max_abs_err), "max_rel": float(diffs_out[i].max_rel_err)} for i in range(len(diffs_out))],
-    }
+    diff_ok = _apply_diff_reports(
+        diffs_in_local=diffs_in,
+        diffs_out_local=diffs_out,
+        cex_in_local=cex_in,
+        cex_out_local=cex_out,
+    )
 
     # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
     # This is deliberately conservative (1 retry) to respect LLM rate limits.
-    if use_llm and all_diffs and not diff_ok:
+    if use_llm and diffs_in and not diff_ok:
         worst_summary = None
-        for d in all_diffs:
+        for d in diffs_in:
             if not d.ok:
                 worst_summary = d.summary
                 break
-        cx0 = (cex_in + cex_out)[0] if (cex_in or cex_out) else None
+        cx0 = cex_in[0] if cex_in else None
         feedback3: List[str] = []
         feedback3.append(
             "Dynamic diff failed. Fix the IntentIR ops graph so it can execute in the interpreter and match the reference outputs."
@@ -1575,34 +1622,12 @@ def run_pipeline_for_spec(
             cand_for_run = cand_expanded
             diffs_in, cex_in = run_diff(cand_for_run.intent, spec.runner, cases.in_contract, constraints=constraints, tolerances=tolerances)
             diffs_out, cex_out = run_diff(cand_for_run.intent, spec.runner, cases.out_of_contract, constraints=constraints, tolerances=tolerances)
-            all_diffs = diffs_in + diffs_out
-            diff_ok = all(d.ok for d in all_diffs) if all_diffs else True
-            worst_abs = max((d.max_abs_err for d in all_diffs), default=0.0)
-            worst_rel = max((d.max_rel_err for d in all_diffs), default=0.0)
-            report["diff"] = {
-                "ok": bool(diff_ok),
-                "worst": {"summary": ("ok" if diff_ok else "mismatch"), "max_abs": float(worst_abs), "max_rel": float(worst_rel)},
-                "results": [
-                    {
-                        "case_shapes": dict(cases.in_contract[i].shapes),
-                        "ok": bool(diffs_in[i].ok),
-                        "summary": diffs_in[i].summary,
-                        "max_abs": float(diffs_in[i].max_abs_err),
-                        "max_rel": float(diffs_in[i].max_rel_err),
-                    }
-                    for i in range(len(diffs_in))
-                ]
-                + [
-                    {
-                        "case_shapes": dict(cases.out_of_contract[i].shapes),
-                        "ok": bool(diffs_out[i].ok),
-                        "summary": diffs_out[i].summary,
-                        "max_abs": float(diffs_out[i].max_abs_err),
-                        "max_rel": float(diffs_out[i].max_rel_err),
-                    }
-                    for i in range(len(diffs_out))
-                ],
-            }
+            diff_ok = _apply_diff_reports(
+                diffs_in_local=diffs_in,
+                diffs_out_local=diffs_out,
+                cex_in_local=cex_in,
+                cex_out_local=cex_out,
+            )
             report["diff_repair"] = {"attempted": True, "ok": bool(diff_ok)}
         except Exception as e:
             report["diff_repair"] = {"attempted": True, "ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -1630,34 +1655,12 @@ def run_pipeline_for_spec(
 
             diffs_in, cex_in = run_diff(fb_exp, spec.runner, cases.in_contract, constraints=constraints, tolerances=tolerances)
             diffs_out, cex_out = run_diff(fb_exp, spec.runner, cases.out_of_contract, constraints=constraints, tolerances=tolerances)
-            all_diffs = diffs_in + diffs_out
-            diff_ok = all(d.ok for d in all_diffs) if all_diffs else True
-            worst_abs = max((d.max_abs_err for d in all_diffs), default=0.0)
-            worst_rel = max((d.max_rel_err for d in all_diffs), default=0.0)
-            report["diff"] = {
-                "ok": bool(diff_ok),
-                "worst": {"summary": ("ok" if diff_ok else "mismatch"), "max_abs": float(worst_abs), "max_rel": float(worst_rel)},
-                "results": [
-                    {
-                        "case_shapes": dict(cases.in_contract[i].shapes),
-                        "ok": bool(diffs_in[i].ok),
-                        "summary": diffs_in[i].summary,
-                        "max_abs": float(diffs_in[i].max_abs_err),
-                        "max_rel": float(diffs_in[i].max_rel_err),
-                    }
-                    for i in range(len(diffs_in))
-                ]
-                + [
-                    {
-                        "case_shapes": dict(cases.out_of_contract[i].shapes),
-                        "ok": bool(diffs_out[i].ok),
-                        "summary": diffs_out[i].summary,
-                        "max_abs": float(diffs_out[i].max_abs_err),
-                        "max_rel": float(diffs_out[i].max_rel_err),
-                    }
-                    for i in range(len(diffs_out))
-                ],
-            }
+            diff_ok = _apply_diff_reports(
+                diffs_in_local=diffs_in,
+                diffs_out_local=diffs_out,
+                cex_in_local=cex_in,
+                cex_out_local=cex_out,
+            )
             if diff_ok:
                 report["intent"] = fb_intent.to_json_dict()
                 report["intent_expanded"] = fb_exp.to_json_dict()
