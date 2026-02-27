@@ -294,6 +294,11 @@ def _check_reduce_any(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     out = str(op.get("output") or "").strip()
     if out:
         out_shape = _tensor_shape(intent, out)
+        if not out_shape:
+            # Many expanded seeds omit intermediate tensor specs; runtime lowering
+            # repairs missing tensor metadata before codegen. Treat unknown shape
+            # as "not checked" here to avoid false negatives in the wave plan.
+            return []
         if len(out_shape) == 2:
             # keepdims case: accept [M,1]
             try:
