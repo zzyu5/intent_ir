@@ -285,6 +285,32 @@ def lower_intent_to_cuda_gpu_kernel(
             f"{elems_per_thread}"
         )
 
+    def _eligible_for_vectorization() -> bool:
+        if elems_per_thread <= 1:
+            return False
+        if int(out_total) <= 0:
+            return False
+        if int(out_total) % int(elems_per_thread) != 0:
+            return False
+        # First cut: only contiguous elementwise + scalar broadcasts, no row/col addressing.
+        if need_rowcol:
+            return False
+        for spec in arg_specs.values():
+            if str(spec.get("broadcast") or "") not in {"scalar", "elementwise"}:
+                return False
+            if str(spec.get("scalar_ty") or "") != "f32":
+                return False
+            if str(spec.get("memref_elem_ty") or "") != "f32":
+                return False
+        # Require an f32-only dataflow (no comparisons, no bool, no casts).
+        for op in list(intent.ops or []):
+            op_name = str(getattr(op, "op", "")).strip()
+            if op_name in {"eq", "ne", "lt", "le", "gt", "ge", "where", "cast"}:
+                return False
+        return True
+
+    vectorize = _eligible_for_vectorization()
+
     def _as_f32_const(v: Any) -> str:
         try:
             return repr(float(v))
@@ -294,6 +320,247 @@ def lower_intent_to_cuda_gpu_kernel(
     out_spec = arg_specs[out_name]
     out_memref = str(out_spec["memref"])
     out_memref_elem_ty = str(out_spec.get("memref_elem_ty") or "")
+
+    vec_ty = f"vector<{int(elems_per_thread)}xf32>"
+
+    def _emit_elementwise_vector_for_base(base_idx_ssa: str) -> list[str]:
+        if not vectorize:
+            raise RuntimeError("internal error: vector emitter called when vectorize=false")
+
+        loaded: dict[str, str] = {}
+        loaded_ty: dict[str, str] = {}
+        computed: dict[str, str] = {}
+        computed_ty: dict[str, str] = {}
+        out_lines: list[str] = []
+
+        def _infer_value_ty(name: str) -> str:
+            if name in computed_ty:
+                return str(computed_ty[name])
+            if name in loaded_ty:
+                return str(loaded_ty[name])
+            # Vector mode is currently f32-only.
+            return str(vec_ty)
+
+        def _load_tensor(name: str) -> list[str]:
+            if name in computed:
+                return []
+            if name in loaded:
+                return []
+            spec = arg_specs.get(name)
+            if spec is None:
+                raise RuntimeError(f"unknown tensor referenced: {name}")
+            memref = str(spec["memref"])
+            bcast = str(spec.get("broadcast") or "")
+            if bcast == "scalar":
+                ssa_scalar = _fresh(f"{name}_scalar")
+                ssa_vec = _fresh(f"{name}_splat")
+                lines = [
+                    f"        {ssa_scalar} = memref.load %{_mlir_ident(name)}[%c0] : {memref}",
+                    f"        {ssa_vec} = vector.splat {ssa_scalar} : f32 to {vec_ty}",
+                ]
+                loaded[name] = ssa_vec
+                loaded_ty[name] = str(vec_ty)
+                return lines
+            if bcast == "elementwise":
+                ssa_vec = _fresh(f"{name}_vec")
+                lines = [
+                    f"        {ssa_vec} = vector.load %{_mlir_ident(name)}[{base_idx_ssa}] : {memref}, {vec_ty}",
+                ]
+                loaded[name] = ssa_vec
+                loaded_ty[name] = str(vec_ty)
+                return lines
+            raise RuntimeError(f"unsupported broadcast kind in cuda real-mlir vectorize mode: {bcast}")
+
+        # Emit ops (vector elementwise evaluation).
+        for op in list(intent.ops or []):
+            op_name = str(getattr(op, "op", "")).strip()
+            inputs = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+            outv = str(getattr(op, "output", "")).strip()
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            if not op_name or not outv:
+                raise RuntimeError("invalid op in intent")
+
+            # Materialize inputs.
+            in_ssa: list[str] = []
+            in_ty: list[str] = []
+            for inp in inputs:
+                if inp in computed:
+                    in_ssa.append(computed[inp])
+                else:
+                    out_lines.extend(_load_tensor(inp))
+                    in_ssa.append(loaded[inp])
+                in_ty.append(_infer_value_ty(inp))
+
+            out_ty = _infer_value_ty(outv)
+
+            if op_name == "const":
+                if inputs:
+                    raise RuntimeError("const expects 0 inputs")
+                if out_ty != vec_ty:
+                    raise RuntimeError(f"const vectorize mismatch (out_ty={out_ty})")
+                ssa_scalar = _fresh("const_scalar")
+                dst = _fresh("const")
+                out_lines.append(f"        {ssa_scalar} = arith.constant {_as_f32_const(attrs.get('value'))} : f32")
+                out_lines.append(f"        {dst} = vector.splat {ssa_scalar} : f32 to {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "identity":
+                if len(in_ssa) != 1:
+                    raise RuntimeError("identity expects 1 input")
+                computed[outv] = in_ssa[0]
+                computed_ty[outv] = in_ty[0]
+                continue
+
+            if op_name == "abs":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("abs vectorize expects vector<f32>")
+                dst = _fresh("abs")
+                out_lines.append(f"        {dst} = math.absf {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "floor":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("floor vectorize expects vector<f32>")
+                dst = _fresh("floor")
+                out_lines.append(f"        {dst} = math.floor {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "ceil":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("ceil vectorize expects vector<f32>")
+                dst = _fresh("ceil")
+                out_lines.append(f"        {dst} = math.ceil {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "neg":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("neg vectorize expects vector<f32>")
+                dst = _fresh("neg")
+                out_lines.append(f"        {dst} = arith.negf {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name in {"add", "sub", "mul", "div"}:
+                if len(in_ssa) != 2 or in_ty[0] != vec_ty or in_ty[1] != vec_ty:
+                    raise RuntimeError(f"{op_name} vectorize expects vector<f32> binary")
+                dst = _fresh(op_name)
+                arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name in {"max", "min"}:
+                if len(in_ssa) != 2 or in_ty[0] != vec_ty or in_ty[1] != vec_ty:
+                    raise RuntimeError(f"{op_name} vectorize expects vector<f32> binary")
+                dst = _fresh(op_name)
+                arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "relu":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("relu vectorize expects vector<f32>")
+                c0s = _fresh("c0f")
+                c0v = _fresh("c0v")
+                dst = _fresh("relu")
+                out_lines.append(f"        {c0s} = arith.constant 0.0 : f32")
+                out_lines.append(f"        {c0v} = vector.splat {c0s} : f32 to {vec_ty}")
+                out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0v} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "exp":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("exp vectorize expects vector<f32>")
+                dst = _fresh("exp")
+                out_lines.append(f"        {dst} = math.exp {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "exp2":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("exp2 vectorize expects vector<f32>")
+                dst = _fresh("exp2")
+                out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "log":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("log vectorize expects vector<f32>")
+                dst = _fresh("log")
+                out_lines.append(f"        {dst} = math.log {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "sqrt":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("sqrt vectorize expects vector<f32>")
+                dst = _fresh("sqrt")
+                out_lines.append(f"        {dst} = math.sqrt {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "rsqrt":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("rsqrt vectorize expects vector<f32>")
+                dst = _fresh("rsqrt")
+                out_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "erf":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("erf vectorize expects vector<f32>")
+                dst = _fresh("erf")
+                out_lines.append(f"        {dst} = math.erf {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name in {"sin", "cos", "tan"}:
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError(f"{op_name} vectorize expects vector<f32>")
+                dst = _fresh(op_name)
+                mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[op_name]
+                out_lines.append(f"        {dst} = {mop} {in_ssa[0]} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            raise RuntimeError(f"unsupported op in cuda real-mlir vectorize mode: {op_name}")
+
+        final_ssa = computed.get(out_name)
+        if final_ssa is None:
+            last_out = str(getattr(list(intent.ops or [])[-1], "output", "")).strip() if intent.ops else ""
+            final_ssa = computed.get(last_out)
+        if not final_ssa:
+            raise RuntimeError(f"no computed value for output tensor: {out_name}")
+        out_val_ty = _infer_value_ty(out_name)
+        if out_memref_elem_ty != "f32" or out_val_ty != vec_ty:
+            raise RuntimeError("vectorize mode supports only f32 outputs")
+        out_lines.append(
+            f"        vector.store {final_ssa}, %{_mlir_ident(out_name)}[{base_idx_ssa}] : {out_memref}, {vec_ty}"
+        )
+        return out_lines
 
     def _emit_elementwise_for_index(idx_ssa: str) -> list[str]:
         loaded: dict[str, str] = {}
@@ -652,16 +919,22 @@ def lower_intent_to_cuda_gpu_kernel(
     else:
         lines.append(f"      %c_elems = arith.constant {int(elems_per_thread)} : index")
         lines.append("      %base = arith.muli %lin, %c_elems : index")
-        for lane in range(int(elems_per_thread)):
-            lane_c = f"%c_lane_{lane}"
-            lane_i = f"%i_{lane}"
-            lane_p = f"%pred_{lane}"
-            lines.append(f"      {lane_c} = arith.constant {int(lane)} : index")
-            lines.append(f"      {lane_i} = arith.addi %base, {lane_c} : index")
-            lines.append(f"      {lane_p} = arith.cmpi ult, {lane_i}, %c_total : index")
-            lines.append(f"      scf.if {lane_p} {{")
-            lines.extend(_emit_elementwise_for_index(lane_i))
+        if vectorize:
+            lines.append("      %pred_vec = arith.cmpi ult, %base, %c_total : index")
+            lines.append("      scf.if %pred_vec {")
+            lines.extend(_emit_elementwise_vector_for_base("%base"))
             lines.append("      }")
+        else:
+            for lane in range(int(elems_per_thread)):
+                lane_c = f"%c_lane_{lane}"
+                lane_i = f"%i_{lane}"
+                lane_p = f"%pred_{lane}"
+                lines.append(f"      {lane_c} = arith.constant {int(lane)} : index")
+                lines.append(f"      {lane_i} = arith.addi %base, {lane_c} : index")
+                lines.append(f"      {lane_p} = arith.cmpi ult, {lane_i}, %c_total : index")
+                lines.append(f"      scf.if {lane_p} {{")
+                lines.extend(_emit_elementwise_for_index(lane_i))
+                lines.append("      }")
     lines.append("      gpu.return")
     lines.append("    }")
     lines.append("  }")
