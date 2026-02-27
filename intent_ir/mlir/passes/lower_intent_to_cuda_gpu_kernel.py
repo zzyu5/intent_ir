@@ -274,28 +274,12 @@ def lower_intent_to_cuda_gpu_kernel(
         tmp_idx += 1
         return f"%{_mlir_ident(prefix)}_{tmp_idx}"
 
-    elems_per_thread = 1
-    raw_elems = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD", "") or "").strip()
-    if raw_elems:
-        try:
-            elems_per_thread = int(raw_elems)
-        except Exception:
-            raise RuntimeError(
-                "invalid INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD; expected int, got "
-                f"{raw_elems!r}"
-            )
-    if elems_per_thread not in {1, 2, 4}:
-        raise RuntimeError(
-            "unsupported cuda real-mlir elems_per_thread; expected one of {1,2,4}, got "
-            f"{elems_per_thread}"
-        )
-
-    def _eligible_for_vectorization() -> bool:
-        if elems_per_thread <= 1:
+    def _eligible_for_vectorization_with(elems: int) -> bool:
+        if elems <= 1:
             return False
         if int(out_total) <= 0:
             return False
-        if int(out_total) % int(elems_per_thread) != 0:
+        if int(out_total) % int(elems) != 0:
             return False
         # First cut: only contiguous elementwise + scalar broadcasts, no row/col addressing.
         if need_out_rowcol:
@@ -337,6 +321,55 @@ def lower_intent_to_cuda_gpu_kernel(
             if op_name not in allowed_vec_ops:
                 return False
         return True
+
+    elems_per_thread = 1
+    elems_per_thread_source = "default"
+    raw_elems = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD", "") or "").strip()
+    if raw_elems:
+        try:
+            elems_per_thread = int(raw_elems)
+        except Exception:
+            raise RuntimeError(
+                "invalid INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD; expected int, got "
+                f"{raw_elems!r}"
+            )
+        elems_per_thread_source = "env"
+    else:
+        # IntentIR evidence-driven default: prefer a wider vector width when the intent
+        # reports a contiguous dominant range. This keeps tuning knobs visible in
+        # the artifacts while allowing deterministic defaults.
+        auto = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD_AUTO", "1")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        if auto:
+            meta = intent_json.get("meta") if isinstance(intent_json, dict) else None
+            access = meta.get("access_witness") if isinstance(meta, dict) else None
+            has_contig = bool(access.get("has_contiguous_range")) if isinstance(access, dict) else False
+            try:
+                dom_len = int(access.get("dominant_range_len") or 0) if isinstance(access, dict) else 0
+            except Exception:
+                dom_len = 0
+            pref = 1
+            if has_contig and dom_len >= 256:
+                pref = 4
+            elif has_contig and dom_len >= 128:
+                pref = 2
+            if pref in {2, 4} and _eligible_for_vectorization_with(pref):
+                elems_per_thread = int(pref)
+                elems_per_thread_source = f"access_witness:{dom_len}"
+
+    if elems_per_thread not in {1, 2, 4}:
+        raise RuntimeError(
+            "unsupported cuda real-mlir elems_per_thread; expected one of {1,2,4}, got "
+            f"{elems_per_thread}"
+        )
+
+    def _eligible_for_vectorization() -> bool:
+        return _eligible_for_vectorization_with(int(elems_per_thread))
 
     vectorize = _eligible_for_vectorization()
 
@@ -1346,6 +1379,7 @@ def lower_intent_to_cuda_gpu_kernel(
     out.meta["kernel_name"] = str(kernel_name)
     out.meta["cuda_real_mlir_output_total"] = int(out_total)
     out.meta["cuda_real_mlir_elems_per_thread"] = int(elems_per_thread)
+    out.meta["cuda_real_mlir_elems_per_thread_source"] = str(elems_per_thread_source)
     return out
 
 
