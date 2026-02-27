@@ -170,6 +170,7 @@ def lower_intent_to_cuda_gpu_kernel(
     multi_output_ok = intent_name in {
         "layer_norm_persistent",
         "layer_norm_residual2d",
+        "ai_bench_layernorm",
         "rms_norm2d",
         "rms_norm_residual2d",
     }
@@ -1953,6 +1954,40 @@ def lower_intent_to_cuda_gpu_kernel(
                         raise RuntimeError("layer_norm_residual2d requires f32 scalar const 'eps'")
                     row_layer_norm_residual2d = {"M": int(out_m), "N": int(out_n), "eps_const": float(eps_const)}
 
+        elif intent_name == "ai_bench_layernorm":
+            required = {"X", "W", "B", "Y", "Mean", "Rstd"}
+            if required.issubset(set(arg_specs.keys())):
+                ok = (
+                    str(arg_specs["X"].get("memref_elem_ty")) == "f32"
+                    and str(arg_specs["W"].get("memref_elem_ty")) == "f32"
+                    and str(arg_specs["B"].get("memref_elem_ty")) == "f32"
+                    and str(arg_specs["Y"].get("memref_elem_ty")) == "f32"
+                    and str(arg_specs["Mean"].get("memref_elem_ty")) == "f32"
+                    and str(arg_specs["Rstd"].get("memref_elem_ty")) == "f32"
+                    and list(arg_specs["X"].get("dims") or []) == [int(out_m), int(out_n)]
+                    and list(arg_specs["Y"].get("dims") or []) == [int(out_m), int(out_n)]
+                    and list(arg_specs["W"].get("dims") or []) == [int(out_n)]
+                    and list(arg_specs["B"].get("dims") or []) == [int(out_n)]
+                    and list(arg_specs["Mean"].get("dims") or []) == [int(out_m)]
+                    and list(arg_specs["Rstd"].get("dims") or []) == [int(out_m)]
+                )
+                if ok:
+                    eps_const = _extract_f32_const("eps")
+                    if eps_const is None:
+                        raise RuntimeError("ai_bench_layernorm requires f32 scalar const 'eps'")
+                    # Reuse the axis-1 layer-norm emitter with different arg names.
+                    row_layer_norm_persistent = {
+                        "M": int(out_m),
+                        "N": int(out_n),
+                        "eps_const": float(eps_const),
+                        "inp": "X",
+                        "weight": "W",
+                        "bias": "B",
+                        "out": "Y",
+                        "mean": "Mean",
+                        "rstd": "Rstd",
+                    }
+
         elif intent_name == "rms_norm2d":
             required = {"inp", "weight", "out", "rstd"}
             if required.issubset(set(arg_specs.keys())):
@@ -2313,12 +2348,12 @@ def lower_intent_to_cuda_gpu_kernel(
         assert out_m is not None
         assert out_n is not None
 
-        in_name = "in_ptr"
-        w_name = "weight_ptr"
-        b_name = "bias_ptr"
-        out_name2 = "out_ptr"
-        mean_name = "out_mean_ptr"
-        rstd_name = "out_rstd_ptr"
+        in_name = str(row_layer_norm_persistent.get("inp") or "in_ptr")
+        w_name = str(row_layer_norm_persistent.get("weight") or "weight_ptr")
+        b_name = str(row_layer_norm_persistent.get("bias") or "bias_ptr")
+        out_name2 = str(row_layer_norm_persistent.get("out") or "out_ptr")
+        mean_name = str(row_layer_norm_persistent.get("mean") or "out_mean_ptr")
+        rstd_name = str(row_layer_norm_persistent.get("rstd") or "out_rstd_ptr")
         eps_const = float(row_layer_norm_persistent.get("eps_const") or 0.0)
 
         in_memref = str(arg_specs[in_name]["memref"])

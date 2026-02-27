@@ -10,6 +10,7 @@
     "addcmul2d",
     "addmv2d",
     "addr2d",
+    "ai_bench_layernorm",
     "angle2d",
     "any_kernel_dim",
     "arange1d",

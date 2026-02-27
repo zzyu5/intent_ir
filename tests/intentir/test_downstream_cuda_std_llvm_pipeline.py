@@ -243,6 +243,38 @@ CASES = [
         {"M": 4, "N": 8},
     ),
     (
+        "ai_bench_layernorm",
+        _intent(
+            {
+                "name": "ai_bench_layernorm",
+                "tensors": {
+                    "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "W": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                    "B": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                    "Y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "Mean": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                    "Rstd": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                },
+                "ops": [
+                    {
+                        "op": "const",
+                        "inputs": [],
+                        "output": "eps",
+                        "attrs": {"value": 1e-05, "dtype": "f32"},
+                    },
+                    {
+                        "op": "add",
+                        "inputs": ["X", "eps"],
+                        "output": "Y",
+                        "attrs": {},
+                    }
+                ],
+                "outputs": ["Y", "Mean", "Rstd"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
         "grouped_row_sum2d",
         _intent(
             {
