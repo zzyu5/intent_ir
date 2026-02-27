@@ -264,7 +264,7 @@ def lower_intent_to_cuda_gpu_kernel(
         )
         if not need_out_rowcol:
             need_out_rowcol = any(
-                str(getattr(op, "op", "")).strip() in {"concat", "pad"} for op in list(intent.ops or [])
+                str(getattr(op, "op", "")).strip() in {"concat", "pad", "transpose"} for op in list(intent.ops or [])
             )
     if need_out_rowcol and out_rank != 2:
         raise RuntimeError("internal error: broadcast patterns require rank-2 output")
@@ -1090,6 +1090,40 @@ def lower_intent_to_cuda_gpu_kernel(
                 out_ty = _infer_value_ty(outv)
                 if ty != out_ty:
                     raise RuntimeError(f"gather dtype mismatch: {ty} vs {out_ty}")
+                computed[outv] = val
+                computed_ty[outv] = out_ty
+                continue
+
+            if op_name == "transpose":
+                if len(inputs) != 1:
+                    raise RuntimeError("transpose expects 1 input")
+                perm = attrs.get("perm")
+                perm_list = list(perm) if isinstance(perm, list) else []
+                if perm_list != [1, 0]:
+                    raise RuntimeError(f"transpose currently supports perm=[1,0] only (got {perm_list})")
+                if out_rank != 2 or not need_out_rowcol:
+                    raise RuntimeError("transpose currently supports rank-2 outputs only")
+                if not row_ssa or not col_ssa:
+                    raise RuntimeError("internal error: transpose requires output row/col SSA")
+
+                inp = str(inputs[0])
+                inp_dims = list(arg_specs.get(inp, {}).get("dims") or [])
+                if len(inp_dims) != 2:
+                    raise RuntimeError("transpose currently supports 2D input tensors only")
+                inp_n = int(inp_dims[1])
+
+                # Output index is [row, col] in the transposed shape [N, M].
+                # Input index should be [col, row] in the original [M, N].
+                cN = _fresh("cN_in")
+                mul_in = _fresh("mul_in")
+                idx_in = _fresh("idx_in")
+                out_lines.append(f"        {cN} = arith.constant {int(inp_n)} : index")
+                out_lines.append(f"        {mul_in} = arith.muli {col_ssa}, {cN} : index")
+                out_lines.append(f"        {idx_in} = arith.addi {mul_in}, {row_ssa} : index")
+                val, ty = _load_at(inp, idx_in)
+                out_ty = _infer_value_ty(outv)
+                if ty != out_ty:
+                    raise RuntimeError(f"transpose dtype mismatch: {ty} vs {out_ty}")
                 computed[outv] = val
                 computed_ty[outv] = out_ty
                 continue
