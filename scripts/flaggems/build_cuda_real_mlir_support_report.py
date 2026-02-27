@@ -216,10 +216,7 @@ def _check_gather(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
     if len(ins) != 3:
         return ["gather_invalid_inputs"]
-    out = str(op.get("output") or "").strip()
-    # Current lowering supports 2D inp + (row_idx,col_idx) -> 2D out.
-    if len(_tensor_shape(intent, out)) != 2:
-        return ["gather_requires_2d_output"]
+    # Current lowering supports 2D inp + (row_idx,col_idx) -> out (rank 1/2).
     if len(_tensor_shape(intent, ins[0])) != 2:
         return ["gather_requires_2d_input"]
     return []
