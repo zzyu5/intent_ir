@@ -64,6 +64,7 @@
     "logspace1d",
     "lt2d",
     "masked_fill2d",
+    "masked_softmax2d",
     "maximum2d",
     "minimum2d",
     "mul2d",
