@@ -830,8 +830,19 @@ def lower_intent_to_cuda_gpu_kernel(
             if skip_rank2_outputs:
                 tt_out = (intent.tensors or {}).get(outv)
                 out_shape_raw = list(getattr(tt_out, "shape", []) or []) if tt_out is not None else []
+                # In row-reduce kernels we re-use this scalar emitter with a
+                # 1D index (%bid). Skip true rank>1 tensors (e.g. [M,N]) that
+                # cannot be indexed by a single row index; allow keepdims-style
+                # row outputs like [M,1] where flat index == row.
                 if len(out_shape_raw) > 1:
-                    continue
+                    if len(out_shape_raw) == 2:
+                        d1 = _resolve_dim_int(out_shape_raw[1], bindings)
+                        if d1 == 1:
+                            pass
+                        else:
+                            continue
+                    else:
+                        continue
 
             if op_name in {"reduce_sum", "reduce_prod", "reduce_max", "reduce_min", "reduce_any", "reduce_all"}:
                 if outv in computed:
@@ -1474,17 +1485,21 @@ def lower_intent_to_cuda_gpu_kernel(
 
     row_reduce_sum_axis1: dict[str, Any] | None = None
     row_reduce_max_axis1: dict[str, Any] | None = None
-    if out_rank == 1:
+    row_reduce_any_axis1: dict[str, Any] | None = None
+    if out_rank in {1, 2}:
         red_sum_ops: list[tuple[int, Any]] = []
         red_max_ops: list[tuple[int, Any]] = []
+        red_any_ops: list[tuple[int, Any]] = []
         for i, op in enumerate(list(intent.ops or [])):
             name = str(getattr(op, "op", "")).strip()
             if name == "reduce_sum":
                 red_sum_ops.append((int(i), op))
             elif name == "reduce_max":
                 red_max_ops.append((int(i), op))
+            elif name == "reduce_any":
+                red_any_ops.append((int(i), op))
 
-        if len(red_sum_ops) == 1:
+        if out_rank == 1 and len(red_sum_ops) == 1:
             red_op_idx, red_op = red_sum_ops[0]
             red_out = str(getattr(red_op, "output", "")).strip()
             red_inputs = [str(x) for x in list(getattr(red_op, "inputs", []) or []) if str(x).strip()]
@@ -1511,7 +1526,7 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "reduce_n": int(n0),
                                 }
 
-        if len(red_max_ops) == 1:
+        if out_rank == 1 and len(red_max_ops) == 1:
             red_op_idx, red_op = red_max_ops[0]
             red_out = str(getattr(red_op, "output", "")).strip()
             red_inputs = [str(x) for x in list(getattr(red_op, "inputs", []) or []) if str(x).strip()]
@@ -1994,6 +2009,307 @@ def lower_intent_to_cuda_gpu_kernel(
         body_lines = _emit_elementwise_for_index(
             "%bid",
             precomputed={red_out: ("%max0", "f32")},
+            skip_rank2_outputs=True,
+        )
+        for l in body_lines:
+            lines.append("  " + l)
+        lines.append("        }")
+        lines.append("      }")
+    elif row_reduce_any_axis1 is not None:
+        kernel_kind = "row_reduce_any_axis1_v1"
+        # One block per output row; reduce across the N dimension to a single bool.
+        launch_override = {"block": [256, 1, 1], "grid": [int(out_total), 1, 1]}
+
+        red_in = str(row_reduce_any_axis1["red_in"])
+        red_out = str(row_reduce_any_axis1["red_out"])
+        red_op_index = int(row_reduce_any_axis1["op_index"])
+        red_n = int(row_reduce_any_axis1["reduce_n"])
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(out_total)} : index")
+        lines.append(f"      %cN_red = arith.constant {int(red_n)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN_red : index")
+        lines.append("        %false = arith.constant 0 : i1")
+        # Per-thread partial any.
+        lines.append("        %partial = scf.for %j = %tid to %cN_red step %bdim iter_args(%acc = %false) -> (i1) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+
+        # Pre-reduction elementwise evaluation up to the reduce_any op (limited subset).
+        elem_lines: list[str] = []
+        computed: dict[str, str] = {}
+        computed_ty: dict[str, str] = {}
+        loaded: dict[str, str] = {}
+        loaded_ty: dict[str, str] = {}
+
+        def _infer_elem_ty(name: str) -> str:
+            if name in computed_ty:
+                return str(computed_ty[name])
+            if name in loaded_ty:
+                return str(loaded_ty[name])
+            tt = (intent.tensors or {}).get(name)
+            if tt is None:
+                return "f32"
+            return _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
+
+        def _load_elem(name: str) -> str:
+            if name in computed:
+                return computed[name]
+            if name in loaded:
+                return loaded[name]
+            spec = arg_specs.get(name)
+            if spec is None:
+                raise RuntimeError(f"unknown tensor referenced in row-reduce: {name}")
+            dims = list(spec.get("dims") or [])
+            idx = "%idx"
+            if bool(spec.get("scalar")) or len(dims) == 0:
+                idx = "%c0"
+            elif len(dims) == 1 and int(dims[0]) == int(out_total):
+                idx = "%bid"
+            elif len(dims) == 1 and int(dims[0]) == int(red_n):
+                idx = "%j"
+            elif len(dims) == 2 and int(dims[0]) == int(out_total) and int(dims[1]) == int(red_n):
+                idx = "%idx"
+            else:
+                raise RuntimeError(
+                    "row-reduce supports only scalar/[M]/[N]/[M,N] external tensors; "
+                    f"tensor={name} dims={dims} M={int(out_total)} N={int(red_n)}"
+                )
+            memref = str(spec["memref"])
+            memref_elem_ty = str(spec.get("memref_elem_ty") or "")
+            scalar_ty = str(spec.get("scalar_ty") or "")
+            ssa_loaded = _fresh(f"{name}_loaded")
+            ssa_value = _fresh(f"{name}_v")
+            elem_lines.append(f"          {ssa_loaded} = memref.load {arg_ssa[str(name)]}[{idx}] : {memref}")
+            if scalar_ty and memref_elem_ty and scalar_ty != memref_elem_ty:
+                if scalar_ty == "i1" and memref_elem_ty == "i8":
+                    c0i8 = _fresh("c0i8")
+                    elem_lines.append(f"          {c0i8} = arith.constant 0 : i8")
+                    elem_lines.append(f"          {ssa_value} = arith.cmpi ne, {ssa_loaded}, {c0i8} : i8")
+                    loaded[name] = ssa_value
+                    loaded_ty[name] = "i1"
+                    return ssa_value
+                raise RuntimeError(
+                    "unsupported memref->scalar conversion in row-reduce: "
+                    f"{memref_elem_ty} -> {scalar_ty} for tensor={name}"
+                )
+            loaded[name] = ssa_loaded
+            loaded_ty[name] = scalar_ty or memref_elem_ty or "f32"
+            return ssa_loaded
+
+        def _coerce_elem(ssa: str, src_ty: str, dst_ty: str) -> str:
+            if src_ty == dst_ty:
+                return ssa
+            out = _fresh("cast")
+            if src_ty in {"f16", "bf16"} and dst_ty == "f32":
+                elem_lines.append(f"          {out} = arith.extf {ssa} : {src_ty} to f32")
+                return out
+            if src_ty == "f32" and dst_ty in {"f16", "bf16"}:
+                elem_lines.append(f"          {out} = arith.truncf {ssa} : f32 to {dst_ty}")
+                return out
+            if src_ty == "i1" and dst_ty in {"i32", "i64"}:
+                elem_lines.append(f"          {out} = arith.extui {ssa} : i1 to {dst_ty}")
+                return out
+            if src_ty in {"i32", "i64"} and dst_ty == "f32":
+                elem_lines.append(f"          {out} = arith.sitofp {ssa} : {src_ty} to f32")
+                return out
+            if src_ty == "f32" and dst_ty in {"i32", "i64"}:
+                elem_lines.append(f"          {out} = arith.fptosi {ssa} : f32 to {dst_ty}")
+                return out
+            if src_ty == "i32" and dst_ty == "i64":
+                elem_lines.append(f"          {out} = arith.extsi {ssa} : i32 to i64")
+                return out
+            if src_ty == "i64" and dst_ty == "i32":
+                elem_lines.append(f"          {out} = arith.trunci {ssa} : i64 to i32")
+                return out
+            raise RuntimeError(f"unsupported cast in row-reduce: {src_ty} -> {dst_ty}")
+
+        def _value_elem(name: str) -> tuple[str, str]:
+            if name in computed:
+                return computed[name], str(computed_ty[name])
+            v = _load_elem(name)
+            return v, _infer_elem_ty(name)
+
+        # Evaluate ops up to reduce_any to materialize `red_in` at this element.
+        for op in list(intent.ops or [])[:red_op_index]:
+            op_name = str(getattr(op, "op", "")).strip()
+            inputs = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+            outv = str(getattr(op, "output", "")).strip()
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            if not op_name or not outv:
+                raise RuntimeError("invalid op in intent (row-reduce pre-eval)")
+            if op_name == "const":
+                if inputs:
+                    raise RuntimeError("const expects 0 inputs")
+                out_ty = _infer_elem_ty(outv)
+                dst = _fresh("const")
+                if out_ty in {"i32", "i64"}:
+                    iv = _resolve_symbolic_int(attrs.get("value"))
+                    elem_lines.append(f"          {dst} = arith.constant {int(iv)} : {out_ty}")
+                elif out_ty == "f32":
+                    raw = attrs.get("value")
+                    sym_iv = _resolve_dim_int(raw, bindings)
+                    if sym_iv is not None:
+                        raw = float(sym_iv)
+                    elem_lines.append(f"          {dst} = arith.constant {_as_f32_const(raw)} : f32")
+                else:
+                    raise RuntimeError(f"const unsupported dtype in row-reduce: {out_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = out_ty
+                continue
+            if op_name == "cast":
+                if len(inputs) != 1:
+                    raise RuntimeError("cast expects 1 input")
+                src_v, src_ty = _value_elem(inputs[0])
+                to_ty = _dtype_to_mlir(str(attrs.get("to") or _infer_elem_ty(outv) or "f32"))
+                dst = _coerce_elem(src_v, src_ty, str(to_ty))
+                computed[outv] = dst
+                computed_ty[outv] = str(to_ty)
+                continue
+            if op_name in {"identity", "reshape", "broadcast_in_dim"}:
+                if len(inputs) != 1:
+                    raise RuntimeError(f"{op_name} expects 1 input")
+                src_v, src_ty = _value_elem(inputs[0])
+                computed[outv] = src_v
+                computed_ty[outv] = src_ty
+                continue
+            if op_name in {"add", "sub", "mul", "div"}:
+                if len(inputs) != 2:
+                    raise RuntimeError(f"{op_name} expects 2 inputs")
+                a_v, a_ty = _value_elem(inputs[0])
+                b_v, b_ty = _value_elem(inputs[1])
+                out_ty = _infer_elem_ty(outv)
+                if out_ty != "f32":
+                    raise RuntimeError(f"{op_name} row-reduce pre-eval supports f32 outputs only (out_ty={out_ty})")
+                a = _coerce_elem(a_v, a_ty, "f32")
+                b = _coerce_elem(b_v, b_ty, "f32")
+                dst = _fresh(op_name)
+                arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
+                elem_lines.append(f"          {dst} = {arith} {a}, {b}{fm} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+            if op_name == "abs":
+                if len(inputs) != 1:
+                    raise RuntimeError("abs expects 1 input")
+                src_v, src_ty = _value_elem(inputs[0])
+                if src_ty != "f32":
+                    raise RuntimeError(f"abs row-reduce pre-eval supports f32 only (src_ty={src_ty})")
+                dst = _fresh("abs")
+                elem_lines.append(f"          {dst} = math.absf {src_v}{fm} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+            if op_name in {"eq", "ne", "lt", "le", "gt", "ge"}:
+                if len(inputs) != 2:
+                    raise RuntimeError(f"{op_name} expects 2 inputs")
+                a_v, a_ty = _value_elem(inputs[0])
+                b_v, b_ty = _value_elem(inputs[1])
+                dst = _fresh(op_name)
+                float_tys = {"f16", "bf16", "f32"}
+                int_tys = {"i1", "i32", "i64"}
+                if a_ty in float_tys or b_ty in float_tys:
+                    lhs = _coerce_elem(a_v, a_ty, "f32")
+                    rhs = _coerce_elem(b_v, b_ty, "f32")
+                    pred = {
+                        "eq": "oeq",
+                        "ne": "one",
+                        "lt": "olt",
+                        "le": "ole",
+                        "gt": "ogt",
+                        "ge": "oge",
+                    }[op_name]
+                    elem_lines.append(f"          {dst} = arith.cmpf {pred}, {lhs}, {rhs} : f32")
+                elif a_ty in int_tys and b_ty in int_tys:
+                    cmp_ty = (
+                        "i64"
+                        if ("i64" in {a_ty, b_ty})
+                        else ("i32" if ("i32" in {a_ty, b_ty}) else "i1")
+                    )
+                    lhs = _coerce_elem(a_v, a_ty, cmp_ty)
+                    rhs = _coerce_elem(b_v, b_ty, cmp_ty)
+                    pred = {
+                        "eq": "eq",
+                        "ne": "ne",
+                        "lt": "slt",
+                        "le": "sle",
+                        "gt": "sgt",
+                        "ge": "sge",
+                    }[op_name]
+                    elem_lines.append(f"          {dst} = arith.cmpi {pred}, {lhs}, {rhs} : {cmp_ty}")
+                else:
+                    raise RuntimeError(f"{op_name} unsupported input dtypes in row-reduce: {a_ty} vs {b_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = "i1"
+                continue
+            if op_name == "and":
+                if len(inputs) != 2:
+                    raise RuntimeError("and expects 2 inputs")
+                a_v, a_ty = _value_elem(inputs[0])
+                b_v, b_ty = _value_elem(inputs[1])
+                if a_ty != "i1" or b_ty != "i1":
+                    raise RuntimeError(f"and row-reduce pre-eval supports i1 only (got {a_ty},{b_ty})")
+                dst = _fresh("and")
+                elem_lines.append(f"          {dst} = arith.andi {a_v}, {b_v} : i1")
+                computed[outv] = dst
+                computed_ty[outv] = "i1"
+                continue
+            if op_name == "not":
+                if len(inputs) != 1:
+                    raise RuntimeError("not expects 1 input")
+                a_v, a_ty = _value_elem(inputs[0])
+                if a_ty != "i1":
+                    raise RuntimeError(f"not row-reduce pre-eval supports i1 only (got {a_ty})")
+                c1 = _fresh("c1")
+                dst = _fresh("not")
+                elem_lines.append(f"          {c1} = arith.constant 1 : i1")
+                elem_lines.append(f"          {dst} = arith.xori {a_v}, {c1} : i1")
+                computed[outv] = dst
+                computed_ty[outv] = "i1"
+                continue
+            raise RuntimeError(f"unsupported op in row-reduce pre-eval: {op_name}")
+
+        val_ssa, val_ty = _value_elem(red_in)
+        if val_ty != "i1":
+            raise RuntimeError(f"row-reduce expects i1 reduction input, got {val_ty} for {red_in}")
+        elem_lines.append(f"          %acc_next = arith.ori %acc, {val_ssa} : i1")
+        elem_lines.append("          scf.yield %acc_next : i1")
+
+        lines.extend(elem_lines)
+        lines.append("        }")
+
+        # Shared-memory reduce across threads in the block (assume block.x==256).
+        lines.append("        %sh = memref.alloca() : memref<256xi1, 3>")
+        lines.append("        memref.store %partial, %sh[%tid] : memref<256xi1, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_{stride}"
+            pS = f"%pS_{stride}"
+            tid2 = f"%tid_{stride}"
+            a = f"%a_{stride}"
+            b = f"%b_{stride}"
+            s = f"%s_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xi1, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xi1, 3>")
+            lines.append(f"          {s} = arith.ori {a}, {b} : i1")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xi1, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is0 {")
+        lines.append("          %any0 = memref.load %sh[%c0] : memref<256xi1, 3>")
+        body_lines = _emit_elementwise_for_index(
+            "%bid",
+            precomputed={red_out: ("%any0", "i1")},
             skip_rank2_outputs=True,
         )
         for l in body_lines:

@@ -148,6 +148,7 @@ SUPPORTED_OPS = {
     "iota",
     "reduce_sum",
     "reduce_max",
+    "reduce_any",
 }
 
 
@@ -281,6 +282,31 @@ def _check_reduce_max(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     return []
 
 
+def _check_reduce_any(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["reduce_any_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dims = attrs.get("dims")
+    dims_list = list(dims) if isinstance(dims, list) else []
+    if dims_list != [1]:
+        return ["reduce_any_dims_not_axis1"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if len(out_shape) == 2:
+            # keepdims case: accept [M,1]
+            try:
+                d1 = int(out_shape[1])
+            except Exception:
+                return ["reduce_any_keepdims_requires_literal_last_dim_1"]
+            if d1 != 1:
+                return ["reduce_any_keepdims_requires_last_dim_1"]
+        elif len(out_shape) != 1:
+            return ["reduce_any_output_rank_not_1_or_2"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     if len(outputs) != 1:
@@ -312,6 +338,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_reduce_sum(intent, o))
         elif name == "reduce_max":
             reasons.extend(_check_reduce_max(intent, o))
+        elif name == "reduce_any":
+            reasons.extend(_check_reduce_any(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])
