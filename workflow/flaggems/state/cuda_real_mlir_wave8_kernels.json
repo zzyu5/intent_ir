@@ -44,6 +44,7 @@
     "gather2d",
     "ge2d",
     "gelu2d",
+    "group_norm_kernel",
     "grouped_row_sum2d",
     "gt2d",
     "hstack2d",

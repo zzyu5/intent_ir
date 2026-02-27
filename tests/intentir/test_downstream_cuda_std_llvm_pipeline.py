@@ -302,6 +302,526 @@ CASES = [
         ),
         {"M": 4, "G": 2, "N": 8, "GROUP_SIZE": 4},
     ),
+
+    (
+        "group_norm_kernel",
+        _intent(
+            {
+                        "name": "group_norm_kernel",
+                        "ops": [
+                                    {
+                                                "attrs": {
+                                                            "dtype": "f32",
+                                                            "value": 1e-05
+                                                },
+                                                "inputs": [],
+                                                "op": "const",
+                                                "output": "eps"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "value": "group_size * HW"
+                                                },
+                                                "inputs": [],
+                                                "op": "const",
+                                                "output": "num_elements"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "shape": [
+                                                                        "N",
+                                                                        "num_groups",
+                                                                        "group_size",
+                                                                        "HW"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "X"
+                                                ],
+                                                "op": "reshape",
+                                                "output": "X_reshaped"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "dims": [
+                                                                        2,
+                                                                        3
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "X_reshaped"
+                                                ],
+                                                "op": "reduce_sum",
+                                                "output": "sum_X"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "sum_X",
+                                                            "num_elements"
+                                                ],
+                                                "op": "div",
+                                                "output": "mean"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "broadcast_dims": [
+                                                                        0,
+                                                                        1
+                                                            ],
+                                                            "out_shape": [
+                                                                        "N",
+                                                                        "num_groups",
+                                                                        "group_size",
+                                                                        "HW"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "mean"
+                                                ],
+                                                "op": "broadcast_in_dim",
+                                                "output": "mean_bcast"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "X_reshaped",
+                                                            "mean_bcast"
+                                                ],
+                                                "op": "sub",
+                                                "output": "X_centered"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "X_centered",
+                                                            "X_centered"
+                                                ],
+                                                "op": "mul",
+                                                "output": "X_centered_sq"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "dims": [
+                                                                        2,
+                                                                        3
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "X_centered_sq"
+                                                ],
+                                                "op": "reduce_sum",
+                                                "output": "sum_sq"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "sum_sq",
+                                                            "num_elements"
+                                                ],
+                                                "op": "div",
+                                                "output": "var"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "var",
+                                                            "eps"
+                                                ],
+                                                "op": "add",
+                                                "output": "var_eps"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "var_eps"
+                                                ],
+                                                "op": "rsqrt",
+                                                "output": "rstd"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "broadcast_dims": [
+                                                                        0,
+                                                                        1
+                                                            ],
+                                                            "out_shape": [
+                                                                        "N",
+                                                                        "num_groups",
+                                                                        "group_size",
+                                                                        "HW"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "rstd"
+                                                ],
+                                                "op": "broadcast_in_dim",
+                                                "output": "rstd_bcast"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "X_centered",
+                                                            "rstd_bcast"
+                                                ],
+                                                "op": "mul",
+                                                "output": "X_hat"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "shape": [
+                                                                        "num_groups",
+                                                                        "group_size"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "W"
+                                                ],
+                                                "op": "reshape",
+                                                "output": "W_reshaped"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "broadcast_dims": [
+                                                                        1,
+                                                                        2
+                                                            ],
+                                                            "out_shape": [
+                                                                        "N",
+                                                                        "num_groups",
+                                                                        "group_size",
+                                                                        "HW"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "W_reshaped"
+                                                ],
+                                                "op": "broadcast_in_dim",
+                                                "output": "W_bcast"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "X_hat",
+                                                            "W_bcast"
+                                                ],
+                                                "op": "mul",
+                                                "output": "Y_scaled"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "shape": [
+                                                                        "num_groups",
+                                                                        "group_size"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "B"
+                                                ],
+                                                "op": "reshape",
+                                                "output": "B_reshaped"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "broadcast_dims": [
+                                                                        1,
+                                                                        2
+                                                            ],
+                                                            "out_shape": [
+                                                                        "N",
+                                                                        "num_groups",
+                                                                        "group_size",
+                                                                        "HW"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "B_reshaped"
+                                                ],
+                                                "op": "broadcast_in_dim",
+                                                "output": "B_bcast"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "Y_scaled",
+                                                            "B_bcast"
+                                                ],
+                                                "op": "add",
+                                                "output": "Y_reshaped"
+                                    },
+                                    {
+                                                "attrs": {
+                                                            "shape": [
+                                                                        "N",
+                                                                        "C",
+                                                                        "HW"
+                                                            ]
+                                                },
+                                                "inputs": [
+                                                            "Y_reshaped"
+                                                ],
+                                                "op": "reshape",
+                                                "output": "Y"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "mean"
+                                                ],
+                                                "op": "identity",
+                                                "output": "Mean"
+                                    },
+                                    {
+                                                "inputs": [
+                                                            "rstd"
+                                                ],
+                                                "op": "identity",
+                                                "output": "Rstd"
+                                    }
+                        ],
+                        "outputs": [
+                                    "Y",
+                                    "Mean",
+                                    "Rstd"
+                        ],
+                        "tensors": {
+                                    "B": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "C"
+                                                ]
+                                    },
+                                    "B_bcast": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "B_reshaped": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "num_groups",
+                                                            "group_size"
+                                                ]
+                                    },
+                                    "C": {
+                                                "dtype": "i32",
+                                                "layout": "row_major",
+                                                "shape": []
+                                    },
+                                    "HW": {
+                                                "dtype": "i32",
+                                                "layout": "row_major",
+                                                "shape": []
+                                    },
+                                    "Mean": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "Rstd": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "W": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "C"
+                                                ]
+                                    },
+                                    "W_bcast": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "W_reshaped": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "num_groups",
+                                                            "group_size"
+                                                ]
+                                    },
+                                    "X": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "C",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "X_centered": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "X_centered_sq": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "X_hat": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "X_reshaped": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "Y": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "C",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "Y_reshaped": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "Y_scaled": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "eps": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": []
+                                    },
+                                    "group_size": {
+                                                "dtype": "i32",
+                                                "layout": "row_major",
+                                                "shape": []
+                                    },
+                                    "mean": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "mean_bcast": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "num_elements": {
+                                                "dtype": "i32",
+                                                "layout": "row_major",
+                                                "shape": []
+                                    },
+                                    "num_groups": {
+                                                "dtype": "i32",
+                                                "layout": "row_major",
+                                                "shape": []
+                                    },
+                                    "rstd": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "rstd_bcast": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups",
+                                                            "group_size",
+                                                            "HW"
+                                                ]
+                                    },
+                                    "sum_X": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "sum_sq": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "var": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    },
+                                    "var_eps": {
+                                                "dtype": "f32",
+                                                "layout": "row_major",
+                                                "shape": [
+                                                            "N",
+                                                            "num_groups"
+                                                ]
+                                    }
+                        }
+            }
+        ),
+        {"N": 2, "C": 4, "HW": 4, "num_groups": 2},
+    ),
 ]
 
 
