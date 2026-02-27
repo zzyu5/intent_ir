@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-02-27T18:19:04+00:00",
+  "generated_at_utc": "2026-02-27T18:34:49+00:00",
   "repo": {
-    "head_commit": "18b4133b23e4fbcbad4bd7d0d09fb85023729f95",
+    "head_commit": "d163bf66f0fff61b45554de106b134449d0416f4",
     "branch": "compiler-cleanup-v1",
-    "dirty": false,
-    "git_describe": "18b4133"
+    "dirty": true,
+    "git_describe": "d163bf6-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -50,6 +50,7 @@
     "not",
     "pad",
     "pow",
+    "reduce_any",
     "reduce_max",
     "reduce_sum",
     "relu",
@@ -63,8 +64,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 93,
-  "kernels_unsupported": 65,
+  "kernels_supported": 96,
+  "kernels_unsupported": 62,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -104,6 +105,7 @@
     "identity2d",
     "isclose2d",
     "isfinite2d",
+    "isin1d",
     "isinf2d",
     "isnan2d",
     "le2d",
@@ -144,6 +146,8 @@
     "tile2d",
     "triu2d",
     "vstack2d",
+    "any_kernel_dim",
+    "row_all",
     "row_mean",
     "row_sum",
     "gelu2d",
@@ -174,15 +178,6 @@
       ],
       "unsupported_ops": [
         "glu"
-      ]
-    },
-    {
-      "kernel": "isin1d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_any"
       ]
     },
     {
@@ -326,19 +321,7 @@
     {
       "kernel": "allclose2d",
       "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_any"
-      ]
-    },
-    {
-      "kernel": "any_kernel_dim",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_any"
+        "reduce_any_dims_not_axis1"
       ]
     },
     {
@@ -405,15 +388,6 @@
       ],
       "unsupported_ops": [
         "reduce_prod"
-      ]
-    },
-    {
-      "kernel": "row_all",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_any"
       ]
     },
     {
