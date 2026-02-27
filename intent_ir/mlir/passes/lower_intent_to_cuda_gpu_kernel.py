@@ -1532,6 +1532,7 @@ def lower_intent_to_cuda_gpu_kernel(
     row_reduce_sum_axis1: dict[str, Any] | None = None
     row_reduce_max_axis1: dict[str, Any] | None = None
     row_reduce_any_axis1: dict[str, Any] | None = None
+    row_softmax_axis1: dict[str, Any] | None = None
     if out_rank in {1, 2}:
         red_sum_ops: list[tuple[int, Any]] = []
         red_max_ops: list[tuple[int, Any]] = []
@@ -1629,6 +1630,90 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "reduce_n": int(n0),
                                 }
 
+    # Pattern: row-wise softmax (axis=1 keepdims) -> output shape matches input.
+    if out_rank == 2 and out_m is not None and out_n is not None:
+        ops = list(intent.ops or [])
+        if len(ops) == 5:
+            op0, op1, op2, op3, op4 = ops
+            n0 = str(getattr(op0, "op", "")).strip()
+            n1 = str(getattr(op1, "op", "")).strip()
+            n2 = str(getattr(op2, "op", "")).strip()
+            n3 = str(getattr(op3, "op", "")).strip()
+            n4 = str(getattr(op4, "op", "")).strip()
+            if (n0, n1, n2, n3, n4) == ("reduce_max", "sub", "exp", "reduce_sum", "div"):
+                max_out = str(getattr(op0, "output", "")).strip()
+                centered = str(getattr(op1, "output", "")).strip()
+                exp_vals = str(getattr(op2, "output", "")).strip()
+                sum_out = str(getattr(op3, "output", "")).strip()
+                div_out = str(getattr(op4, "output", "")).strip()
+                if div_out == str(out_name):
+                    op0_in = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                    op1_in = [str(x) for x in list(getattr(op1, "inputs", []) or []) if str(x).strip()]
+                    op2_in = [str(x) for x in list(getattr(op2, "inputs", []) or []) if str(x).strip()]
+                    op3_in = [str(x) for x in list(getattr(op3, "inputs", []) or []) if str(x).strip()]
+                    op4_in = [str(x) for x in list(getattr(op4, "inputs", []) or []) if str(x).strip()]
+
+                    op0_attrs = dict(getattr(op0, "attrs", {}) or {})
+                    op3_attrs = dict(getattr(op3, "attrs", {}) or {})
+                    dims0 = list(op0_attrs.get("dims") or []) if isinstance(op0_attrs.get("dims"), list) else []
+                    dims3 = list(op3_attrs.get("dims") or []) if isinstance(op3_attrs.get("dims"), list) else []
+                    keep0 = bool(op0_attrs.get("keepdims"))
+                    keep3 = bool(op3_attrs.get("keepdims"))
+
+                    if (
+                        len(op0_in) == 1
+                        and len(op1_in) == 2
+                        and len(op2_in) == 1
+                        and len(op3_in) == 1
+                        and len(op4_in) == 2
+                        and dims0 == [1]
+                        and dims3 == [1]
+                        and keep0
+                        and keep3
+                    ):
+                        in_name = str(op0_in[0])
+                        if (
+                            op1_in[0] == in_name
+                            and op1_in[1] == max_out
+                            and op2_in[0] == centered
+                            and op3_in[0] == exp_vals
+                            and op4_in[0] == exp_vals
+                            and op4_in[1] == sum_out
+                            and in_name in arg_specs
+                            and str(out_name) in arg_specs
+                        ):
+                            in_tt = (intent.tensors or {}).get(in_name)
+                            out_tt = (intent.tensors or {}).get(str(out_name))
+                            max_tt = (intent.tensors or {}).get(max_out)
+                            sum_tt = (intent.tensors or {}).get(sum_out)
+                            if in_tt is not None and out_tt is not None and max_tt is not None and sum_tt is not None:
+                                in_shape = list(getattr(in_tt, "shape", []) or [])
+                                out_shape = list(getattr(out_tt, "shape", []) or [])
+                                max_shape = list(getattr(max_tt, "shape", []) or [])
+                                sum_shape = list(getattr(sum_tt, "shape", []) or [])
+                                if (
+                                    len(in_shape) == 2
+                                    and len(out_shape) == 2
+                                    and _resolve_dim_int(in_shape[0], bindings) == int(out_m)
+                                    and _resolve_dim_int(in_shape[1], bindings) == int(out_n)
+                                    and _resolve_dim_int(out_shape[0], bindings) == int(out_m)
+                                    and _resolve_dim_int(out_shape[1], bindings) == int(out_n)
+                                    and len(max_shape) == 2
+                                    and len(sum_shape) == 2
+                                    and _resolve_dim_int(max_shape[0], bindings) == int(out_m)
+                                    and _resolve_dim_int(max_shape[1], bindings) == 1
+                                    and _resolve_dim_int(sum_shape[0], bindings) == int(out_m)
+                                    and _resolve_dim_int(sum_shape[1], bindings) == 1
+                                ):
+                                    in_ty = _dtype_to_mlir(str(getattr(in_tt, "dtype", "f32")))
+                                    out_ty = _dtype_to_mlir(str(getattr(out_tt, "dtype", "f32")))
+                                    if in_ty == "f32" and out_ty == "f32":
+                                        row_softmax_axis1 = {
+                                            "inp": str(in_name),
+                                            "out": str(out_name),
+                                            "reduce_n": int(out_n),
+                                        }
+
     # Assemble module text.
     launch_override: dict[str, Any] | None = None
     kernel_kind = "elementwise_v1"
@@ -1646,7 +1731,107 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  gpu.module @kernels {")
     gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
-    if row_reduce_sum_axis1 is not None:
+    if row_softmax_axis1 is not None:
+        kernel_kind = "row_softmax_axis1_v1"
+        assert out_m is not None
+        assert out_n is not None
+        inp_name = str(row_softmax_axis1["inp"])
+        out_name2 = str(row_softmax_axis1["out"])
+        red_n = int(row_softmax_axis1["reduce_n"])
+        in_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        # One block per output row; compute max/sum reductions in shared memory.
+        launch_override = {"block": [256, 1, 1], "grid": [int(out_m), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(out_m)} : index")
+        lines.append(f"      %cN = arith.constant {int(red_n)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN : index")
+
+        # partial max
+        lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
+        lines.append("        %partial_max = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %init_max) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %acc_next = arith.maximumf %acc, %x{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xf32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        memref.store %partial_max, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_max_{stride}"
+            pS = f"%pS_max_{stride}"
+            tid2 = f"%tid_max_{stride}"
+            a = f"%a_max_{stride}"
+            b = f"%b_max_{stride}"
+            s = f"%s_max_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.maximumf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        %maxv = memref.load %sh[%c0] : memref<256xf32, 3>")
+
+        # partial sum(exp(x - max))
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
+        lines.append(f"          %e = math.exp %xc{fm} : f32")
+        lines.append(f"          %acc_next = arith.addf %acc, %e{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+
+        lines.append("        memref.store %partial_sum, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_sum_{stride}"
+            pS = f"%pS_sum_{stride}"
+            tid2 = f"%tid_sum_{stride}"
+            a = f"%a_sum_{stride}"
+            b = f"%b_sum_{stride}"
+            s = f"%s_sum_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        %sumv = memref.load %sh[%c0] : memref<256xf32, 3>")
+
+        # final output
+        lines.append("        scf.for %j = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+        lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
+        lines.append(f"          %e = math.exp %xc{fm} : f32")
+        lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
+        lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif row_reduce_sum_axis1 is not None:
         kernel_kind = "row_reduce_sum_axis1_v1"
         # One block per output row; let each block reduce across the N dimension.
         # This keeps global loads coalesced (threads iterate columns).
