@@ -3198,6 +3198,12 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  gpu.module @kernels {")
     gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
+    if intent_name == "logspace1d":
+        # Perf-first: `logspace1d` in our allowlist benchmarks is a tiny (N=64) elementwise
+        # kernel where launch overhead dominates. Avoid launching mostly-idle warps.
+        block_threads = 64 if int(out_total) <= 64 else 256
+        blocks = (int(out_total) + int(block_threads) - 1) // int(block_threads)
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(blocks), 1, 1]}
     if dropout_v1 is not None:
         kernel_kind = "dropout_philox_v1"
         x_name = str(dropout_v1["x"])
