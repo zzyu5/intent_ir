@@ -1957,6 +1957,8 @@ def lower_intent_to_cuda_gpu_kernel(
         # with cooperative shared-memory loads and a fused epilogue (bias/relu/masks).
         if intent_name in {
             "ai_bench_matmul",
+            "mm2d",
+            "addmm2d",
             "matmul_relu2d",
             "matmul_bias_relu2d",
             "matmul_fused_epilogue2d",
@@ -2008,6 +2010,131 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "row_mask": None,
                                     "col_mask": None,
                                 }
+
+            if matmul_v1 is None and intent_name == "mm2d" and op_names == ["matmul"]:
+                op0 = ops_list[0]
+                ins = _op_inputs(op0)
+                out0 = _op_out(op0)
+                if len(ins) == 2 and out0 == str(out_name):
+                    a_name, b_name = str(ins[0]), str(ins[1])
+                    a_dims = _dims(a_name)
+                    b_dims = _dims(b_name)
+                    c_dims = _dims(str(out_name))
+                    if a_dims and b_dims and c_dims and len(a_dims) == 2 and len(b_dims) == 2 and len(c_dims) == 2:
+                        m, k = int(a_dims[0]), int(a_dims[1])
+                        k2, n = int(b_dims[0]), int(b_dims[1])
+                        if k2 == k and int(c_dims[0]) == m and int(c_dims[1]) == n:
+                            if _elem(a_name) == "f32" and _elem(b_name) == "f32" and _elem(str(out_name)) == "f32":
+                                matmul_v1 = {
+                                    "A": a_name,
+                                    "B": b_name,
+                                    "out": str(out_name),
+                                    "M": int(m),
+                                    "N": int(n),
+                                    "K": int(k),
+                                    "BM": 64,
+                                    "BN": 16,
+                                    "BK": 16,
+                                    "relu": False,
+                                    "bias": None,
+                                    "row_mask": None,
+                                    "col_mask": None,
+                                }
+
+            if matmul_v1 is None and intent_name == "addmm2d" and op_names == ["matmul", "mul", "mul", "add", "cast"]:
+                op0, op1, op2, op3, op4 = ops_list
+                ins0 = _op_inputs(op0)
+                out0 = _op_out(op0)
+                ins1 = _op_inputs(op1)
+                out1 = _op_out(op1)
+                ins2 = _op_inputs(op2)
+                out2 = _op_out(op2)
+                ins3 = _op_inputs(op3)
+                out3 = _op_out(op3)
+                ins4 = _op_inputs(op4)
+                out4 = _op_out(op4)
+                attrs4 = dict(getattr(op4, "attrs", {}) or {})
+                to4 = str(attrs4.get("to") or "f32").strip().lower()
+
+                if (
+                    len(ins0) == 2
+                    and len(ins1) == 2
+                    and len(ins2) == 2
+                    and len(ins3) == 2
+                    and len(ins4) == 1
+                    and out4 == str(out_name)
+                    and str(ins4[0]) == str(out3)
+                    and to4 in {"f32", "float32"}
+                ):
+                    # scaled_mm = mul(mm_out, alpha) (alpha is scalar)
+                    # Identify alpha/beta via scalar-ness in arg_specs.
+                    alpha_name = None
+                    mm_out_name = str(out0)
+                    for cand in ins1:
+                        spec = arg_specs.get(str(cand))
+                        if isinstance(spec, dict) and bool(spec.get("scalar")) and str(spec.get("memref_elem_ty") or "") == "f32":
+                            alpha_name = str(cand)
+                    if alpha_name and set(map(str, ins1)) == {mm_out_name, str(alpha_name)} and out1:
+                        # scaled_bias = mul(input, beta) (beta scalar)
+                        beta_name = None
+                        input_name = None
+                        for cand in ins2:
+                            spec = arg_specs.get(str(cand))
+                            if isinstance(spec, dict) and bool(spec.get("scalar")) and str(spec.get("memref_elem_ty") or "") == "f32":
+                                beta_name = str(cand)
+                            elif isinstance(spec, dict) and not bool(spec.get("scalar")) and str(spec.get("memref_elem_ty") or "") == "f32":
+                                input_name = str(cand)
+                        if beta_name and input_name and set(map(str, ins2)) == {str(input_name), str(beta_name)} and out2:
+                            # add_out = add(scaled_mm, scaled_bias)
+                            if set(map(str, ins3)) == {str(out1), str(out2)}:
+                                mat1_name, mat2_name = str(ins0[0]), str(ins0[1])
+                                a_dims = _dims(mat1_name)
+                                b_dims = _dims(mat2_name)
+                                c_dims = _dims(str(out_name))
+                                input_dims = _dims(input_name)
+                                if (
+                                    a_dims
+                                    and b_dims
+                                    and c_dims
+                                    and input_dims
+                                    and len(a_dims) == 2
+                                    and len(b_dims) == 2
+                                    and len(c_dims) == 2
+                                    and len(input_dims) == 2
+                                ):
+                                    m, k = int(a_dims[0]), int(a_dims[1])
+                                    k2, n = int(b_dims[0]), int(b_dims[1])
+                                    if (
+                                        k2 == k
+                                        and int(c_dims[0]) == m
+                                        and int(c_dims[1]) == n
+                                        and int(input_dims[0]) == m
+                                        and int(input_dims[1]) == n
+                                    ):
+                                        if (
+                                            _elem(mat1_name) == "f32"
+                                            and _elem(mat2_name) == "f32"
+                                            and _elem(input_name) == "f32"
+                                            and _elem(str(out_name)) == "f32"
+                                        ):
+                                            matmul_v1 = {
+                                                "A": mat1_name,
+                                                "B": mat2_name,
+                                                "out": str(out_name),
+                                                "M": int(m),
+                                                "N": int(n),
+                                                "K": int(k),
+                                                "BM": 64,
+                                                "BN": 16,
+                                                "BK": 16,
+                                                "relu": False,
+                                                "bias": None,
+                                                "row_mask": None,
+                                                "col_mask": None,
+                                                "add_inp": str(input_name),
+                                                "alpha": str(alpha_name),
+                                                "beta": str(beta_name),
+                                            }
 
             if matmul_v1 is None and intent_name == "matmul_relu2d" and op_names == ["matmul", "relu"]:
                 op0, op1 = ops_list
@@ -3732,6 +3859,9 @@ def lower_intent_to_cuda_gpu_kernel(
         b_name = str(matmul_v1["B"])
         out_name2 = str(matmul_v1["out"])
         bias_name = matmul_v1.get("bias")
+        add_inp_name = matmul_v1.get("add_inp")
+        alpha_name = matmul_v1.get("alpha")
+        beta_name = matmul_v1.get("beta")
         row_mask_name = matmul_v1.get("row_mask")
         col_mask_name = matmul_v1.get("col_mask")
         relu = bool(matmul_v1.get("relu") or False)
@@ -3753,6 +3883,21 @@ def lower_intent_to_cuda_gpu_kernel(
             raise RuntimeError("matmul expects f32 output tensor")
         if bias_name is not None and str(arg_specs[str(bias_name)].get("memref_elem_ty")) != "f32":
             raise RuntimeError("matmul bias expects f32 tensor")
+        if add_inp_name is not None:
+            if str(arg_specs[str(add_inp_name)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("addmm2d expects f32 input tensor")
+            if list(arg_specs[str(add_inp_name)].get("dims") or []) != [int(m_dim), int(n_dim)]:
+                raise RuntimeError("addmm2d expects input dims [M,N]")
+            if alpha_name is None or beta_name is None:
+                raise RuntimeError("addmm2d requires alpha/beta scalars")
+            if not bool(arg_specs.get(str(alpha_name), {}).get("scalar")) or str(
+                arg_specs.get(str(alpha_name), {}).get("memref_elem_ty") or ""
+            ) != "f32":
+                raise RuntimeError("addmm2d expects f32 scalar alpha")
+            if not bool(arg_specs.get(str(beta_name), {}).get("scalar")) or str(
+                arg_specs.get(str(beta_name), {}).get("memref_elem_ty") or ""
+            ) != "f32":
+                raise RuntimeError("addmm2d expects f32 scalar beta")
         if row_mask_name is not None and str(arg_specs[str(row_mask_name)].get("memref_elem_ty")) != "i1":
             if str(arg_specs[str(row_mask_name)].get("memref_elem_ty")) != "i8":
                 raise RuntimeError("matmul row_mask expects bool-like tensor (i8 ABI) for cuda real-mlir wave")
@@ -3764,6 +3909,9 @@ def lower_intent_to_cuda_gpu_kernel(
         b_memref = str(arg_specs[b_name]["memref"])
         out_memref = str(arg_specs[out_name2]["memref"])
         bias_memref = str(arg_specs[str(bias_name)]["memref"]) if bias_name is not None else ""
+        add_inp_memref = str(arg_specs[str(add_inp_name)]["memref"]) if add_inp_name is not None else ""
+        alpha_memref = str(arg_specs[str(alpha_name)]["memref"]) if alpha_name is not None else ""
+        beta_memref = str(arg_specs[str(beta_name)]["memref"]) if beta_name is not None else ""
         row_mask_memref = str(arg_specs[str(row_mask_name)]["memref"]) if row_mask_name is not None else ""
         col_mask_memref = str(arg_specs[str(col_mask_name)]["memref"]) if col_mask_name is not None else ""
 
@@ -3991,6 +4139,30 @@ def lower_intent_to_cuda_gpu_kernel(
         # Store outputs (fused epilogue).
         if fast_no_bounds:
             val_vec = str(acc_out)
+            mul_o = _fresh("mul_o")
+            idx_o = _fresh("idx_o")
+            lines.append(f"      {mul_o} = arith.muli %gm, %cN : index")
+            lines.append(f"      {idx_o} = arith.addi {mul_o}, %gn0 : index")
+            if alpha_name is not None:
+                alpha_s = _fresh("alpha")
+                alpha_v = _fresh("alpha_v")
+                val2 = _fresh("val_alpha")
+                lines.append(f"      {alpha_s} = memref.load {arg_ssa[str(alpha_name)]}[%c0] : {alpha_memref}")
+                lines.append(f"      {alpha_v} = vector.splat {alpha_s} : {vec4_ty}")
+                lines.append(f"      {val2} = arith.mulf {val_vec}, {alpha_v}{fm} : {vec4_ty}")
+                val_vec = str(val2)
+            if add_inp_name is not None:
+                beta_s = _fresh("beta")
+                beta_v = _fresh("beta_v")
+                inp_vec = _fresh("inp_vec")
+                inp_scaled = _fresh("inp_scaled")
+                val2 = _fresh("val_addmm")
+                lines.append(f"      {beta_s} = memref.load {arg_ssa[str(beta_name)]}[%c0] : {beta_memref}")
+                lines.append(f"      {beta_v} = vector.splat {beta_s} : {vec4_ty}")
+                lines.append(f"      {inp_vec} = vector.load {arg_ssa[str(add_inp_name)]}[{idx_o}] : {add_inp_memref}, {vec4_ty}")
+                lines.append(f"      {inp_scaled} = arith.mulf {inp_vec}, {beta_v}{fm} : {vec4_ty}")
+                lines.append(f"      {val2} = arith.addf {val_vec}, {inp_scaled}{fm} : {vec4_ty}")
+                val_vec = str(val2)
             if bias_name is not None:
                 bias_vec = _fresh("bias_vec")
                 val2 = _fresh("val_bias")
@@ -4040,10 +4212,6 @@ def lower_intent_to_cuda_gpu_kernel(
                     cur_vec = str(next_vec)
                 val_vec = str(cur_vec)
 
-            idx_o = _fresh("idx_o")
-            mul_o = _fresh("mul_o")
-            lines.append(f"      {mul_o} = arith.muli %gm, %cN : index")
-            lines.append(f"      {idx_o} = arith.addi {mul_o}, %gn0 : index")
             lines.append(f"      vector.store {val_vec}, {arg_ssa[out_name2]}[{idx_o}] : {out_memref}, {vec4_ty}")
         else:
             lines.append("      %p_row = arith.cmpi ult, %gm, %cM : index")
@@ -4052,7 +4220,31 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("      %p_ok_vec = arith.andi %p_row, %p_col_vec : i1")
             lines.append("      scf.if %p_ok_vec {")
 
+            mul_o = _fresh("mul_o")
+            idx_o = _fresh("idx_o")
+            lines.append(f"        {mul_o} = arith.muli %gm, %cN : index")
+            lines.append(f"        {idx_o} = arith.addi {mul_o}, %gn0 : index")
             val_vec = str(acc_out)
+            if alpha_name is not None:
+                alpha_s = _fresh("alpha")
+                alpha_v = _fresh("alpha_v")
+                val2 = _fresh("val_alpha")
+                lines.append(f"        {alpha_s} = memref.load {arg_ssa[str(alpha_name)]}[%c0] : {alpha_memref}")
+                lines.append(f"        {alpha_v} = vector.splat {alpha_s} : {vec4_ty}")
+                lines.append(f"        {val2} = arith.mulf {val_vec}, {alpha_v}{fm} : {vec4_ty}")
+                val_vec = str(val2)
+            if add_inp_name is not None:
+                beta_s = _fresh("beta")
+                beta_v = _fresh("beta_v")
+                inp_vec = _fresh("inp_vec")
+                inp_scaled = _fresh("inp_scaled")
+                val2 = _fresh("val_addmm")
+                lines.append(f"        {beta_s} = memref.load {arg_ssa[str(beta_name)]}[%c0] : {beta_memref}")
+                lines.append(f"        {beta_v} = vector.splat {beta_s} : {vec4_ty}")
+                lines.append(f"        {inp_vec} = vector.load {arg_ssa[str(add_inp_name)]}[{idx_o}] : {add_inp_memref}, {vec4_ty}")
+                lines.append(f"        {inp_scaled} = arith.mulf {inp_vec}, {beta_v}{fm} : {vec4_ty}")
+                lines.append(f"        {val2} = arith.addf {val_vec}, {inp_scaled}{fm} : {vec4_ty}")
+                val_vec = str(val2)
             if bias_name is not None:
                 bias_vec = _fresh("bias_vec")
                 val2 = _fresh("val_bias")
@@ -4102,10 +4294,6 @@ def lower_intent_to_cuda_gpu_kernel(
                     cur_vec = str(next_vec)
                 val_vec = str(cur_vec)
 
-            idx_o = _fresh("idx_o")
-            mul_o = _fresh("mul_o")
-            lines.append(f"        {mul_o} = arith.muli %gm, %cN : index")
-            lines.append(f"        {idx_o} = arith.addi {mul_o}, %gn0 : index")
             lines.append(f"        vector.store {val_vec}, {arg_ssa[out_name2]}[{idx_o}] : {out_memref}, {vec4_ty}")
             lines.append("      } else {")
 
@@ -4121,8 +4309,28 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"        {p_col} = arith.cmpi ult, {gn}, %cN : index")
                 lines.append(f"        {p_ok} = arith.andi %p_row, {p_col} : i1")
                 lines.append(f"        scf.if {p_ok} {{")
+                mul = _fresh("mul_c")
+                idx = _fresh("idx_c")
+                lines.append(f"          {mul} = arith.muli %gm, %cN : index")
+                lines.append(f"          {idx} = arith.addi {mul}, {gn} : index")
                 lines.append(f"          {val_lane} = vector.extract {acc_out}[{lane}] : f32 from {vec4_ty}")
                 val_scalar = str(val_lane)
+                if alpha_name is not None:
+                    alpha_s = _fresh("alpha")
+                    val2 = _fresh("val_alpha")
+                    lines.append(f"          {alpha_s} = memref.load {arg_ssa[str(alpha_name)]}[%c0] : {alpha_memref}")
+                    lines.append(f"          {val2} = arith.mulf {val_scalar}, {alpha_s}{fm} : f32")
+                    val_scalar = str(val2)
+                if add_inp_name is not None:
+                    beta_s = _fresh("beta")
+                    inp_v = _fresh("inp")
+                    inp_scaled = _fresh("inp_scaled")
+                    val2 = _fresh("val_addmm")
+                    lines.append(f"          {beta_s} = memref.load {arg_ssa[str(beta_name)]}[%c0] : {beta_memref}")
+                    lines.append(f"          {inp_v} = memref.load {arg_ssa[str(add_inp_name)]}[{idx}] : {add_inp_memref}")
+                    lines.append(f"          {inp_scaled} = arith.mulf {inp_v}, {beta_s}{fm} : f32")
+                    lines.append(f"          {val2} = arith.addf {val_scalar}, {inp_scaled}{fm} : f32")
+                    val_scalar = str(val2)
                 if bias_name is not None:
                     bias_v = _fresh("bias")
                     val2 = _fresh("val_bias")
@@ -4153,10 +4361,6 @@ def lower_intent_to_cuda_gpu_kernel(
                     lines.append(f"          {cond} = arith.andi {rm1}, {cm1} : i1")
                     lines.append(f"          {sel} = arith.select {cond}, {val_scalar}, {z} : f32")
                     val_scalar = str(sel)
-                mul = _fresh("mul_c")
-                idx = _fresh("idx_c")
-                lines.append(f"          {mul} = arith.muli %gm, %cN : index")
-                lines.append(f"          {idx} = arith.addi {mul}, {gn} : index")
                 lines.append(f"          memref.store {val_scalar}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
                 lines.append("        }")
 
