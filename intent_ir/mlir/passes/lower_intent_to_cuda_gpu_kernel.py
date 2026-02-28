@@ -925,6 +925,11 @@ def lower_intent_to_cuda_gpu_kernel(
                     continue
                 raise RuntimeError(f"unsupported reduction op in cuda real-mlir wave: {op_name}")
 
+            if op_name == "matmul":
+                if outv in computed:
+                    continue
+                raise RuntimeError("unsupported matmul op in cuda real-mlir wave")
+
             # Non-elementwise ops: handle explicit indexing first so we don't try to
             # load broadcast="none" tensors with elementwise rules.
             if op_name == "iota":
@@ -1664,6 +1669,7 @@ def lower_intent_to_cuda_gpu_kernel(
     rope_v1: dict[str, Any] | None = None
     warp_v1: dict[str, Any] | None = None
     matmul_v1: dict[str, Any] | None = None
+    matvec_v1: dict[str, Any] | None = None
     mlp2d_v1: dict[str, Any] | None = None
     attn2d_v1: dict[str, Any] | None = None
     attn_fwd_v1: dict[str, Any] | None = None
@@ -1959,6 +1965,7 @@ def lower_intent_to_cuda_gpu_kernel(
             "ai_bench_matmul",
             "mm2d",
             "addmm2d",
+            "mv2d",
             "matmul_relu2d",
             "matmul_bias_relu2d",
             "matmul_fused_epilogue2d",
@@ -2150,6 +2157,140 @@ def lower_intent_to_cuda_gpu_kernel(
                                                 "alpha": str(alpha_name),
                                                 "beta": str(beta_name),
                                             }
+
+            if matvec_v1 is None and intent_name == "mv2d" and tuple(op_names) in {
+                ("matmul", "mul", "mul", "add"),
+                ("matmul", "mul", "mul", "add", "cast"),
+            }:
+                cast_op = ops_list[-1] if op_names[-1] == "cast" else None
+                if cast_op is not None:
+                    matmul_op, mul_a, mul_b, add_op, cast_op = ops_list
+                else:
+                    matmul_op, mul_a, mul_b, add_op = ops_list
+
+                ins0 = _op_inputs(matmul_op)
+                out0 = _op_out(matmul_op)
+                ins1 = _op_inputs(mul_a)
+                out1 = _op_out(mul_a)
+                ins2 = _op_inputs(mul_b)
+                out2 = _op_out(mul_b)
+                ins3 = _op_inputs(add_op)
+                out3 = _op_out(add_op)
+
+                if cast_op is not None:
+                    ins4 = _op_inputs(cast_op)
+                    out4 = _op_out(cast_op)
+                    attrs4 = dict(getattr(cast_op, "attrs", {}) or {})
+                    to4 = str(attrs4.get("to") or "f32").strip().lower()
+                    out_ok = (
+                        len(ins4) == 1
+                        and out4 == str(out_name)
+                        and str(ins4[0]) == str(out3)
+                        and to4 in {"f32", "float32"}
+                    )
+                else:
+                    out_ok = (out3 == str(out_name))
+
+                if len(ins0) == 2 and len(ins1) == 2 and len(ins2) == 2 and len(ins3) == 2 and out_ok:
+                    a_name, b_name = str(ins0[0]), str(ins0[1])
+                    mv_out_name = str(out0)
+
+                    alpha_name = None
+                    beta_name = None
+                    inp_name = None
+                    mv_scaled_out = None
+                    inp_scaled_out = None
+
+                    # Identify scaling: alpha multiplies the matmul output (mv_out_name);
+                    # beta multiplies the input vector.
+                    for ins, outv in ((ins1, out1), (ins2, out2)):
+                        if mv_out_name in ins:
+                            other = [str(x) for x in ins if str(x) != mv_out_name]
+                            if len(other) != 1:
+                                continue
+                            cand_alpha = str(other[0])
+                            spec = arg_specs.get(str(cand_alpha))
+                            if (
+                                isinstance(spec, dict)
+                                and bool(spec.get("scalar"))
+                                and str(spec.get("memref_elem_ty") or "") == "f32"
+                            ):
+                                alpha_name = cand_alpha
+                                mv_scaled_out = str(outv)
+                            continue
+
+                        scalar = None
+                        tensor = None
+                        for cand in ins:
+                            spec = arg_specs.get(str(cand))
+                            if (
+                                isinstance(spec, dict)
+                                and bool(spec.get("scalar"))
+                                and str(spec.get("memref_elem_ty") or "") == "f32"
+                            ):
+                                scalar = str(cand)
+                            elif (
+                                isinstance(spec, dict)
+                                and not bool(spec.get("scalar"))
+                                and str(spec.get("memref_elem_ty") or "") == "f32"
+                            ):
+                                tensor = str(cand)
+                        if scalar is None or tensor is None:
+                            continue
+                        beta_name = scalar
+                        inp_name = tensor
+                        inp_scaled_out = str(outv)
+
+                    if (
+                        alpha_name
+                        and beta_name
+                        and inp_name
+                        and mv_scaled_out
+                        and inp_scaled_out
+                        and set(map(str, ins3)) == {str(mv_scaled_out), str(inp_scaled_out)}
+                    ):
+                        a_dims = _dims(a_name)
+                        b_dims = _dims(b_name)
+                        out_dims2 = _dims(str(out_name))
+                        inp_dims = _dims(str(inp_name))
+                        if (
+                            a_dims
+                            and b_dims
+                            and out_dims2
+                            and inp_dims
+                            and len(a_dims) == 2
+                            and len(b_dims) == 1
+                            and len(out_dims2) == 1
+                            and len(inp_dims) == 1
+                        ):
+                            n_dim = int(out_dims2[0])
+                            m_dim = int(b_dims[0])
+                            if (
+                                n_dim > 0
+                                and m_dim > 0
+                                and int(a_dims[0]) == int(n_dim)
+                                and int(a_dims[1]) == int(m_dim)
+                                and int(inp_dims[0]) == int(n_dim)
+                            ):
+                                if (
+                                    _elem(a_name) == "f32"
+                                    and _elem(b_name) == "f32"
+                                    and _elem(inp_name) == "f32"
+                                    and _elem(str(out_name)) == "f32"
+                                    and bool((arg_specs.get(str(alpha_name)) or {}).get("scalar"))
+                                    and bool((arg_specs.get(str(beta_name)) or {}).get("scalar"))
+                                ):
+                                    matvec_v1 = {
+                                        "A": str(a_name),
+                                        "B": str(b_name),
+                                        "mv_out": str(mv_out_name),
+                                        "out": str(out_name),
+                                        "Inp": str(inp_name),
+                                        "alpha": str(alpha_name),
+                                        "beta": str(beta_name),
+                                        "N": int(n_dim),
+                                        "M": int(m_dim),
+                                    }
 
             if matmul_v1 is None and intent_name == "matmul_relu2d" and op_names == ["matmul", "relu"]:
                 op0, op1 = ops_list
@@ -2794,7 +2935,7 @@ def lower_intent_to_cuda_gpu_kernel(
                             "H": int(h_dim),
                             "W": int(w_dim),
                         }
-    if out_rank in {1, 2}:
+    if out_rank in {0, 1, 2}:
         red_sum_ops: list[tuple[int, Any]] = []
         red_max_ops: list[tuple[int, Any]] = []
         red_any_ops: list[tuple[int, Any]] = []
@@ -2806,6 +2947,33 @@ def lower_intent_to_cuda_gpu_kernel(
                 red_max_ops.append((int(i), op))
             elif name == "reduce_any":
                 red_any_ops.append((int(i), op))
+
+        if out_rank == 0 and len(red_sum_ops) == 1:
+            red_op_idx, red_op = red_sum_ops[0]
+            red_out = str(getattr(red_op, "output", "")).strip()
+            red_inputs = [str(x) for x in list(getattr(red_op, "inputs", []) or []) if str(x).strip()]
+            red_attrs = dict(getattr(red_op, "attrs", {}) or {})
+            dims = red_attrs.get("dims")
+            dims_list = list(dims) if isinstance(dims, list) else []
+            if dims_list == [0] and red_out and len(red_inputs) == 1:
+                red_in = str(red_inputs[0])
+                red_in_tt = (intent.tensors or {}).get(red_in)
+                red_out_tt = (intent.tensors or {}).get(red_out)
+                if red_in_tt is not None and red_out_tt is not None:
+                    red_in_shape = list(getattr(red_in_tt, "shape", []) or [])
+                    red_out_shape = list(getattr(red_out_tt, "shape", []) or [])
+                    if len(red_in_shape) == 1 and len(red_out_shape) == 0:
+                        n0 = _resolve_dim_int(red_in_shape[0], bindings)
+                        if n0 is not None and int(n0) > 0 and int(out_total) == 1:
+                            red_out_ty = _dtype_to_mlir(str(getattr(red_out_tt, "dtype", "f32")))
+                            if red_out_ty == "f32":
+                                # Treat scalar reduce_sum as a degenerate row reduction with M=1.
+                                row_reduce_sum_axis1 = {
+                                    "op_index": int(red_op_idx),
+                                    "red_in": str(red_in),
+                                    "red_out": str(red_out),
+                                    "reduce_n": int(n0),
+                                }
 
         if out_rank == 1 and len(red_sum_ops) == 1:
             red_op_idx, red_op = red_sum_ops[0]
@@ -3862,6 +4030,85 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          %out8 = arith.trunci %out16 : i16 to i8")
         lines.append("          %out_idx = arith.addi %src_base, %w : index")
         lines.append(f"          memref.store %out8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif matvec_v1 is not None:
+        kernel_kind = "matvec_v1"
+        a_name = str(matvec_v1["A"])
+        b_name = str(matvec_v1["B"])
+        mv_out_name = str(matvec_v1["mv_out"])
+        out_name2 = str(matvec_v1["out"])
+        n_dim = int(matvec_v1["N"])
+        k_dim_red = int(matvec_v1["M"])
+        if n_dim <= 0 or k_dim_red <= 0:
+            raise RuntimeError(f"invalid matvec dims: N={n_dim} K={k_dim_red}")
+        if str(arg_specs[a_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matvec expects f32 A tensor")
+        if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matvec expects f32 B tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matvec expects f32 output tensor")
+
+        a_memref = str(arg_specs[a_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(n_dim), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+        cuda_real_mlir_matmul_cfg = {"kind": "matvec_v1", "N": int(n_dim), "K": int(k_dim_red), "block_x": 256}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cK_red = arith.constant {int(k_dim_red)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cN : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cK_red : index")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %partial = scf.for %j = %tid to %cK_red step %bdim iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %a = memref.load {arg_ssa[a_name]}[%idx] : {a_memref}")
+        lines.append(f"          %b = memref.load {arg_ssa[b_name]}[%j] : {b_memref}")
+        lines.append(f"          %p = arith.mulf %a, %b{fm} : f32")
+        lines.append(f"          %acc_next = arith.addf %acc, %p{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xf32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_{stride}"
+            pS = f"%pS_{stride}"
+            tid2 = f"%tid_{stride}"
+            a = f"%a_{stride}"
+            b = f"%b_{stride}"
+            s = f"%s_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is0 {")
+        lines.append("          %sum0 = memref.load %sh[%c0] : memref<256xf32, 3>")
+        body_lines = _emit_elementwise_for_index(
+            "%bid",
+            precomputed={mv_out_name: ("%sum0", "f32")},
+            skip_rank2_outputs=True,
+        )
+        for l in body_lines:
+            lines.append("  " + l)
         lines.append("        }")
         lines.append("      }")
     elif (
@@ -6370,13 +6617,18 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
         lines.append("        scf.if %is0 {")
         lines.append("          %sum0 = memref.load %sh[%c0] : memref<256xf32, 3>")
-        body_lines = _emit_elementwise_for_index(
-            "%bid",
-            precomputed={red_out: ("%sum0", "f32")},
-            skip_rank2_outputs=True,
-        )
-        for l in body_lines:
-            lines.append("  " + l)
+        if out_rank == 0 and red_out == out_name:
+            # Scalar reductions (e.g. dot/vdot): avoid re-evaluating per-element ops
+            # with a 1D row index. Just store the reduced value.
+            lines.append(f"          memref.store %sum0, {arg_ssa[str(out_name)]}[%c0] : {out_memref}")
+        else:
+            body_lines = _emit_elementwise_for_index(
+                "%bid",
+                precomputed={red_out: ("%sum0", "f32")},
+                skip_rank2_outputs=True,
+            )
+            for l in body_lines:
+                lines.append("  " + l)
         lines.append("        }")
         lines.append("      }")
     elif row_reduce_max_axis1 is not None:
