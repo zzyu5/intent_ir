@@ -10,8 +10,12 @@
 
 - Repo: `/home/kingdom/intentir`
 - Branch: `compiler-cleanup-v1`
-- HEAD: `c4088ecb42878ecc1e301fe74a43297372c7cbe0`
+- HEAD: `4a4cb217e05592881446c0c0a6265902617c8b17`
+- 最新“真实执行/性能”证据对应的 commit：
+  - perf v7 的 `run_summary.repo.head_commit = c4088ecb42878ecc1e301fe74a43297372c7cbe0`
+  - HEAD 相对该 commit 仅新增交接文档（不影响代码/性能结论）
 - 关键提交（按时间倒序）：
+  - `4a4cb21` `docs(handoff): real-mlir coverage+perf status and next plan`
   - `c4088ec` `workflow: log triton-native real-mlir perf smoke v7`
   - `d27db08` `refactor(workflow): only derive full196/gpu_perf from their lanes`
   - `35b4b5f` `workflow: rebuild state after attn warp reduction`
@@ -252,4 +256,3 @@ python scripts/intentir.py suite \
 - strict policy：`pipeline/common/strict_policy.py`
 - wave allowlist：`workflow/flaggems/state/cuda_real_mlir_wave9_kernels.json`
 - workflow 状态：`workflow/flaggems/state/current_status.json`
-
