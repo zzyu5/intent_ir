@@ -178,6 +178,10 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     mlir = report.get("mlir")
     if not isinstance(mlir, dict):
         return []
+    # Some older/stale reports may omit *_contract_path fields even though the
+    # corresponding contract JSON exists on disk. Prefer the real-MLIR CUDA
+    # contract when discoverable so strict hard-cut execution can run.
+    kernel = str(report.get("kernel") or "").strip()
     preferred = [
         # CUDA path must prefer CUDA-specific contracts first.
         # NOTE: std_llvm is the real-MLIR path that already materializes an
@@ -203,6 +207,18 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
         p = _resolve_report_path(mlir.get(key), artifact_root=artifact_root)
         if p is not None and p not in out:
             out.append(p)
+
+    # Backstop: attempt to find the preferred contracts by name when the report
+    # did not reference them (e.g. stale error field left behind).
+    if kernel:
+        for suffix in ("downstream_cuda_std_llvm", "downstream_cuda_llvm"):
+            cand = artifact_root / f"{kernel}.intentir.intentdialect.{suffix}.contract.json"
+            if cand.is_file() and cand not in out:
+                # Preserve the intended preference order.
+                if suffix == "downstream_cuda_std_llvm":
+                    out.insert(0, cand)
+                else:
+                    out.insert(1 if len(out) >= 1 else 0, cand)
     return out
 
 

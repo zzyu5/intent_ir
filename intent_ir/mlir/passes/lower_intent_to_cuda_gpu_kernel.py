@@ -2239,11 +2239,34 @@ def lower_intent_to_cuda_gpu_kernel(
         in_memref = str(arg_specs[inp_name]["memref"])
         out_memref = str(arg_specs[out_name2]["memref"])
 
-        # One block per output row; compute max/sum reductions in shared memory.
-        block_threads = 256
-        # Cache exp(x-max) in shared memory to avoid recomputing exp in the final store loop.
-        use_exp_shmem_cache = bool(red_n > 0 and red_n <= 2048)
-        sh_elems = int(block_threads + red_n) if use_exp_shmem_cache else int(block_threads)
+        if red_n <= 0:
+            raise RuntimeError("softmax2d reduce_n must be > 0")
+
+        # One block per output row.
+        #
+        # For softmax over <=1024 elements, use a "one element per lane" tile
+        # shape (power-of-two block size) and do reductions via subgroup shuffle
+        # + 2 barriers (warp->block). This avoids the O(logN) shared-memory tree.
+        if red_n <= 1024:
+            # Empirically, Triton-native softmax uses far fewer than 1024 threads
+            # (e.g. 4 warps). Keep thread count moderate and let each lane handle
+            # multiple elements via the `%j = %tid .. step %bdim` loop.
+            block_threads = 256
+        else:
+            block_threads = 256
+        if (int(block_threads) % 32) != 0:
+            raise RuntimeError(f"softmax2d block_threads must be multiple of 32, got {block_threads}")
+        warps = int(block_threads // 32)
+
+        ept = int((int(red_n) + int(block_threads) - 1) // int(block_threads))
+        unroll_tile = bool(int(red_n) <= 2048 and int(ept) <= 8)
+        # Cache exp(x-max) in shared memory only for the generic (non-unrolled)
+        # path; the unrolled path keeps EPT values in registers.
+        use_exp_shmem_cache = bool((not unroll_tile) and int(red_n) <= 2048)
+        if use_exp_shmem_cache:
+            sh_elems = int(block_threads + red_n)
+        else:
+            sh_elems = int(warps)
         launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(out_m), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
         shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
@@ -2252,6 +2275,20 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %bid = gpu.block_id x")
         lines.append("      %bdim = gpu.block_dim x")
         lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c0_i32 = arith.constant 0 : i32")
+        lines.append("      %c32 = arith.constant 32 : i32")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("      %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("      %c16 = arith.constant 16 : i32")
+        lines.append("      %c8 = arith.constant 8 : i32")
+        lines.append("      %c4 = arith.constant 4 : i32")
+        lines.append("      %c2 = arith.constant 2 : i32")
+        lines.append("      %c1 = arith.constant 1 : i32")
+        lines.append(f"      %cWarps = arith.constant {int(warps)} : index")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
         lines.append(f"      %cM = arith.constant {int(out_m)} : index")
         lines.append(f"      %cN = arith.constant {int(red_n)} : index")
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
@@ -2262,91 +2299,193 @@ def lower_intent_to_cuda_gpu_kernel(
         if use_exp_shmem_cache:
             lines.append(f"        %cShOff = arith.constant {int(block_threads)} : index")
 
-        # partial max
-        lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
-        lines.append("        %partial_max = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %init_max) -> (f32) {")
-        lines.append("          %idx = arith.addi %base, %j : index")
-        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
-        lines.append(f"          %acc_next = arith.maximumf %acc, %x{fm} : f32")
-        lines.append("          scf.yield %acc_next : f32")
-        lines.append("        }")
-
-        lines.append(f"        memref.store %partial_max, %sh[%tid] : {shared_global_memref_ty}")
-        lines.append("        gpu.barrier")
-        stride = int(block_threads // 2)
-        while stride >= 1:
-            cS = f"%cS_max_{stride}"
-            pS = f"%pS_max_{stride}"
-            tid2 = f"%tid_max_{stride}"
-            a = f"%a_max_{stride}"
-            b = f"%b_max_{stride}"
-            s = f"%s_max_{stride}"
-            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
-            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
-            lines.append(f"        scf.if {pS} {{")
-            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
-            lines.append(f"          {a} = memref.load %sh[%tid] : {shared_global_memref_ty}")
-            lines.append(f"          {b} = memref.load %sh[{tid2}] : {shared_global_memref_ty}")
-            lines.append(f"          {s} = arith.maximumf {a}, {b}{fm} : f32")
-            lines.append(f"          memref.store {s}, %sh[%tid] : {shared_global_memref_ty}")
+        # Compute per-lane partial max.
+        tile_entries: list[tuple[str, str, str]] = []
+        tile_exps: list[str] = []
+        max_seed = "%partial_max"
+        if unroll_tile:
+            # EPT register tile: v[i] per lane, no exp shmem cache required.
+            max_cur_local = "%neg_inf"
+            for i in range(int(ept)):
+                off = int(i) * int(block_threads)
+                if int(i) == 0:
+                    ci = "%tid"
+                else:
+                    c_off = f"%cOff_t{i}"
+                    ci = f"%ci_t{i}"
+                    lines.append(f"        {c_off} = arith.constant {int(off)} : index")
+                    lines.append(f"        {ci} = arith.addi %tid, {c_off} : index")
+                pred = f"%pred_t{i}"
+                idx = f"%idx_t{i}"
+                v = f"%v_t{i}"
+                xv = f"%xv_t{i}"
+                tmax = f"%tmax_t{i}"
+                lines.append(f"        {pred} = arith.cmpi ult, {ci}, %cN : index")
+                lines.append(f"        {idx} = arith.addi %base, {ci} : index")
+                lines.append(f"        {v} = scf.if {pred} -> (f32) {{")
+                lines.append(f"          {xv} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                lines.append(f"          scf.yield {xv} : f32")
+                lines.append("        } else {")
+                lines.append("          scf.yield %neg_inf : f32")
+                lines.append("        }")
+                lines.append(f"        {tmax} = arith.maximumf {max_cur_local}, {v}{fm} : f32")
+                max_cur_local = str(tmax)
+                tile_entries.append((str(pred), str(idx), str(v)))
+            max_seed = str(max_cur_local)
+        else:
+            lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
+            lines.append("        %partial_max = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %init_max) -> (f32) {")
+            lines.append("          %idx = arith.addi %base, %j : index")
+            lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+            lines.append(f"          %acc_next = arith.maximumf %acc, %x{fm} : f32")
+            lines.append("          scf.yield %acc_next : f32")
             lines.append("        }")
-            if int(stride) > 32:
-                lines.append("        gpu.barrier")
-            stride //= 2
+
+        # block_allreduce_max (warp shuffle + warp scratch).
+        max_cur = str(max_seed)
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%wm_sh_{o}"
+            ok = f"%wm_ok_{o}"
+            sel = f"%wm_sel_{o}"
+            nxt = f"%wm_{o}"
+            lines.append(f"        {sh}, {ok} = gpu.shuffle down {max_cur}, %c{o}, %c32 : f32")
+            lines.append(f"        {sel} = arith.select {ok}, {sh}, {max_cur} : f32")
+            lines.append(f"        {nxt} = arith.maximumf {max_cur}, {sel}{fm} : f32")
+            max_cur = nxt
+        wm_final = str(max_cur)
+        lines.append("        %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {wm_final}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %wv = scf.if %lane_in -> (f32) {")
+        lines.append(f"            %t = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %t : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %neg_inf : f32")
+        lines.append("          }")
+        bm_cur = "%wv"
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%bm_sh_{o}"
+            ok = f"%bm_ok_{o}"
+            sel = f"%bm_sel_{o}"
+            nxt = f"%bm_{o}"
+            lines.append(f"          {sh}, {ok} = gpu.shuffle down {bm_cur}, %c{o}, %c32 : f32")
+            lines.append(f"          {sel} = arith.select {ok}, {sh}, {bm_cur} : f32")
+            lines.append(f"          {nxt} = arith.maximumf {bm_cur}, {sel}{fm} : f32")
+            bm_cur = nxt
+        bm_final = str(bm_cur)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {bm_final}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
         lines.append(f"        %maxv = memref.load %sh[%c0] : {shared_global_memref_ty}")
 
-        # partial sum(exp(x - max))
-        lines.append("        %c0f = arith.constant 0.0 : f32")
-        lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
-        lines.append("          %idx = arith.addi %base, %j : index")
-        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
-        lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
-        lines.append(f"          %e = math.exp %xc{fm} : f32")
-        if use_exp_shmem_cache:
-            lines.append("          %sh_i = arith.addi %cShOff, %j : index")
-            lines.append(f"          memref.store %e, %sh[%sh_i] : {shared_global_memref_ty}")
-        lines.append(f"          %acc_next = arith.addf %acc, %e{fm} : f32")
-        lines.append("          scf.yield %acc_next : f32")
-        lines.append("        }")
-
-        lines.append(f"        memref.store %partial_sum, %sh[%tid] : {shared_global_memref_ty}")
-        lines.append("        gpu.barrier")
-        stride = int(block_threads // 2)
-        while stride >= 1:
-            cS = f"%cS_sum_{stride}"
-            pS = f"%pS_sum_{stride}"
-            tid2 = f"%tid_sum_{stride}"
-            a = f"%a_sum_{stride}"
-            b = f"%b_sum_{stride}"
-            s = f"%s_sum_{stride}"
-            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
-            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
-            lines.append(f"        scf.if {pS} {{")
-            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
-            lines.append(f"          {a} = memref.load %sh[%tid] : {shared_global_memref_ty}")
-            lines.append(f"          {b} = memref.load %sh[{tid2}] : {shared_global_memref_ty}")
-            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
-            lines.append(f"          memref.store {s}, %sh[%tid] : {shared_global_memref_ty}")
-            lines.append("        }")
-            if int(stride) > 32:
-                lines.append("        gpu.barrier")
-            stride //= 2
-        lines.append(f"        %sumv = memref.load %sh[%c0] : {shared_global_memref_ty}")
-
-        # final output
-        lines.append("        scf.for %j = %tid to %cN step %bdim {")
-        lines.append("          %idx = arith.addi %base, %j : index")
-        if use_exp_shmem_cache:
-            lines.append("          %sh_i = arith.addi %cShOff, %j : index")
-            lines.append(f"          %e = memref.load %sh[%sh_i] : {shared_global_memref_ty}")
-            lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
+        # Compute per-lane partial sum.
+        sum_seed = "%partial_sum"
+        if unroll_tile:
+            sum_cur_local = "%c0f"
+            for i, (pred, _idx, v) in enumerate(tile_entries):
+                e = f"%e_t{i}"
+                xc = f"%xc_t{i}"
+                ev = f"%ev_t{i}"
+                tsum = f"%tsum_t{i}"
+                lines.append(f"        {e} = scf.if {pred} -> (f32) {{")
+                lines.append(f"          {xc} = arith.subf {v}, %maxv{fm} : f32")
+                lines.append(f"          {ev} = math.exp {xc}{fm} : f32")
+                lines.append(f"          scf.yield {ev} : f32")
+                lines.append("        } else {")
+                lines.append("          scf.yield %c0f : f32")
+                lines.append("        }")
+                lines.append(f"        {tsum} = arith.addf {sum_cur_local}, {e}{fm} : f32")
+                sum_cur_local = str(tsum)
+                tile_exps.append(str(e))
+            sum_seed = str(sum_cur_local)
         else:
+            lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
+            lines.append("          %idx = arith.addi %base, %j : index")
             lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
             lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
             lines.append(f"          %e = math.exp %xc{fm} : f32")
-            lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
-        lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+            if use_exp_shmem_cache:
+                lines.append("          %sh_i = arith.addi %cShOff, %j : index")
+                lines.append(f"          memref.store %e, %sh[%sh_i] : {shared_global_memref_ty}")
+            lines.append(f"          %acc_next = arith.addf %acc, %e{fm} : f32")
+            lines.append("          scf.yield %acc_next : f32")
+            lines.append("        }")
+
+        # block_allreduce_sum (warp shuffle + warp scratch).
+        sum_cur = str(sum_seed)
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%ws_sh_{o}"
+            ok = f"%ws_ok_{o}"
+            sel = f"%ws_sel_{o}"
+            nxt = f"%ws_{o}"
+            lines.append(f"        {sh}, {ok} = gpu.shuffle down {sum_cur}, %c{o}, %c32 : f32")
+            lines.append(f"        {sel} = arith.select {ok}, {sh}, %c0f : f32")
+            lines.append(f"        {nxt} = arith.addf {sum_cur}, {sel}{fm} : f32")
+            sum_cur = nxt
+        ws_final = str(sum_cur)
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {ws_final}, %sh[%warp] : {shared_global_memref_ty}")
         lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in2 = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %sv = scf.if %lane_in2 -> (f32) {")
+        lines.append(f"            %t2 = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %t2 : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        bs_cur = "%sv"
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%bs_sh_{o}"
+            ok = f"%bs_ok_{o}"
+            sel = f"%bs_sel_{o}"
+            nxt = f"%bs_{o}"
+            lines.append(f"          {sh}, {ok} = gpu.shuffle down {bs_cur}, %c{o}, %c32 : f32")
+            lines.append(f"          {sel} = arith.select {ok}, {sh}, %c0f : f32")
+            lines.append(f"          {nxt} = arith.addf {bs_cur}, {sel}{fm} : f32")
+            bs_cur = nxt
+        bs_final = str(bs_cur)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {bs_final}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append(f"        %sumv = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"        %inv = arith.divf %c1f, %sumv{fm} : f32")
+
+        # final output
+        if unroll_tile:
+            for i, (pred, idx, _v) in enumerate(tile_entries):
+                e = tile_exps[int(i)]
+                lines.append(f"        scf.if {pred} {{")
+                lines.append(f"          %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
+                lines.append(f"          memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+                lines.append("        }")
+        else:
+            lines.append("        scf.for %j = %tid to %cN step %bdim {")
+            lines.append("          %idx = arith.addi %base, %j : index")
+            if use_exp_shmem_cache:
+                lines.append("          %sh_i = arith.addi %cShOff, %j : index")
+                lines.append(f"          %e = memref.load %sh[%sh_i] : {shared_global_memref_ty}")
+            else:
+                lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+                lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
+                lines.append(f"          %e = math.exp %xc{fm} : f32")
+            lines.append(f"          %o = arith.mulf %e, %inv{fm} : f32")
+            lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+            lines.append("        }")
         lines.append("      }")
     elif row_grouped_row_sum2d is not None:
         kernel_kind = "grouped_row_sum_axis2_v1"
