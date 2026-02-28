@@ -1337,6 +1337,7 @@ def _build_native_launch_fn(
             by_param_scalar[key] = (str(name), value)
 
     if source == "flaggems_native":
+        kernel_name = str(kernel)
         semantic = str(getattr(spec, "source_op", "") or kernel).strip()
         # Some registry entries map identity2d to alias ops like `contiguous`, which can
         # become a no-op on already-contiguous inputs and yield empty CUDA graph captures.
@@ -1356,6 +1357,207 @@ def _build_native_launch_fn(
         flaggems_ops = getattr(module, "flag_gems_ops", None)
         if flaggems_ops is None:
             raise RuntimeError("flaggems_native baseline requires pipeline.triton.providers.flaggems.specs.flag_gems_ops")
+
+        ctx = getattr(module, "_flaggems_use_gems", None)
+        if not callable(ctx):
+            ctx = None
+
+        def _use_gems(include: list[str]) -> contextlib.AbstractContextManager[None]:
+            if ctx is None:
+                return contextlib.nullcontext()
+            return ctx(include=list(include))
+
+        def _pick_tensor(*aliases: str, required: bool = True) -> torch.Tensor | None:
+            for alias in aliases:
+                key = _kernel_param_key(alias)
+                if key in by_param_tensor:
+                    return by_param_tensor[key][1]
+                t = tensor_map.get(str(alias))
+                if isinstance(t, torch.Tensor):
+                    return t
+            if required:
+                raise RuntimeError(f"missing tensor input for aliases={aliases}")
+            return None
+
+        def _pick_scalar(*aliases: str, default: Any = None) -> Any:
+            for alias in aliases:
+                key = _kernel_param_key(alias)
+                if key in by_param_scalar:
+                    return by_param_scalar[key][1]
+            for alias in aliases:
+                if alias in bindings:
+                    return bindings[alias]
+            return default
+
+        # Native baselines that are better expressed via Torch APIs under FlagGems'
+        # `use_gems()` scope. These kernels are known to have brittle direct-call
+        # signatures across FlagGems versions.
+        if kernel_name == "full2d":
+            out = _pick_tensor("out", "output", required=False)
+            if out is None:
+                m = int(bindings.get("M", 0) or 0)
+                n = int(bindings.get("N", 0) or 0)
+                if m <= 0 or n <= 0:
+                    raise RuntimeError("full2d baseline missing output tensor and M/N bindings")
+                out = torch.empty((m, n), device=device, dtype=torch.float32)
+            value = float(_pick_scalar("value", "fill_value", default=0.25))
+            shape = tuple(int(x) for x in out.shape)
+
+            def _run() -> None:
+                with _use_gems(
+                    [
+                        "full",
+                        "full_like",
+                        "ones",
+                        "ones_like",
+                        "zeros",
+                        "zeros_like",
+                        "fill_scalar",
+                        "fill_tensor",
+                    ]
+                ):
+                    torch.full(shape, value, out=out)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": "torch.full:out",
+            }
+
+        if kernel_name == "addmv2d":
+            inp = _pick_tensor("Inp", "input", "inp", "x").reshape(-1)
+            mat = _pick_tensor("A", "mat")
+            vec = _pick_tensor("B", "vec").reshape(-1)
+            out = _pick_tensor("Out", "out", "output", required=False)
+            if out is None:
+                out = torch.empty_like(inp)
+            beta = float(_pick_scalar("beta", default=1.0))
+            alpha = float(_pick_scalar("alpha", default=1.0))
+
+            def _run() -> None:
+                with _use_gems(["addmv", "mv"]):
+                    torch.addmv(inp, mat, vec, beta=beta, alpha=alpha, out=out)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(3),
+                "spec_source": source,
+                "launch_source": "torch.addmv:out",
+            }
+
+        if kernel_name == "flip2d":
+            inp = _pick_tensor("inp", "input", "A", "x")
+
+            def _run() -> None:
+                with _use_gems(["flip"]):
+                    _ = torch.flip(inp, dims=[1])
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": "torch.flip:dims=[1]",
+            }
+
+        if kernel_name == "index_select2d":
+            inp = _pick_tensor("inp", "input", "A")
+            idx = _pick_tensor("index", required=False)
+            if idx is None:
+                row_idx = _pick_tensor("row_idx")
+                if int(row_idx.ndim) >= 2:
+                    idx = row_idx[:, 0]
+                else:
+                    idx = row_idx.reshape(-1)
+            idx64 = idx.to(dtype=torch.int64).reshape(-1)
+            out = _pick_tensor("out", "output", required=False)
+            if out is None:
+                out = torch.empty((int(idx64.numel()), int(inp.shape[1])), device=inp.device, dtype=inp.dtype)
+
+            def _run() -> None:
+                with _use_gems(["index_select"]):
+                    try:
+                        torch.index_select(inp, dim=0, index=idx64, out=out)
+                    except TypeError:
+                        out.copy_(torch.index_select(inp, dim=0, index=idx64))
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(3),
+                "spec_source": source,
+                "launch_source": "torch.index_select:dim0",
+            }
+
+        if kernel_name == "embedding2d":
+            weight = _pick_tensor("inp", "input", "weight", "W")
+            idx = _pick_tensor("index", required=False)
+            if idx is None:
+                idx = _pick_tensor("row_idx")
+            idx64 = idx.to(dtype=torch.int64).reshape(-1)
+            out = _pick_tensor("out", "output", required=False)
+            if out is None:
+                l = int(bindings.get("L", 0) or 0)
+                if l <= 0:
+                    raise RuntimeError("embedding2d baseline missing output tensor and L binding")
+                out = torch.empty((l,), device=weight.device, dtype=torch.float32)
+
+            def _run() -> None:
+                with _use_gems(["embedding"]):
+                    emb = torch.nn.functional.embedding(idx64, weight)
+                flat = emb.reshape(-1)
+                out.copy_(flat[: int(out.numel())])
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": "torch.nn.functional.embedding:flat_copy",
+            }
+
+        if kernel_name == "vstack2d":
+            a = _pick_tensor("A", "in0", "input0", "inp0")
+            b = _pick_tensor("B", "in1", "input1", "inp1")
+            out = _pick_tensor("out", "output", required=False)
+            if out is None:
+                out = torch.empty((int(a.shape[0]) + int(b.shape[0]), int(a.shape[1])), device=a.device, dtype=a.dtype)
+
+            def _run() -> None:
+                try:
+                    with _use_gems(["vstack"]):
+                        res = flaggems_ops.vstack((a, b))
+                except Exception:
+                    res = torch.vstack((a, b))
+                out.copy_(res)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": "flag_gems_ops.vstack:copy_fallback",
+            }
+
+        if kernel_name == "repeat_interleave_self_int1d":
+            inp = _pick_tensor("input", "inp").reshape(-1)
+            repeats = int(_pick_scalar("repeats", "R", default=1))
+            repeats = max(1, repeats)
+
+            def _run() -> None:
+                with _use_gems(["repeat_interleave_self_int"]):
+                    _ = flaggems_ops.repeat_interleave_self_int(inp, repeats, dim=0)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(3),
+                "spec_source": source,
+                "launch_source": "flag_gems_ops.repeat_interleave_self_int",
+            }
+
+        if kernel_name == "repeat_interleave_self_tensor1d":
+            inp = _pick_tensor("input", "inp").reshape(-1)
+            repeats = _pick_tensor("repeats").to(dtype=torch.int64).reshape(-1)
+
+            def _run() -> None:
+                with _use_gems(["repeat_interleave_self_tensor"]):
+                    _ = flaggems_ops.repeat_interleave_self_tensor(inp, repeats, dim=0)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(3),
+                "spec_source": source,
+                "launch_source": "flag_gems_ops.repeat_interleave_self_tensor",
+            }
 
         obj = getattr(flaggems_ops, semantic, None)
         callee: Callable[..., Any] | None = obj if callable(obj) else None
@@ -1994,6 +2196,14 @@ def _bench_kernel(
             bindings=ctx["bindings"],
         )
         inputs_np = _normalize_perf_inputs_for_kernel(kernel=str(kernel), inputs_np=inputs_np)
+        # Some extracted intents pre-materialize helper tensors like row/col indices and
+        # omit original ABI inputs (e.g. per-element repeats). For native baselines,
+        # pass through those baseline-only tensors when available.
+        if str(kernel) == "repeat_interleave_self_tensor1d" and "repeats" in (ctx.get("baseline") or {}) and "repeats" not in inputs_np:
+            try:
+                inputs_np["repeats"] = np.asarray(ctx["baseline"]["repeats"])
+            except Exception:
+                pass
         native_fn, native_module, native_meta = _build_native_launch_fn(
             kernel=str(kernel),
             inputs_np=inputs_np,
