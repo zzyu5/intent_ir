@@ -77,6 +77,38 @@ def _addmm2d_intent() -> IntentFunction:
     )
 
 
+def _addmm2d_intent_no_cast() -> IntentFunction:
+    # backend_legalize may drop no-op casts; support the cast-free variant.
+    return IntentFunction.from_json_dict(
+        {
+            "name": "addmm2d",
+            "tensors": {
+                "mat1": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+                "mat2": {"dtype": "f32", "shape": ["K", "N"], "layout": "row_major"},
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "mm_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "scaled_mm": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "scaled_bias": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "matmul",
+                    "inputs": ["mat1", "mat2"],
+                    "output": "mm_out",
+                    "attrs": {"transpose_a": False, "transpose_b": False},
+                },
+                {"op": "mul", "inputs": ["mm_out", "alpha"], "output": "scaled_mm"},
+                {"op": "mul", "inputs": ["input", "beta"], "output": "scaled_bias"},
+                {"op": "add", "inputs": ["scaled_mm", "scaled_bias"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_cuda_real_mlir_mm2d_lowering_uses_matmul_tile_v2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     intent = _mm2d_intent()
@@ -101,3 +133,15 @@ def test_cuda_real_mlir_addmm2d_lowering_fuses_alpha_beta(monkeypatch: pytest.Mo
     assert "vector.load %input[" in out.module_text
     _verify_with_mlir_opt(out.module_text)
 
+
+def test_cuda_real_mlir_addmm2d_lowering_fuses_alpha_beta_without_cast(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    intent = _addmm2d_intent_no_cast()
+    mod = to_mlir(intent)
+    mod.meta["shape_bindings"] = {"M": 16, "K": 32, "N": 16}
+    out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "matmul_tile_v2"
+    assert "memref.load %alpha[%c0]" in out.module_text
+    assert "memref.load %beta[%c0]" in out.module_text
+    assert "vector.load %input[" in out.module_text
+    _verify_with_mlir_opt(out.module_text)

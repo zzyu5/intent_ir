@@ -2041,30 +2041,45 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "col_mask": None,
                                 }
 
-            if matmul_v1 is None and intent_name == "addmm2d" and op_names == ["matmul", "mul", "mul", "add", "cast"]:
-                op0, op1, op2, op3, op4 = ops_list
-                ins0 = _op_inputs(op0)
-                out0 = _op_out(op0)
-                ins1 = _op_inputs(op1)
-                out1 = _op_out(op1)
-                ins2 = _op_inputs(op2)
-                out2 = _op_out(op2)
-                ins3 = _op_inputs(op3)
-                out3 = _op_out(op3)
-                ins4 = _op_inputs(op4)
-                out4 = _op_out(op4)
-                attrs4 = dict(getattr(op4, "attrs", {}) or {})
-                to4 = str(attrs4.get("to") or "f32").strip().lower()
+            if matmul_v1 is None and intent_name == "addmm2d" and tuple(op_names) in {
+                ("matmul", "mul", "mul", "add"),
+                ("matmul", "mul", "mul", "add", "cast"),
+            }:
+                cast_op = ops_list[-1] if op_names[-1] == "cast" else None
+                if cast_op is not None:
+                    matmul_op, mul_a, mul_b, add_op, cast_op = ops_list
+                else:
+                    matmul_op, mul_a, mul_b, add_op = ops_list
+
+                ins0 = _op_inputs(matmul_op)
+                out0 = _op_out(matmul_op)
+                ins1 = _op_inputs(mul_a)
+                out1 = _op_out(mul_a)
+                ins2 = _op_inputs(mul_b)
+                out2 = _op_out(mul_b)
+                ins3 = _op_inputs(add_op)
+                out3 = _op_out(add_op)
+
+                if cast_op is not None:
+                    ins4 = _op_inputs(cast_op)
+                    out4 = _op_out(cast_op)
+                    attrs4 = dict(getattr(cast_op, "attrs", {}) or {})
+                    to4 = str(attrs4.get("to") or "f32").strip().lower()
+                    out_ok = (
+                        len(ins4) == 1
+                        and out4 == str(out_name)
+                        and str(ins4[0]) == str(out3)
+                        and to4 in {"f32", "float32"}
+                    )
+                else:
+                    out_ok = (out3 == str(out_name))
 
                 if (
                     len(ins0) == 2
                     and len(ins1) == 2
                     and len(ins2) == 2
                     and len(ins3) == 2
-                    and len(ins4) == 1
-                    and out4 == str(out_name)
-                    and str(ins4[0]) == str(out3)
-                    and to4 in {"f32", "float32"}
+                    and out_ok
                 ):
                     # scaled_mm = mul(mm_out, alpha) (alpha is scalar)
                     # Identify alpha/beta via scalar-ness in arg_specs.
