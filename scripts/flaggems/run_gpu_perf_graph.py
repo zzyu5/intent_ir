@@ -1444,6 +1444,27 @@ def _build_native_launch_fn(
                 "launch_source": "torch.addmv:out",
             }
 
+        if kernel_name == "mv2d":
+            # `mv2d` coverage specs include an "Inp" tensor for the addmv-shaped intent,
+            # which collides with the `mv(inp, vec)` signature in FlagGems and can
+            # cause heuristic arg binding to pass the 1D Inp vector as the 2D matrix.
+            # Bind explicitly to ensure `inp` is the [N, M] matrix.
+            mat = _pick_tensor("A", "mat")
+            vec = _pick_tensor("B", "vec").reshape(-1)
+            out = _pick_tensor("C", "Out", "out", "output", required=False)
+            if out is None:
+                out = torch.empty((int(mat.shape[0]),), device=mat.device, dtype=mat.dtype)
+
+            def _run() -> None:
+                with _use_gems(["mv"]):
+                    torch.mv(mat, vec, out=out)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": "torch.mv:out",
+            }
+
         if kernel_name == "flip2d":
             inp = _pick_tensor("inp", "input", "A", "x")
 
