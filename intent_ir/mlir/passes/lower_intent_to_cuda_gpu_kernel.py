@@ -9360,9 +9360,45 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
         if elems_per_thread == 1:
             idx_ssa = "%lin"
+            precomputed: dict[str, tuple[str, str]] | None = None
+            if intent_name == "logspace1d":
+                # `logspace1d` has multiple scalar inputs; loading them per-element is
+                # expensive for tiny N (e.g. N=64). Broadcast lane0 scalar loads across
+                # each warp via `gpu.shuffle idx`.
+                precomputed = {}
+                c32_idx = _fresh("c32_idx")
+                lane = _fresh("lane")
+                is_lane0 = _fresh("is_lane0")
+                c0_i32 = _fresh("c0_i32")
+                c32_i32 = _fresh("c32_i32")
+                c0f = _fresh("c0f")
+                lines.append(f"      {c32_idx} = arith.constant 32 : index")
+                lines.append(f"      {lane} = arith.remui %tid, {c32_idx} : index")
+                lines.append(f"      {is_lane0} = arith.cmpi eq, {lane}, %c0 : index")
+                lines.append(f"      {c0_i32} = arith.constant 0 : i32")
+                lines.append(f"      {c32_i32} = arith.constant 32 : i32")
+                lines.append(f"      {c0f} = arith.constant 0.0 : f32")
+                for scalar_name in ("start", "end", "denom", "log_base"):
+                    if scalar_name not in arg_specs:
+                        continue
+                    if str(arg_specs[scalar_name].get("broadcast") or "") != "scalar":
+                        continue
+                    scalar_memref = str(arg_specs[scalar_name]["memref"])
+                    lane0 = _fresh(f"{scalar_name}_lane0")
+                    loaded = _fresh(f"{scalar_name}_loaded")
+                    sh = _fresh(f"{scalar_name}_sh")
+                    ok = _fresh(f"{scalar_name}_ok")
+                    lines.append(f"      {lane0} = scf.if {is_lane0} -> (f32) {{")
+                    lines.append(f"        {loaded} = memref.load {arg_ssa[scalar_name]}[%c0] : {scalar_memref}")
+                    lines.append(f"        scf.yield {loaded} : f32")
+                    lines.append("      } else {")
+                    lines.append(f"        scf.yield {c0f} : f32")
+                    lines.append("      }")
+                    lines.append(f"      {sh}, {ok} = gpu.shuffle idx {lane0}, {c0_i32}, {c32_i32} : f32")
+                    precomputed[str(scalar_name)] = (str(sh), "f32")
             lines.append(f"      %pred = arith.cmpi ult, {idx_ssa}, %c_total : index")
             lines.append("      scf.if %pred {")
-            lines.extend(_emit_elementwise_for_index(idx_ssa))
+            lines.extend(_emit_elementwise_for_index(idx_ssa, precomputed=precomputed))
             lines.append("      }")
         else:
             lines.append(f"      %c_elems = arith.constant {int(elems_per_thread)} : index")
