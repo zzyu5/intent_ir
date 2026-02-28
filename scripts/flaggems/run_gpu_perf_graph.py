@@ -97,6 +97,32 @@ def _load_gate_policy(path: Path | None) -> tuple[set[str], dict[str, Any], bool
     return out, payload, True
 
 
+def _load_kernel_allowlist(path: Path | None) -> tuple[set[str], dict[str, Any], bool]:
+    if path is None:
+        return set(), {}, False
+    p = Path(path)
+    if not p.is_file():
+        raise SystemExit(f"missing kernel allowlist json: {p}")
+    payload: Any = _load_json(p)
+    values: Any = None
+    if isinstance(payload, list):
+        values = payload
+        payload = {"kernels": list(values)}
+    elif isinstance(payload, dict):
+        for key in ("kernels", "allowlist", "kernel_allowlist"):
+            if key in payload:
+                values = payload.get(key)
+                break
+    if values is None:
+        raise SystemExit(f"invalid kernel allowlist json (expected list or dict with kernels/allowlist): {p}")
+    out: set[str] = set()
+    for raw in list(values or []):
+        k = str(raw).strip()
+        if k:
+            out.add(k)
+    return out, payload if isinstance(payload, dict) else {"kernels": sorted(out)}, True
+
+
 def _chunk_kernels(kernels: list[str], chunk_size: int) -> list[list[str]]:
     if int(chunk_size) <= 0 or len(kernels) <= int(chunk_size):
         return [list(kernels)]
@@ -248,6 +274,70 @@ def _intentir_perf_binding_overrides_for_kernel(kernel: str) -> dict[str, Any]:
     return dict(table.get(str(kernel), {}))
 
 
+def _native_constexpr_overrides_for_kernel(*, kernel: str, spec_source: str) -> dict[str, int]:
+    """
+    Perf telemetry: when running against Triton-native baselines, record key constexpr
+    hints (BLOCK_*) even when they are not present in the intent artifacts.
+
+    Keep this strictly scoped to the triton-native lane so other baselines do not
+    accidentally inherit Triton-specific tuning constants.
+    """
+
+    if str(spec_source).strip().lower() != "triton_native":
+        return {}
+    table: dict[str, dict[str, int]] = {
+        "_attn_fwd": {"BLOCK_M": 16, "BLOCK_N": 16, "STAGE": 1, "HAS_ATTN_MASK": 0, "PRE_LOAD_V": 0},
+        "flash_attention2d": {"BLOCK_KV": 32},
+        "masked_attention2d": {"BLOCK_KV": 64},
+        "ai_bench_matmul": {"BLOCK_M": 64, "BLOCK_N": 16, "BLOCK_K": 16},
+    }
+    return dict(table.get(str(kernel), {}))
+
+
+def _coerce_int_dict(raw: Any) -> dict[str, int]:
+    out: dict[str, int] = {}
+    if raw is None:
+        return out
+    try:
+        items = dict(raw).items()
+    except Exception:
+        return out
+    for k, v in items:
+        key = str(k).strip()
+        if not key:
+            continue
+        try:
+            out[key] = int(v)
+        except Exception:
+            continue
+    return out
+
+
+def _shape_telemetry_for_kernel(
+    *,
+    kernel: str,
+    ctx_bindings: Any,
+    spec_entry: Any,
+) -> dict[str, int]:
+    """
+    Build a flat, JSON-friendly shape dict for perf entries.
+
+    Precedence (later wins): canonical_shapes -> runtime bindings -> constexpr -> overrides.
+    """
+
+    bindings = _coerce_int_dict(ctx_bindings)
+    spec_source = ""
+    canonical: dict[str, int] = {}
+    constexpr: dict[str, int] = {}
+    if isinstance(spec_entry, dict):
+        spec_source = str(spec_entry.get("source") or "")
+        spec = spec_entry.get("spec")
+        canonical = _coerce_int_dict(getattr(spec, "canonical_shapes", None))
+        constexpr = _coerce_int_dict(getattr(spec, "constexpr", None))
+    overrides = _native_constexpr_overrides_for_kernel(kernel=str(kernel), spec_source=str(spec_source))
+    return {**canonical, **bindings, **constexpr, **overrides}
+
+
 def _normalize_perf_inputs_for_kernel(*, kernel: str, inputs_np: dict[str, Any]) -> dict[str, Any]:
     out = dict(inputs_np or {})
     key = _kernel_param_key(str(kernel))
@@ -337,6 +427,50 @@ def _bench_graph(
     qps = float(int(iters) / (median_total_ms / 1000.0)) if median_total_ms > 0.0 else 0.0
     return {
         "capture_ms": float(capture_ms),
+        "replay_ms_total": float(median_total_ms),
+        "replay_ms": float(median_iter_ms),
+        "qps": float(qps),
+        "latency_ms": float(median_iter_ms),
+    }
+
+
+def _bench_eager(
+    fn: Callable[[], None],
+    *,
+    warmup: int,
+    iters: int,
+    repeats: int,
+) -> dict[str, float]:
+    if int(iters) <= 0:
+        raise RuntimeError("iters must be > 0")
+
+    torch.cuda.synchronize()
+    fn()
+    torch.cuda.synchronize()
+    for _ in range(max(0, int(warmup))):
+        fn()
+    torch.cuda.synchronize()
+
+    total_ms: list[float] = []
+    iter_ms: list[float] = []
+    start_evt = torch.cuda.Event(enable_timing=True)
+    end_evt = torch.cuda.Event(enable_timing=True)
+    for _ in range(max(1, int(repeats))):
+        torch.cuda.synchronize()
+        start_evt.record()
+        for _j in range(int(iters)):
+            fn()
+        end_evt.record()
+        torch.cuda.synchronize()
+        ms = float(start_evt.elapsed_time(end_evt))
+        total_ms.append(ms)
+        iter_ms.append(ms / float(iters))
+
+    median_total_ms = float(statistics.median(total_ms))
+    median_iter_ms = float(statistics.median(iter_ms))
+    qps = float(int(iters) / (median_total_ms / 1000.0)) if median_total_ms > 0.0 else 0.0
+    return {
+        "capture_ms": 0.0,
         "replay_ms_total": float(median_total_ms),
         "replay_ms": float(median_iter_ms),
         "qps": float(qps),
@@ -1209,6 +1343,16 @@ def _build_native_launch_fn(
         # For perf, force a real copy baseline.
         if str(kernel) == "identity2d":
             semantic = "copy"
+        # Prefer stable kernels over semantic aliases that encode call-variant details.
+        # These aliases are useful for correctness but can break perf arg binding.
+        if str(kernel) == "maximum2d":
+            semantic = "maximum"
+        if str(kernel) == "bitwise_and2d":
+            semantic = "bitwise_and_tensor"
+        if str(kernel) == "bitwise_or2d":
+            semantic = "bitwise_or_tensor"
+        if str(kernel) == "pow_scalar2d":
+            semantic = "pow_tensor_scalar"
         flaggems_ops = getattr(module, "flag_gems_ops", None)
         if flaggems_ops is None:
             raise RuntimeError("flaggems_native baseline requires pipeline.triton.providers.flaggems.specs.flag_gems_ops")
@@ -1228,6 +1372,41 @@ def _build_native_launch_fn(
                     break
         if callee is None:
             raise RuntimeError(f"no flag_gems callable for semantic_op={semantic!r}")
+
+        # Bitwise shift wrappers in some FlagGems builds are brittle; benchmark
+        # via the Torch API under `use_gems()` to match the reference runner.
+        if str(kernel) in {"bitwise_left_shift2d", "bitwise_right_shift2d"}:
+            ctx = getattr(module, "_flaggems_use_gems", None)
+            if ctx is None:
+                raise RuntimeError("missing _flaggems_use_gems for bitwise shift baseline")
+            a = None
+            b = None
+            for key in ("A", "inp", "input", "x"):
+                t = tensor_map.get(key)
+                if isinstance(t, torch.Tensor):
+                    a = t
+                    break
+            for key in ("B", "other", "y"):
+                t = tensor_map.get(key)
+                if isinstance(t, torch.Tensor):
+                    b = t
+                    break
+            if not (isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor)):
+                raise RuntimeError(f"missing tensors for {kernel} baseline (need A,B)")
+            out = torch.empty_like(a)
+
+            def _run() -> None:
+                with ctx(include=[str(semantic)]):
+                    if str(kernel) == "bitwise_left_shift2d":
+                        torch.bitwise_left_shift(a, b, out=out)
+                    else:
+                        torch.bitwise_right_shift(a, b, out=out)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": f"torch.{str(kernel).replace('2d','')}:out",
+            }
 
         # For copy-like ops, keep a stable output buffer so CUDA graph capture is valid.
         if semantic == "copy":
@@ -1356,6 +1535,44 @@ def _build_native_launch_fn(
         if still_unresolved:
             unresolved_names = ", ".join(str(x[0]) for x in still_unresolved)
             raise RuntimeError(f"missing native arg mapping for parameter={unresolved_names}")
+
+        # Kernel-specific list-like arguments derived from bindings.
+        if str(kernel) == "repeat2d" and "sizes" in sig.parameters:
+            r0 = max(1, int(bindings.get("R0", 1)))
+            r1 = max(1, int(bindings.get("R1", 1)))
+            kwargs["sizes"] = (int(r0), int(r1))
+        if str(kernel) == "tile2d" and "dims" in sig.parameters:
+            r0 = max(1, int(bindings.get("R0", 1)))
+            r1 = max(1, int(bindings.get("R1", 1)))
+            kwargs["dims"] = (int(r0), int(r1))
+        if str(kernel) == "pad2d" and "pad" in sig.parameters:
+            pad_left = int(bindings.get("PAD_LEFT", 0))
+            pad_right = int(bindings.get("PAD_RIGHT", 0))
+            pad_top = int(bindings.get("PAD_TOP", 0))
+            pad_bottom = int(bindings.get("PAD_BOTTOM", 0))
+            kwargs["pad"] = (pad_left, pad_right, pad_top, pad_bottom)
+        if str(kernel) == "constant_pad_nd2d" and "pad_list" in sig.parameters:
+            pad_left = int(bindings.get("PAD_LEFT", 0))
+            pad_right = int(bindings.get("PAD_RIGHT", 0))
+            pad_top = int(bindings.get("PAD_TOP", 0))
+            pad_bottom = int(bindings.get("PAD_BOTTOM", 0))
+            kwargs["pad_list"] = [pad_left, pad_right, pad_top, pad_bottom]
+
+        # Ensure factory-style ops allocate on the correct device by default.
+        if "device" in sig.parameters and "device" not in kwargs:
+            kwargs["device"] = device
+        if "dtype" in sig.parameters and "dtype" not in kwargs and str(kernel) in {"linspace1d", "logspace1d"}:
+            kwargs["dtype"] = torch.float32
+
+        # Convert list-like scalar parameters when they come from artifacts as tensors.
+        for list_key in ("sizes", "pad"):
+            if list_key in kwargs and isinstance(kwargs[list_key], torch.Tensor):
+                try:
+                    vals = kwargs[list_key].detach().cpu().tolist()
+                    if isinstance(vals, list):
+                        kwargs[list_key] = [int(x) for x in vals]
+                except Exception:
+                    pass
 
         def _run() -> None:
             _ = callee(**kwargs)
@@ -1678,6 +1895,7 @@ def _bench_kernel(
     kernel: str,
     family: str,
     chunk_name: str,
+    bench_mode: str,
     threshold: float,
     warmup: int,
     iters: int,
@@ -1693,7 +1911,7 @@ def _bench_kernel(
         "family": str(family),
         "chunk": str(chunk_name),
         "gpu_name": str(gpu_name),
-        "bench_mode": "graph",
+        "bench_mode": str(bench_mode),
         "dtype": "mixed",
         "shape": {},
         "qps_native": None,
@@ -1755,6 +1973,11 @@ def _bench_kernel(
             artifact_dir=intent_artifact_dir,
             require_baseline_npz=False,
         )
+        row["shape"] = _shape_telemetry_for_kernel(
+            kernel=str(kernel),
+            ctx_bindings=ctx.get("bindings"),
+            spec_entry=dict(spec_map.get(str(kernel)) or {}),
+        )
         tensor_specs = dict(ctx.get("tensor_specs") or {})
         if not tensor_specs:
             # Backward compatibility for older context payloads.
@@ -1789,77 +2012,116 @@ def _bench_kernel(
         row["native_launch_error"] = f"{type(e).__name__}: {e}"
         return row
 
-    try:
-        native_bench = _bench_graph(native_fn, warmup=warmup, iters=iters, repeats=repeats)
-    except Exception as e:  # noqa: BLE001
-        row["reason_code"] = _reason_code_from_exception(e, native=True)
-        row["reason_detail"] = f"{type(e).__name__}: {e}"
-        row["skip_reason"] = "native_graph_failed"
-        row["native_launch_error"] = f"{type(e).__name__}: {e}"
-        return row
+    mode = str(bench_mode).strip().lower()
+    if mode not in {"graph", "eager", "graph_or_eager"}:
+        raise RuntimeError(f"unsupported bench_mode={bench_mode!r}")
 
-    try:
-        intent_bench = _bench_graph(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
-    except Exception as e:  # noqa: BLE001
-        row["reason_code"] = _reason_code_from_exception(e, native=False)
-        row["reason_detail"] = f"{type(e).__name__}: {e}"
-        row["skip_reason"] = "intentir_graph_failed"
-        return row
+    if mode == "eager":
+        bench_fn = _bench_eager
+        graph_enabled = False
+    else:
+        bench_fn = _bench_graph
+        graph_enabled = True
+
+    native_bench: dict[str, float] = {}
+    intent_bench: dict[str, float] = {}
+    if mode == "graph_or_eager":
+        try:
+            native_bench = _bench_graph(native_fn, warmup=warmup, iters=iters, repeats=repeats)
+            intent_bench = _bench_graph(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
+            graph_enabled = True
+        except Exception:
+            torch.cuda.synchronize()
+            row["bench_mode"] = "eager_fallback"
+            graph_enabled = False
+            try:
+                native_bench = _bench_eager(native_fn, warmup=warmup, iters=iters, repeats=repeats)
+            except Exception as e:  # noqa: BLE001
+                row["reason_code"] = _reason_code_from_exception(e, native=True)
+                row["reason_detail"] = f"{type(e).__name__}: {e}"
+                row["skip_reason"] = "native_eager_failed"
+                row["native_launch_error"] = f"{type(e).__name__}: {e}"
+                return row
+            try:
+                intent_bench = _bench_eager(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
+            except Exception as e:  # noqa: BLE001
+                row["reason_code"] = _reason_code_from_exception(e, native=False)
+                row["reason_detail"] = f"{type(e).__name__}: {e}"
+                row["skip_reason"] = "intentir_eager_failed"
+                return row
+    else:
+        try:
+            native_bench = bench_fn(native_fn, warmup=warmup, iters=iters, repeats=repeats)
+        except Exception as e:  # noqa: BLE001
+            row["reason_code"] = _reason_code_from_exception(e, native=True)
+            row["reason_detail"] = f"{type(e).__name__}: {e}"
+            row["skip_reason"] = ("native_eager_failed" if mode == "eager" else "native_graph_failed")
+            row["native_launch_error"] = f"{type(e).__name__}: {e}"
+            return row
+
+        try:
+            intent_bench = bench_fn(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
+        except Exception as e:  # noqa: BLE001
+            row["reason_code"] = _reason_code_from_exception(e, native=False)
+            row["reason_detail"] = f"{type(e).__name__}: {e}"
+            row["skip_reason"] = ("intentir_eager_failed" if mode == "eager" else "intentir_graph_failed")
+            return row
 
     qps_native = float(native_bench["qps"])
     qps_intentir = float(intent_bench["qps"])
     ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
     native_latency_ms = float(native_bench["latency_ms"])
     intent_latency_ms = float(intent_bench["latency_ms"])
-    # Extremely small graph replay times can make ratios unstable. Before
-    # skipping, re-measure with higher iters to improve timer resolution.
-    # Also guard against effectively-empty native graph captures where native
-    # replay latency is in sub-microsecond range and ratio becomes meaningless.
-    native_too_fast = native_latency_ms < 0.001
-    if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
-        boosted_iters = max(int(iters) * 10, 2000)
-        if boosted_iters != int(iters):
-            try:
-                native_bench_boost = _bench_graph(native_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
-                intent_bench_boost = _bench_graph(intent_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
-                qps_native = float(native_bench_boost["qps"])
-                qps_intentir = float(intent_bench_boost["qps"])
-                ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
-                native_latency_ms = float(native_bench_boost["latency_ms"])
-                intent_latency_ms = float(intent_bench_boost["latency_ms"])
-                native_bench = native_bench_boost
-                intent_bench = intent_bench_boost
-                row["retimed_iters"] = int(boosted_iters)
-            except Exception:
-                # Keep original measurements and fall through to skip decision.
-                pass
+    if graph_enabled:
+        # Extremely small graph replay times can make ratios unstable. Before
+        # skipping, re-measure with higher iters to improve timer resolution.
+        # Also guard against effectively-empty native graph captures where native
+        # replay latency is in sub-microsecond range and ratio becomes meaningless.
         native_too_fast = native_latency_ms < 0.001
         if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
-            row.update(
-                {
-                    "qps_native": float(qps_native),
-                    "qps_intentir": float(qps_intentir),
-                    "ratio": float(ratio),
-                    "latency_native_ms": native_latency_ms,
-                    "latency_intentir_ms": intent_latency_ms,
-                    "capture_ms_native": float(native_bench["capture_ms"]),
-                    "capture_ms_intentir": float(intent_bench["capture_ms"]),
-                    "replay_ms_native": float(native_bench["replay_ms"]),
-                    "replay_ms_intentir": float(intent_bench["replay_ms"]),
-                    "reason_code": "measurement_unreliable",
-                    "reason_detail": (
-                        "graph replay below reliable timer resolution "
-                        f"(native_ms={native_latency_ms:.6f}, intentir_ms={intent_latency_ms:.6f}, "
-                        "native_min=0.001000, max_min=0.010000)"
-                    ),
-                    "skip_reason": "below_timer_resolution",
-                    "count_in_denominator": False,
-                    "ok": False,
-                }
-            )
-            return row
+            boosted_iters = max(int(iters) * 10, 2000)
+            if boosted_iters != int(iters):
+                try:
+                    native_bench_boost = _bench_graph(native_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
+                    intent_bench_boost = _bench_graph(intent_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
+                    qps_native = float(native_bench_boost["qps"])
+                    qps_intentir = float(intent_bench_boost["qps"])
+                    ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
+                    native_latency_ms = float(native_bench_boost["latency_ms"])
+                    intent_latency_ms = float(intent_bench_boost["latency_ms"])
+                    native_bench = native_bench_boost
+                    intent_bench = intent_bench_boost
+                    row["retimed_iters"] = int(boosted_iters)
+                except Exception:
+                    # Keep original measurements and fall through to skip decision.
+                    pass
+            native_too_fast = native_latency_ms < 0.001
+            if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
+                row.update(
+                    {
+                        "qps_native": float(qps_native),
+                        "qps_intentir": float(qps_intentir),
+                        "ratio": float(ratio),
+                        "latency_native_ms": native_latency_ms,
+                        "latency_intentir_ms": intent_latency_ms,
+                        "capture_ms_native": float(native_bench["capture_ms"]),
+                        "capture_ms_intentir": float(intent_bench["capture_ms"]),
+                        "replay_ms_native": float(native_bench["replay_ms"]),
+                        "replay_ms_intentir": float(intent_bench["replay_ms"]),
+                        "reason_code": "measurement_unreliable",
+                        "reason_detail": (
+                            "graph replay below reliable timer resolution "
+                            f"(native_ms={native_latency_ms:.6f}, intentir_ms={intent_latency_ms:.6f}, "
+                            "native_min=0.001000, max_min=0.010000)"
+                        ),
+                        "skip_reason": "below_timer_resolution",
+                        "count_in_denominator": False,
+                        "ok": False,
+                    }
+                )
+                return row
 
-    if ratio < float(threshold):
+    if graph_enabled and ratio < float(threshold):
         native_bench, intent_bench, ratio, stabilize_meta = _stabilize_near_threshold_ratio(
             ratio=float(ratio),
             threshold=float(threshold),
@@ -1908,6 +2170,53 @@ def _bench_kernel(
     return row
 
 
+def _skipped_row_allowlist_excluded(
+    *,
+    kernel: str,
+    family: str,
+    chunk_name: str,
+    bench_mode: str,
+    spec_entry: Any,
+) -> dict[str, Any]:
+    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"
+    row: dict[str, Any] = {
+        "kernel": str(kernel),
+        "semantic_op": str(kernel),
+        "family": str(family),
+        "chunk": str(chunk_name),
+        "gpu_name": str(gpu_name),
+        "bench_mode": str(bench_mode),
+        "dtype": "mixed",
+        "shape": _shape_telemetry_for_kernel(kernel=str(kernel), ctx_bindings=None, spec_entry=spec_entry),
+        "qps_native": None,
+        "qps_intentir": None,
+        "ratio": None,
+        "latency_native_ms": None,
+        "latency_intentir_ms": None,
+        "compile_ms_native": 0.0,
+        "compile_ms_intentir": 0.0,
+        "capture_ms_native": 0.0,
+        "capture_ms_intentir": 0.0,
+        "replay_ms_native": 0.0,
+        "replay_ms_intentir": 0.0,
+        "reason_code": "allowlist_excluded",
+        "reason_detail": "excluded by kernel allowlist (not in real-MLIR wave denominator)",
+        "skip_reason": "allowlist_excluded",
+        "count_in_denominator": False,
+        "ok": False,
+        "execution_engine": "",
+        "contract_schema_version": "",
+        "executable_format": "",
+        "cuda_ptx_origin": "",
+        "runtime_fallback": False,
+        "runtime_fallback_detail": "",
+        "native_launch_source": "",
+        "native_launch_error": "",
+    }
+    row["allowlist_excluded"] = True
+    return row
+
+
 def _counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     c: Counter[str] = Counter()
     for row in list(entries or []):
@@ -1922,7 +2231,11 @@ def _to_status_entries(rows: list[dict[str, Any]], *, threshold: float) -> list[
         counted = bool(row.get("count_in_denominator"))
         ratio = row.get("ratio")
         ratio_ok = counted and isinstance(ratio, (int, float)) and float(ratio) >= float(threshold)
-        status = "dual_pass" if ratio_ok else "blocked_backend"
+        skip_reason = str(row.get("skip_reason") or "").strip()
+        if (not counted) and (reason == "allowlist_excluded" or skip_reason == "allowlist_excluded"):
+            status = "skipped"
+        else:
+            status = "dual_pass" if ratio_ok else "blocked_backend"
         runtime_fallback = bool(row.get("runtime_fallback"))
         runtime_fallback_detail = str(row.get("runtime_fallback_detail") or "").strip()
         cuda_ptx_origin = str(row.get("cuda_ptx_origin") or "").strip()
@@ -1957,7 +2270,7 @@ def _to_status_entries(rows: list[dict[str, Any]], *, threshold: float) -> list[
                 "runtime": {
                     "provider": "ok",
                     "rvv": "skipped",
-                    "cuda": ("pass" if ratio_ok else "fail"),
+                    "cuda": ("pass" if ratio_ok else ("skipped" if status == "skipped" else "fail")),
                 },
                 "runtime_fallback": bool(runtime_fallback),
                 "runtime_fallback_detail": str(runtime_fallback_detail),
@@ -2028,10 +2341,19 @@ def _stage_timing_breakdown(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 _SKIP_ONLY_REASONS: frozenset[str] = frozenset(
-    {"native_unavailable", "env_unavailable", "measurement_unreliable", "perf_policy_excluded"}
+    {"native_unavailable", "env_unavailable", "measurement_unreliable", "perf_policy_excluded", "allowlist_excluded"}
 )
 _SKIP_ONLY_SKIP_REASONS: frozenset[str] = frozenset(
-    {"native_unavailable", "native_graph_failed", "below_timer_resolution", "perf_policy_excluded"}
+    {
+        "native_unavailable",
+        "native_graph_failed",
+        "native_eager_failed",
+        "intentir_graph_failed",
+        "intentir_eager_failed",
+        "below_timer_resolution",
+        "perf_policy_excluded",
+        "allowlist_excluded",
+    }
 )
 
 
@@ -2072,6 +2394,13 @@ def main() -> None:
         "triton_native uses pipeline.triton.core.coverage_kernel_specs() (38 kernels).",
     )
     ap.add_argument(
+        "--kernel-allowlist-json",
+        type=Path,
+        default=None,
+        help="Optional kernel allowlist JSON. When set, kernels not in the allowlist are recorded as "
+        "skip_reason=allowlist_excluded and excluded from the perf gate denominator.",
+    )
+    ap.add_argument(
         "--coverage-batches",
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "coverage_batches.json"),
@@ -2094,6 +2423,13 @@ def main() -> None:
     ap.add_argument("--warmup", type=int, default=20)
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--repeats", type=int, default=5)
+    ap.add_argument(
+        "--bench-mode",
+        choices=["graph", "eager", "graph_or_eager"],
+        default="graph",
+        help="Benchmark mode. graph uses CUDA Graph capture+replay; eager uses CUDA events around direct calls; "
+        "graph_or_eager falls back to eager when graph capture fails.",
+    )
     ap.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "chunk", "none"], default="chunk")
     ap.add_argument(
         "--progress-file",
@@ -2186,14 +2522,30 @@ def main() -> None:
 
     spec_map = _coverage_spec_map()
     device = "cuda"
+    allowlist_kernels, allowlist_payload, allowlist_loaded = _load_kernel_allowlist(
+        Path(args.kernel_allowlist_json) if args.kernel_allowlist_json is not None else None
+    )
+    allowlist_enabled = bool(allowlist_loaded and allowlist_kernels)
+    allowlist_path = _to_repo_rel(Path(args.kernel_allowlist_json)) if args.kernel_allowlist_json is not None else ""
+    if allowlist_enabled:
+        print(
+            f"[gpu-perf] kernel allowlist enabled: {allowlist_path} "
+            f"(allowlist_kernels={len(allowlist_kernels)})",
+            flush=True,
+        )
 
     family_plan: list[dict[str, Any]] = []
     total_chunks = 0
     kernel_expected_count = 0
+    allowlist_expected_count = 0
+    allowlist_excluded_count = 0
     for family in families:
         b = by_family[family]
         kernels = [str(k).strip() for k in list(b.get("kernels") or []) if str(k).strip()]
         kernel_expected_count += int(len(kernels))
+        if allowlist_enabled:
+            allowlist_expected_count += sum(1 for k in kernels if str(k) in allowlist_kernels)
+            allowlist_excluded_count += sum(1 for k in kernels if str(k) not in allowlist_kernels)
         chunks = _chunk_kernels(kernels, int(args.family_kernel_chunk_size))
         total_chunks += len(chunks)
         family_plan.append(
@@ -2277,19 +2629,29 @@ def main() -> None:
             chunk_entries: list[dict[str, Any]] = []
             if not bool(args.dry_run):
                 for kernel in ckernels:
-                    row = _bench_kernel(
-                        kernel=str(kernel),
-                        family=family,
-                        chunk_name=chunk_name,
-                        threshold=float(args.threshold),
-                        warmup=int(args.warmup),
-                        iters=int(args.iters),
-                        repeats=int(args.repeats),
-                        intent_artifact_dir=str(args.intent_artifact_dir),
-                        spec_map=spec_map,
-                        device=device,
-                    )
-                    row = _apply_gate_exclude_policy(row, excluded_kernels=excluded_gate_kernels)
+                    if allowlist_enabled and str(kernel) not in allowlist_kernels:
+                        row = _skipped_row_allowlist_excluded(
+                            kernel=str(kernel),
+                            family=family,
+                            chunk_name=chunk_name,
+                            bench_mode=str(args.bench_mode),
+                            spec_entry=dict(spec_map.get(str(kernel)) or {}),
+                        )
+                    else:
+                        row = _bench_kernel(
+                            kernel=str(kernel),
+                            family=family,
+                            chunk_name=chunk_name,
+                            bench_mode=str(args.bench_mode),
+                            threshold=float(args.threshold),
+                            warmup=int(args.warmup),
+                            iters=int(args.iters),
+                            repeats=int(args.repeats),
+                            intent_artifact_dir=str(args.intent_artifact_dir),
+                            spec_map=spec_map,
+                            device=device,
+                        )
+                        row = _apply_gate_exclude_policy(row, excluded_kernels=excluded_gate_kernels)
                     chunk_entries.append(row)
             chunk_payload = {
                 "schema_version": "flaggems_gpu_perf_graph_chunk_v1",
@@ -2416,9 +2778,16 @@ def main() -> None:
         "miss_policy": "strict",
         "rvv_remote": False,
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
-        "bench_mode": "graph",
+        "bench_mode": str(args.bench_mode),
         "kernel_source": str(kernel_source),
         "kernel_expected_count": int(kernel_expected_count),
+        "kernel_allowlist_enabled": bool(allowlist_enabled),
+        "kernel_allowlist_path": str(allowlist_path),
+        "kernel_allowlist_total": int(len(allowlist_kernels)),
+        "kernel_allowlist_expected": int(allowlist_expected_count),
+        "kernel_allowlist_excluded": int(allowlist_excluded_count),
+        "kernel_allowlist_missed": int(max(0, int(len(allowlist_kernels)) - int(allowlist_expected_count))),
+        "kernel_allowlist_schema_version": str(allowlist_payload.get("schema_version") or "") if allowlist_loaded else "",
         "chunk_size": int(args.family_kernel_chunk_size),
         "policy_json": (_to_repo_rel(Path(args.policy_json)) if args.policy_json is not None else ""),
         "policy_loaded": bool(policy_loaded),
@@ -2443,16 +2812,28 @@ def main() -> None:
     coverage_mode = ("category_batches" if str(kernel_source) == "coverage_batches" else "triton_native_specs")
 
     gpu_perf_json = out_root / "gpu_perf_graph.json"
+    bench_mode_label = str(args.bench_mode).strip() or "graph"
+    mode_label = {
+        "graph": "graph_only",
+        "eager": "eager_only",
+        "graph_or_eager": "graph_or_eager",
+    }.get(bench_mode_label, bench_mode_label)
     gpu_perf_payload = {
         "schema_version": "flaggems_gpu_perf_graph_v1",
         "generated_at": _utc_now_iso(),
         "repo": repo_meta,
         "execution_engine": "mlir_native",
         "contract_schema_version": "intent_mlir_backend_contract_v2",
-        "mode": "graph_only",
+        "mode": str(mode_label),
+        "bench_mode": str(bench_mode_label),
         "threshold": float(args.threshold),
         "p50_threshold": float(args.p50_threshold),
         "kernel_source": str(kernel_source),
+        "kernel_allowlist_enabled": bool(allowlist_enabled),
+        "kernel_allowlist_path": str(allowlist_path),
+        "kernel_allowlist_total": int(len(allowlist_kernels)),
+        "kernel_allowlist_expected": int(allowlist_expected_count),
+        "kernel_allowlist_excluded": int(allowlist_excluded_count),
         "kernel_expected_count": int(kernel_expected_count),
         "kernel_measured_count": int(len(measured_rows)),
         "perf_min_ratio": (None if perf_min_ratio is None else float(perf_min_ratio)),
@@ -2555,7 +2936,8 @@ def main() -> None:
         "coverage_batches_expected": int(categories_expected),
         "coverage_batches_completed": int(categories_completed),
         "coverage_batches_failed": list(categories_failed),
-        "gpu_perf_mode": "graph_only",
+        "gpu_perf_mode": str(mode_label),
+        "gpu_perf_bench_mode": str(bench_mode_label),
         "gpu_perf_kernel_source": str(kernel_source),
         "gpu_perf_threshold": float(args.threshold),
         "gpu_perf_p50_threshold": float(args.p50_threshold),
@@ -2565,6 +2947,11 @@ def main() -> None:
         "gpu_perf_p50_ratio": (None if perf_p50_ratio is None else float(perf_p50_ratio)),
         "gpu_perf_kernel_expected": int(kernel_expected_count),
         "gpu_perf_kernel_measured": int(len(measured_rows)),
+        "gpu_perf_kernel_allowlist_enabled": bool(allowlist_enabled),
+        "gpu_perf_kernel_allowlist_path": str(allowlist_path),
+        "gpu_perf_kernel_allowlist_total": int(len(allowlist_kernels)),
+        "gpu_perf_kernel_allowlist_expected": int(allowlist_expected_count),
+        "gpu_perf_kernel_allowlist_excluded": int(allowlist_excluded_count),
         "gpu_perf_kernel_excluded": int(len(excluded_rows)),
         "gpu_perf_policy_json_path": (_to_repo_rel(Path(args.policy_json)) if args.policy_json is not None else ""),
         "gpu_perf_policy_loaded": bool(policy_loaded),

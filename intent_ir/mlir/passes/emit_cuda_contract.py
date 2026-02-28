@@ -171,6 +171,30 @@ def build_cuda_contract_from_intent(
     if source_module is not None:
         artifacts["dialect_version"] = str(source_module.dialect_version)
         artifacts["symbols"] = [str(x) for x in list(source_module.symbols or []) if str(x).strip()]
+        meta = dict(source_module.meta or {})
+        for key in (
+            "cuda_real_mlir_kernel_kind",
+            "cuda_real_mlir_elems_per_thread",
+            "cuda_real_mlir_output_total",
+            "cuda_real_mlir_launch_override",
+            "cuda_real_mlir_attention_cfg",
+            "cuda_real_mlir_matmul_cfg",
+        ):
+            if key not in meta:
+                continue
+            val = meta.get(key)
+            if val is None:
+                continue
+            if key in {"cuda_real_mlir_elems_per_thread", "cuda_real_mlir_output_total"}:
+                try:
+                    artifacts[key] = int(val)
+                except Exception:
+                    continue
+            elif key in {"cuda_real_mlir_launch_override", "cuda_real_mlir_attention_cfg", "cuda_real_mlir_matmul_cfg"}:
+                if isinstance(val, Mapping):
+                    artifacts[key] = dict(val)
+            else:
+                artifacts[key] = str(val)
     if artifact_module_path:
         artifacts["mlir_module_path"] = str(artifact_module_path)
     exe = _resolve_executable(

@@ -10,6 +10,7 @@ from .extract_gpu_module_llvm import extract_gpu_module_llvm
 from .lower_intent_to_cuda_gpu_kernel import lower_intent_to_cuda_gpu_kernel
 from .lower_intent_to_llvm_dialect import lower_intent_to_llvm_dialect
 from .normalize_symbols import normalize_symbols
+from .rewrite_cuda_nv_exp2f_calls import rewrite_cuda_nv_exp2f_calls
 from .set_llvm_target_triple import set_llvm_target_triple
 
 PASS_REGISTRY = {
@@ -24,6 +25,7 @@ PASS_REGISTRY = {
     "ensure_llvm_ir_text": ensure_llvm_ir_text,
     "set_llvm_target_triple": set_llvm_target_triple,
     "extract_gpu_module_llvm": extract_gpu_module_llvm,
+    "rewrite_cuda_nv_exp2f_calls": rewrite_cuda_nv_exp2f_calls,
     "emit_cuda_contract": emit_cuda_contract,
     "emit_rvv_contract": emit_rvv_contract,
 }

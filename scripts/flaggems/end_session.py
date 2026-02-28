@@ -23,6 +23,8 @@ from pipeline.triton.providers.flaggems.workflow import (
     write_handoff,
 )
 
+DEFAULT_CURRENT_STATUS = ROOT / "workflow" / "flaggems" / "state" / "current_status.json"
+
 
 def _to_repo_rel(path: Path) -> str:
     try:
@@ -57,6 +59,12 @@ def main() -> None:
     ap.add_argument("--active-batch", type=Path, default=None)
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
+    ap.add_argument(
+        "--current-status",
+        type=Path,
+        default=DEFAULT_CURRENT_STATUS,
+        help="Optional current_status.json to update latest_artifacts (default: workflow/flaggems/state/current_status.json).",
+    )
     ap.add_argument("--run-summary", type=Path, required=True)
     ap.add_argument("--status-converged", type=Path, required=True)
     ap.add_argument("--summary", required=True, help="One-line summary for this session.")
@@ -114,6 +122,18 @@ def main() -> None:
 
     append_progress_log(progress_log_path=args.progress_log, entry=entry)
 
+    if args.current_status is not None and Path(args.current_status).is_file():
+        current_status = load_json(Path(args.current_status))
+        current_status["latest_artifacts"] = {
+            "run_summary": _to_repo_rel(args.run_summary),
+            "status_converged": _to_repo_rel(args.status_converged),
+        }
+        current_status["updated_at"] = utc_now_iso()
+        Path(args.current_status).write_text(
+            json.dumps(current_status, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
     handoff = [
         "# FlagGems Session Handoff",
         "",
@@ -132,6 +152,8 @@ def main() -> None:
 
     print(f"Progress log appended: {args.progress_log}")
     print(f"Handoff updated: {args.handoff}")
+    if args.current_status is not None and Path(args.current_status).is_file():
+        print(f"Current status updated: {args.current_status}")
 
 
 if __name__ == "__main__":

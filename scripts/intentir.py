@@ -226,6 +226,65 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             cmd.extend(["--family", str(fam)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
+    if args.suite == "gpu-perf-wave-allowlist":
+        rc = _run(
+            _python_cmd("scripts/flaggems/build_coverage_batches.py"),
+            stream=bool(args.stream),
+            dry_run=bool(args.dry_run),
+            env_overrides=env_overrides,
+        )
+        if rc != 0:
+            return rc
+        wave = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "wave9")).strip() or "wave9"
+        allowlist_json = ROOT / "workflow" / "flaggems" / "state" / f"cuda_real_mlir_{wave}_kernels.json"
+        if not allowlist_json.is_file():
+            allowlist_json = ROOT / "workflow" / "flaggems" / "state" / "cuda_real_mlir_wave9_kernels.json"
+        cmd = _python_cmd(
+            "scripts/flaggems/run_gpu_perf_graph.py",
+            "--kernel-source",
+            "coverage_batches",
+            "--kernel-allowlist-json",
+            str(allowlist_json),
+            "--bench-mode",
+            "eager",
+            "--monitor-only",
+            "--out-root",
+            str(out_root),
+            "--family-kernel-chunk-size",
+            str(int(args.family_kernel_chunk_size)),
+            "--threshold",
+            str(float(args.gpu_perf_threshold)),
+            "--p50-threshold",
+            str(float(args.gpu_perf_p50_threshold)),
+            "--warmup",
+            str(int(args.perf_warmup)),
+            "--iters",
+            str(int(args.perf_iters)),
+            "--repeats",
+            str(int(args.perf_repeats)),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+            "--progress-style",
+            str(args.progress_style),
+            "--progress-file",
+            str(progress_file),
+            "--resume" if args.resume else "--no-resume",
+            "--stream" if args.stream else "--no-stream",
+        )
+        intent_artifact_dir = str(getattr(args, "gpu_perf_intent_artifact_dir", "") or "").strip()
+        if not intent_artifact_dir:
+            intent_artifact_dir = _infer_full196_artifact_dir()
+        if intent_artifact_dir:
+            cmd.extend(["--intent-artifact-dir", str(intent_artifact_dir)])
+        if str(args.gpu_perf_policy_json).strip():
+            cmd.extend(["--policy-json", str(args.gpu_perf_policy_json)])
+        for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
+            if str(kernel).strip():
+                cmd.extend(["--gate-exclude-kernel", str(kernel)])
+        for fam in list(args.family or []):
+            cmd.extend(["--family", str(fam)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
+
     if args.suite == "triton-smoke":
         cmd = _python_cmd(
             "scripts/flaggems/run_multibackend_matrix.py",
@@ -640,6 +699,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "flaggems-full196",
             "gpu-perf-graph",
             "gpu-perf-triton-native",
+            "gpu-perf-wave-allowlist",
             "flaggems-coverage-single",
             "triton-smoke",
             "tilelang-smoke",
