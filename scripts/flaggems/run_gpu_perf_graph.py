@@ -777,6 +777,26 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:ai_bench_correlation", "arg_count": 8}
 
+    if kernel_key == "aibenchdropout":
+        callee = getattr(module, "ai_bench_dropout_kernel", None)
+        if callable(callee):
+            x = _pick_tensor("x", "input", "inp", "X")
+            n = int(_pick_scalar("n_elements", "N", default=int(getattr(x, "numel", lambda: 0)())))
+            p = float(_pick_scalar("p", default=0.5))
+            seed = int(_pick_scalar("seed", default=123))
+            if n <= 0:
+                raise RuntimeError(f"invalid n_elements={n} for ai_bench_dropout native launch")
+
+            # Stable output buffers are required for CUDA graph capture.
+            out = torch.empty((n,), device=x.device, dtype=torch.float32)
+            block = 32
+            grid = (((int(n) + int(block) - 1) // int(block)),)
+
+            def _run() -> None:
+                callee[grid](x, out, n, float(p), int(seed), BLOCK_SIZE=int(block))
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_dropout", "arg_count": 5}
+
     if kernel_key == "aibenchrope":
         callee = getattr(module, "ai_bench_rope_fwd_kernel", None)
         if callable(callee):

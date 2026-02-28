@@ -11,6 +11,7 @@
     "addmv2d",
     "addr2d",
     "ai_bench_correlation",
+    "ai_bench_dropout",
     "ai_bench_layernorm",
     "ai_bench_rope",
     "ai_bench_resize",

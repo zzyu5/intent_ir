@@ -1607,6 +1607,7 @@ def lower_intent_to_cuda_gpu_kernel(
     row_layer_norm_residual2d: dict[str, Any] | None = None
     row_rms_norm2d: dict[str, Any] | None = None
     row_rms_norm_residual2d: dict[str, Any] | None = None
+    dropout_v1: dict[str, Any] | None = None
     correlation_v1: dict[str, Any] | None = None
     resize_v1: dict[str, Any] | None = None
     rope_v1: dict[str, Any] | None = None
@@ -1705,6 +1706,30 @@ def lower_intent_to_cuda_gpu_kernel(
                                 "OC": int(oc_dim),
                                 "H": int(h_dim),
                                 "W": int(w_dim),
+                            }
+            if op0_name == "dropout" and len(op0_inputs) == 3 and op0_out:
+                x_name = str(op0_inputs[0])
+                p_name = str(op0_inputs[1])
+                seed_name = str(op0_inputs[2])
+                out_name2 = str(op0_out)
+                x_tt = (intent.tensors or {}).get(x_name)
+                p_tt = (intent.tensors or {}).get(p_name)
+                seed_tt = (intent.tensors or {}).get(seed_name)
+                out_tt2 = (intent.tensors or {}).get(out_name2)
+                if x_tt is not None and p_tt is not None and seed_tt is not None and out_tt2 is not None:
+                    x_shape = list(getattr(x_tt, "shape", []) or [])
+                    out_shape2 = list(getattr(out_tt2, "shape", []) or [])
+                    if len(x_shape) == 1 and len(out_shape2) == 1:
+                        n_dim = _resolve_dim_int(x_shape[0], bindings)
+                        n2_dim = _resolve_dim_int(out_shape2[0], bindings)
+                        if n_dim is not None and n2_dim is not None and int(n_dim) > 0 and int(n2_dim) == int(n_dim):
+                            dropout_v1 = {
+                                "x": str(x_name),
+                                "p": str(p_name),
+                                "seed": str(seed_name),
+                                "out": str(out_name2),
+                                "N": int(n_dim),
+                                "n_rounds": 10,
                             }
 
         # Pattern: ai_bench_rope (const + rope) and ai_bench_warp (single warp op).
@@ -2283,7 +2308,161 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  gpu.module @kernels {")
     gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
-    if correlation_v1 is not None:
+    if dropout_v1 is not None:
+        kernel_kind = "dropout_philox_v1"
+        x_name = str(dropout_v1["x"])
+        p_name = str(dropout_v1["p"])
+        seed_name = str(dropout_v1["seed"])
+        out_name2 = str(dropout_v1["out"])
+        n_total = int(dropout_v1["N"])
+        n_rounds = int(dropout_v1.get("n_rounds") or 10)
+
+        if str(arg_specs[x_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_dropout expects f32 input tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_dropout expects f32 output tensor")
+        if str(arg_specs[p_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_dropout expects f32 scalar p")
+        if str(arg_specs[seed_name].get("memref_elem_ty")) != "i32":
+            raise RuntimeError("ai_bench_dropout expects i32 scalar seed")
+
+        x_memref = str(arg_specs[x_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        p_memref = str(arg_specs[p_name]["memref"])
+        seed_memref = str(arg_specs[seed_name]["memref"])
+
+        block_threads = 256
+        blocks = (int(n_total) + int(block_threads) - 1) // int(block_threads)
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(blocks), 1, 1]}
+
+        # Philox parameters (match Triton tl.rand default path for 32-bit offsets).
+        key_a = -1640531527  # 0x9E3779B9
+        key_b = -1150833019  # 0xBB67AE85
+        round_a = -766435501  # 0xD2511F53
+        round_b = -845247145  # 0xCD9E8D57
+        scale_f32 = _as_f32_const(4.6566127342e-10)
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cN = arith.constant {int(n_total)} : index")
+        lines.append(f"      %cBlock = arith.constant {int(block_threads)} : index")
+        lines.append("      %base = arith.muli %bid, %cBlock : index")
+        lines.append("      %idx = arith.addi %base, %tid : index")
+        lines.append("      %pred = arith.cmpi ult, %idx, %cN : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %xv = memref.load {arg_ssa[x_name]}[%idx] : {x_memref}")
+        lines.append(f"        %p_v = memref.load {arg_ssa[p_name]}[%c0] : {p_memref}")
+        lines.append(f"        %seed_i32 = memref.load {arg_ssa[seed_name]}[%c0] : {seed_memref}")
+        lines.append("        %off_i32 = arith.index_cast %idx : index to i32")
+
+        # Philox state: c0=offset, c1=c2=c3=0, k0=seed_lo, k1=0.
+        c0_rng = "%off_i32"
+        c1_rng = _fresh("c1")
+        c2_rng = _fresh("c2")
+        c3_rng = _fresh("c3")
+        k0_rng = "%seed_i32"
+        k1_rng = _fresh("k1")
+        lines.append(f"        {c1_rng} = arith.constant 0 : i32")
+        lines.append(f"        {c2_rng} = arith.constant 0 : i32")
+        lines.append(f"        {c3_rng} = arith.constant 0 : i32")
+        lines.append(f"        {k1_rng} = arith.constant 0 : i32")
+
+        c32_i64 = _fresh("c32_i64")
+        lines.append(f"        {c32_i64} = arith.constant 32 : i64")
+        c_round_a = _fresh("round_a")
+        c_round_b = _fresh("round_b")
+        c_key_a = _fresh("key_a")
+        c_key_b = _fresh("key_b")
+        lines.append(f"        {c_round_a} = arith.constant {int(round_a)} : i32")
+        lines.append(f"        {c_round_b} = arith.constant {int(round_b)} : i32")
+        lines.append(f"        {c_key_a} = arith.constant {int(key_a)} : i32")
+        lines.append(f"        {c_key_b} = arith.constant {int(key_b)} : i32")
+
+        def _umulhi_i32(a: str, b: str, *, tag: str) -> str:
+            a64 = _fresh(f"{tag}_a64")
+            b64 = _fresh(f"{tag}_b64")
+            prod64 = _fresh(f"{tag}_prod64")
+            hi64 = _fresh(f"{tag}_hi64")
+            hi32 = _fresh(f"{tag}_hi32")
+            lines.append(f"        {a64} = arith.extui {a} : i32 to i64")
+            lines.append(f"        {b64} = arith.extui {b} : i32 to i64")
+            lines.append(f"        {prod64} = arith.muli {a64}, {b64} : i64")
+            lines.append(f"        {hi64} = arith.shrui {prod64}, {c32_i64} : i64")
+            lines.append(f"        {hi32} = arith.trunci {hi64} : i64 to i32")
+            return hi32
+
+        for r in range(int(n_rounds)):
+            t_c0 = c0_rng
+            t_c2 = c2_rng
+            umulhi_b_c2 = _umulhi_i32(c_round_b, t_c2, tag=f"r{r}_b")
+            umulhi_a_c0 = _umulhi_i32(c_round_a, t_c0, tag=f"r{r}_a")
+
+            c0_x1 = _fresh(f"r{r}_c0_x1")
+            c0_new = _fresh(f"r{r}_c0")
+            c2_x1 = _fresh(f"r{r}_c2_x1")
+            c2_new = _fresh(f"r{r}_c2")
+            c1_new = _fresh(f"r{r}_c1")
+            c3_new = _fresh(f"r{r}_c3")
+            k0_new = _fresh(f"r{r}_k0")
+            k1_new = _fresh(f"r{r}_k1")
+
+            # c0 = umulhi(B, c2) ^ c1 ^ k0
+            lines.append(f"        {c0_x1} = arith.xori {umulhi_b_c2}, {c1_rng} : i32")
+            lines.append(f"        {c0_new} = arith.xori {c0_x1}, {k0_rng} : i32")
+            # c2 = umulhi(A, c0_old) ^ c3 ^ k1
+            lines.append(f"        {c2_x1} = arith.xori {umulhi_a_c0}, {c3_rng} : i32")
+            lines.append(f"        {c2_new} = arith.xori {c2_x1}, {k1_rng} : i32")
+            # c1 = B * c2_old
+            lines.append(f"        {c1_new} = arith.muli {c_round_b}, {t_c2} : i32")
+            # c3 = A * c0_old
+            lines.append(f"        {c3_new} = arith.muli {c_round_a}, {t_c0} : i32")
+            # raise key
+            lines.append(f"        {k0_new} = arith.addi {k0_rng}, {c_key_a} : i32")
+            lines.append(f"        {k1_new} = arith.addi {k1_rng}, {c_key_b} : i32")
+
+            c0_rng = c0_new
+            c1_rng = c1_new
+            c2_rng = c2_new
+            c3_rng = c3_new
+            k0_rng = k0_new
+            k1_rng = k1_new
+
+        # uint_to_uniform_float (uint32 -> float32 in [0,1))
+        z_i32 = _fresh("z")
+        o_i32 = _fresh("o")
+        neg_p = _fresh("negp")
+        neg0 = _fresh("neg0")
+        neg1 = _fresh("neg1")
+        abs_i32 = _fresh("abs")
+        abs_f = _fresh("absf")
+        scale = _fresh("scale")
+        rnd = _fresh("rnd")
+        lines.append(f"        {z_i32} = arith.constant 0 : i32")
+        lines.append(f"        {o_i32} = arith.constant 1 : i32")
+        lines.append(f"        {neg_p} = arith.cmpi slt, {c0_rng}, {z_i32} : i32")
+        lines.append(f"        {neg0} = arith.subi {z_i32}, {c0_rng} : i32")
+        lines.append(f"        {neg1} = arith.subi {neg0}, {o_i32} : i32")
+        lines.append(f"        {abs_i32} = arith.select {neg_p}, {neg1}, {c0_rng} : i32")
+        lines.append(f"        {abs_f} = arith.sitofp {abs_i32} : i32 to f32")
+        lines.append(f"        {scale} = arith.constant {scale_f32} : f32")
+        lines.append(f"        {rnd} = arith.mulf {abs_f}, {scale}{fm} : f32")
+
+        keep = _fresh("keep")
+        inv = _fresh("inv")
+        xs = _fresh("xs")
+        z_f32 = _fresh("zf")
+        outv = _fresh("outv")
+        lines.append(f"        {keep} = arith.cmpf ogt, {rnd}, %p_v{fm} : f32")
+        lines.append("        %c1f = arith.constant 1.0 : f32")
+        lines.append(f"        {inv} = arith.subf %c1f, %p_v{fm} : f32")
+        lines.append(f"        {xs} = arith.divf %xv, {inv}{fm} : f32")
+        lines.append(f"        {z_f32} = arith.constant 0.0 : f32")
+        lines.append(f"        {outv} = arith.select {keep}, {xs}, {z_f32} : f32")
+        lines.append(f"        memref.store {outv}, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("      }")
+    elif correlation_v1 is not None:
         kernel_kind = "correlation_v1"
         src0_name = str(correlation_v1["src0"])
         src1_name = str(correlation_v1["src1"])
