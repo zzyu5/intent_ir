@@ -46,6 +46,20 @@ def _runtime_io_spec_from_intent_json(intent_json: dict[str, Any]) -> dict[str, 
             if name:
                 used.add(name)
     external_inputs = sorted([n for n in used if n in tensors and n not in produced])
+    # Macro ops may reference scalar ABI inputs implicitly (not present in op.inputs).
+    has_macro = any(str(op.get("op") or "").strip() == "upsample_bicubic2d_aa" for op in ops)
+    if has_macro:
+        extra_scalars: list[str] = []
+        for name, spec in tensors.items():
+            nm = str(name).strip()
+            if not nm or nm in produced or nm in outputs or nm in external_inputs:
+                continue
+            if not isinstance(spec, dict):
+                continue
+            shape = list(spec.get("shape") or [])
+            if len(shape) == 0:
+                extra_scalars.append(nm)
+        external_inputs.extend(sorted(extra_scalars))
     io_names = list(external_inputs) + [n for n in outputs if n in tensors and n not in set(external_inputs)]
     io_tensors: dict[str, Any] = {}
     for name in io_names:
