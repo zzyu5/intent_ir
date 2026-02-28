@@ -332,6 +332,42 @@ def _ptx_entry_param_names(*, ptx_text: str, entry: str) -> list[str]:
     return out
 
 
+def _ptx_extract_entry_text(*, ptx_text: str, entry: str) -> str:
+    """
+    Extract just the PTX text for the requested `.visible .entry <entry>(...) { ... }`.
+
+    Launch inference must not scan helper `.func` bodies (e.g. libdevice) because PTX
+    register names like `%r1` are function-scoped and frequently reused, which can
+    cause false matches when looking for `%ctaid.x`/`%tid.x` bounds.
+    """
+
+    text = str(ptx_text or "")
+    wanted = str(entry or "").strip()
+    if not text.strip() or not wanted:
+        return text
+
+    m = re.search(rf"\.visible\s+\.entry\s+{re.escape(wanted)}\b", text)
+    if not m:
+        return text
+
+    start = int(m.start())
+    brace_start = text.find("{", int(m.end()))
+    if brace_start < 0:
+        return text[start:]
+
+    depth = 0
+    for i in range(brace_start, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return text[start:]
+
+
 def _infer_symbol_order_from_io_spec(io_spec: Mapping[str, Any]) -> list[str]:
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
     if not isinstance(tensors, Mapping):
@@ -460,6 +496,7 @@ def _infer_launch_grid_x_from_ptx(
     ptx_text: str,
     entry: str,
 ) -> dict[str, Any]:
+    ptx_entry_text = _ptx_extract_entry_text(ptx_text=str(ptx_text or ""), entry=str(entry or ""))
     out = dict(launch or {})
     grid = out.get("grid") if isinstance(out.get("grid"), list) else None
     if not isinstance(grid, list) or len(grid) != 3:
@@ -481,18 +518,18 @@ def _infer_launch_grid_x_from_ptx(
     param_to_index = {str(name): idx for idx, name in enumerate(param_names)}
 
     reg_to_param_index: dict[str, int] = {}
-    for m in re.finditer(r"ld\.param\.u32\s+(%r\d+),\s+\[([A-Za-z_.$][\w.$]*)\];", str(ptx_text or "")):
+    for m in re.finditer(r"ld\.param\.u32\s+(%r\d+),\s+\[([A-Za-z_.$][\w.$]*)\];", ptx_entry_text):
         reg = str(m.group(1))
         pname = str(m.group(2))
         if pname in param_to_index:
             reg_to_param_index[reg] = int(param_to_index[pname])
 
-    ctaid_x_regs = {str(m.group(1)) for m in re.finditer(r"mov\.u32\s+(%r\d+),\s+%ctaid\.x\s*;", str(ptx_text or ""))}
+    ctaid_x_regs = {str(m.group(1)) for m in re.finditer(r"mov\.u32\s+(%r\d+),\s+%ctaid\.x\s*;", ptx_entry_text)}
     if not ctaid_x_regs:
         return out
 
     bound_param_index: int | None = None
-    for m in re.finditer(r"setp\.[A-Za-z0-9_.]+\s+%p\d+,\s*(%r\d+),\s*(%r\d+)\s*;", str(ptx_text or "")):
+    for m in re.finditer(r"setp\.[A-Za-z0-9_.]+\s+%p\d+,\s*(%r\d+),\s*(%r\d+)\s*;", ptx_entry_text):
         lhs = str(m.group(1))
         rhs = str(m.group(2))
         if lhs in ctaid_x_regs and rhs in reg_to_param_index:
@@ -519,7 +556,7 @@ def _infer_launch_grid_x_from_ptx(
 
         for m in re.finditer(
             r"(setp\.[A-Za-z0-9_.]+)\s+%p\d+,\s*(%r\d+),\s*(-?[0-9]+)\s*;",
-            str(ptx_text or ""),
+            ptx_entry_text,
         ):
             pred = str(m.group(1))
             lhs = str(m.group(2))
@@ -531,7 +568,7 @@ def _infer_launch_grid_x_from_ptx(
         if immediate_bound is None:
             for m in re.finditer(
                 r"(setp\.[A-Za-z0-9_.]+)\s+%p\d+,\s*(-?[0-9]+),\s*(%r\d+)\s*;",
-                str(ptx_text or ""),
+                ptx_entry_text,
             ):
                 pred = str(m.group(1))
                 imm = _try_int(m.group(2))
@@ -562,7 +599,9 @@ def _ensure_launch_grid_block_defaults(
     *,
     launch: Mapping[str, Any],
     ptx_text: str,
+    entry: str,
 ) -> dict[str, Any]:
+    ptx_entry_text = _ptx_extract_entry_text(ptx_text=str(ptx_text or ""), entry=str(entry or ""))
     out = dict(launch or {})
     grid = out.get("grid") if isinstance(out.get("grid"), list) else None
     block = out.get("block") if isinstance(out.get("block"), list) else None
@@ -655,7 +694,7 @@ def _ensure_launch_grid_block_defaults(
         ):
             block_triplet = list(ptx_block_hint)
     if block_triplet[1] == 1 and block_triplet[2] == 1:
-        text = str(ptx_text or "")
+        text = str(ptx_entry_text or "")
         bx = _infer_tid_bound(text, axis="x")
         by = _infer_tid_bound(text, axis="y")
         if bx is not None and by is not None and bx > 0 and by > 1:
@@ -934,6 +973,7 @@ def lower_cuda_contract_to_kernel(
         launch = _ensure_launch_grid_block_defaults(
             launch=launch,
             ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
+            entry=str(exe_entry or contract.kernel_name or "intent"),
         )
         launch = _infer_launch_grid_x_from_ptx(
             launch=launch,
