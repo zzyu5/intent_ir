@@ -1607,6 +1607,7 @@ def lower_intent_to_cuda_gpu_kernel(
     row_layer_norm_residual2d: dict[str, Any] | None = None
     row_rms_norm2d: dict[str, Any] | None = None
     row_rms_norm_residual2d: dict[str, Any] | None = None
+    correlation_v1: dict[str, Any] | None = None
     resize_v1: dict[str, Any] | None = None
     rope_v1: dict[str, Any] | None = None
     warp_v1: dict[str, Any] | None = None
@@ -1660,6 +1661,51 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "OW": int(ow_dim),
                                     "hw_fl": 7,
                                 }
+            if op0_name == "correlation" and len(op0_inputs) == 3 and op0_out:
+                src0_name = str(op0_inputs[0])
+                src1_name = str(op0_inputs[1])
+                shift_name = str(op0_inputs[2])
+                out_name2 = str(op0_out)
+                src0_tt = (intent.tensors or {}).get(src0_name)
+                src1_tt = (intent.tensors or {}).get(src1_name)
+                shift_tt = (intent.tensors or {}).get(shift_name)
+                out_tt2 = (intent.tensors or {}).get(out_name2)
+                if src0_tt is not None and src1_tt is not None and shift_tt is not None and out_tt2 is not None:
+                    src0_shape = list(getattr(src0_tt, "shape", []) or [])
+                    src1_shape = list(getattr(src1_tt, "shape", []) or [])
+                    out_shape2 = list(getattr(out_tt2, "shape", []) or [])
+                    if len(src0_shape) == 3 and len(src1_shape) == 3 and len(out_shape2) == 3:
+                        ic_dim = _resolve_dim_int(src0_shape[0], bindings)
+                        h_dim = _resolve_dim_int(src0_shape[1], bindings)
+                        w_dim = _resolve_dim_int(src0_shape[2], bindings)
+                        oc_dim = _resolve_dim_int(out_shape2[0], bindings)
+                        oh_dim = _resolve_dim_int(out_shape2[1], bindings)
+                        ow_dim = _resolve_dim_int(out_shape2[2], bindings)
+                        if (
+                            ic_dim is not None
+                            and h_dim is not None
+                            and w_dim is not None
+                            and oc_dim is not None
+                            and oh_dim is not None
+                            and ow_dim is not None
+                            and int(ic_dim) > 0
+                            and int(h_dim) > 0
+                            and int(w_dim) > 0
+                            and int(oc_dim) > 0
+                            and int(oh_dim) == int(h_dim)
+                            and int(ow_dim) == int(w_dim)
+                            and list(src1_shape) == list(src0_shape)
+                        ):
+                            correlation_v1 = {
+                                "src0": str(src0_name),
+                                "src1": str(src1_name),
+                                "out": str(out_name2),
+                                "out_shift": str(shift_name),
+                                "IC": int(ic_dim),
+                                "OC": int(oc_dim),
+                                "H": int(h_dim),
+                                "W": int(w_dim),
+                            }
 
         # Pattern: ai_bench_rope (const + rope) and ai_bench_warp (single warp op).
         # These ops are non-elementwise (inputs may have different numel) and need
@@ -2237,7 +2283,87 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  gpu.module @kernels {")
     gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
-    if resize_v1 is not None:
+    if correlation_v1 is not None:
+        kernel_kind = "correlation_v1"
+        src0_name = str(correlation_v1["src0"])
+        src1_name = str(correlation_v1["src1"])
+        shift_name = str(correlation_v1["out_shift"])
+        out_name2 = str(correlation_v1["out"])
+        ic_dim = int(correlation_v1["IC"])
+        oc_dim = int(correlation_v1["OC"])
+        h_dim = int(correlation_v1["H"])
+        w_dim = int(correlation_v1["W"])
+
+        if str(arg_specs[src0_name].get("memref_elem_ty")) != "i8":
+            raise RuntimeError("ai_bench_correlation expects i8 src0 tensor")
+        if str(arg_specs[src1_name].get("memref_elem_ty")) != "i8":
+            raise RuntimeError("ai_bench_correlation expects i8 src1 tensor")
+        if str(arg_specs[shift_name].get("memref_elem_ty")) != "i32":
+            raise RuntimeError("ai_bench_correlation expects i32 out_shift scalar")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "i8":
+            raise RuntimeError("ai_bench_correlation expects i8 output tensor")
+
+        src0_memref = str(arg_specs[src0_name]["memref"])
+        src1_memref = str(arg_specs[src1_name]["memref"])
+        shift_memref = str(arg_specs[shift_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        block_w = 128
+        blocks_w = (int(w_dim) + int(block_w) - 1) // int(block_w)
+        # Match the Triton kernel's axis semantics: (width_block, height, out_channel).
+        launch_override = {"block": [int(block_w), 1, 1], "grid": [int(blocks_w), int(h_dim), int(oc_dim)]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_x = gpu.block_id x")
+        lines.append("      %bid_h = gpu.block_id y")
+        lines.append("      %bid_oc = gpu.block_id z")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cOC = arith.constant {int(oc_dim)} : index")
+        lines.append(f"      %cIC = arith.constant {int(ic_dim)} : index")
+        lines.append(f"      %cBlockW = arith.constant {int(block_w)} : index")
+        lines.append(f"      %cHW = arith.constant {int(h_dim * w_dim)} : index")
+
+        lines.append("      %pred_h = arith.cmpi ult, %bid_h, %cH : index")
+        lines.append("      %pred_oc = arith.cmpi ult, %bid_oc, %cOC : index")
+        lines.append("      %pred_ho = arith.andi %pred_h, %pred_oc : i1")
+        lines.append("      scf.if %pred_ho {")
+        lines.append("        %w_base = arith.muli %bid_x, %cBlockW : index")
+        lines.append("        %w = arith.addi %w_base, %tid : index")
+        lines.append("        %pred_w = arith.cmpi ult, %w, %cW : index")
+        lines.append("        %pred_ge = arith.cmpi uge, %w, %bid_oc : index")
+        lines.append("        %pred_store = arith.andi %pred_w, %pred_ge : i1")
+        lines.append("        scf.if %pred_store {")
+        lines.append("          %row = arith.muli %bid_h, %cW : index")
+        lines.append("          %base0 = arith.addi %row, %w : index")
+        lines.append("          %w_shift = arith.subi %w, %bid_oc : index")
+        lines.append("          %base1 = arith.addi %row, %w_shift : index")
+
+        lines.append("          %acc0 = arith.constant 0 : i32")
+        lines.append("          %acc = scf.for %ic = %c0 to %cIC step %c1 iter_args(%a = %acc0) -> (i32) {")
+        lines.append("            %ic_hw = arith.muli %ic, %cHW : index")
+        lines.append("            %idx0 = arith.addi %ic_hw, %base0 : index")
+        lines.append("            %idx1 = arith.addi %ic_hw, %base1 : index")
+        lines.append(f"            %v0_i8 = memref.load {arg_ssa[src0_name]}[%idx0] : {src0_memref}")
+        lines.append(f"            %v1_i8 = memref.load {arg_ssa[src1_name]}[%idx1] : {src1_memref}")
+        lines.append("            %v0_i32 = arith.extsi %v0_i8 : i8 to i32")
+        lines.append("            %v1_i32 = arith.extsi %v1_i8 : i8 to i32")
+        lines.append("            %prod = arith.muli %v0_i32, %v1_i32 : i32")
+        lines.append("            %a_next = arith.addi %a, %prod : i32")
+        lines.append("            scf.yield %a_next : i32")
+        lines.append("          }")
+
+        lines.append(f"          %shift_v = memref.load {arg_ssa[shift_name]}[%c0] : {shift_memref}")
+        lines.append("          %acc_shift = arith.shrsi %acc, %shift_v : i32")
+        lines.append("          %out_i8 = arith.trunci %acc_shift : i32 to i8")
+        lines.append("          %out_off = arith.muli %bid_oc, %cHW : index")
+        lines.append("          %out_idx = arith.addi %out_off, %base0 : index")
+        lines.append(f"          memref.store %out_i8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif resize_v1 is not None:
         kernel_kind = "resize_bilinear2x_hwfl7_v1"
         src_name = str(resize_v1["src"])
         out_name2 = str(resize_v1["out"])

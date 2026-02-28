@@ -738,6 +738,45 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:ai_bench_softmax", "arg_count": 4}
 
+    if kernel_key == "aibenchcorrelation":
+        callee = getattr(module, "ai_bench_correlation_kernel", None)
+        if callable(callee):
+            src0 = _pick_tensor("src0", "src0_ptr", "x0", "a")
+            src1 = _pick_tensor("src1", "src1_ptr", "x1", "b")
+            out_channel = int(_pick_scalar("out_channel", default=int(getattr(src0, "shape", [1])[0])))
+            in_channel = int(_pick_scalar("in_channel", default=int(getattr(src0, "shape", [1])[0])))
+            height = int(_pick_scalar("height", default=int(getattr(src0, "shape", [1, 1])[1])))
+            width = int(_pick_scalar("width", default=int(getattr(src0, "shape", [1, 1, 1])[2])))
+            out_shift = int(_pick_scalar("out_shift", default=0))
+
+            # Stable output buffers are required for CUDA graph capture.
+            out = torch.empty((out_channel, height, width), device=src0.device, dtype=src0.dtype)
+            block_h = 1
+            block_w = 8
+            block_ic = 64
+            grid = (
+                (int(width) + int(block_w) - 1) // int(block_w),
+                (int(height) + int(block_h) - 1) // int(block_h),
+                int(out_channel),
+            )
+
+            def _run() -> None:
+                callee[grid](
+                    src0,
+                    src1,
+                    out,
+                    out_channel,
+                    in_channel,
+                    height,
+                    width,
+                    out_shift,
+                    BLOCK_H=int(block_h),
+                    BLOCK_W=int(block_w),
+                    BLOCK_IC=int(block_ic),
+                )
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_correlation", "arg_count": 8}
+
     if kernel_key == "aibenchrope":
         callee = getattr(module, "ai_bench_rope_fwd_kernel", None)
         if callable(callee):
