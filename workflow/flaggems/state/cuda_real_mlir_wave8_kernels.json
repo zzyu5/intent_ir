@@ -12,6 +12,7 @@
     "addr2d",
     "ai_bench_layernorm",
     "ai_bench_rope",
+    "ai_bench_resize",
     "ai_bench_softmax",
     "ai_bench_warp",
     "angle2d",

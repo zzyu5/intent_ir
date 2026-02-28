@@ -760,6 +760,24 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:ai_bench_rope", "arg_count": 8}
 
+    if kernel_key == "aibenchresize":
+        callee = getattr(module, "ai_bench_resize_kernel", None)
+        if callable(callee):
+            src = _pick_tensor("src", "input", "inp", "x", "src_ptr")
+            c_dim = int(_pick_scalar("C", default=int(getattr(src, "shape", [1])[0])))
+            h_dim = int(_pick_scalar("H", default=int(getattr(src, "shape", [1, 1])[1])))
+            w_dim = int(_pick_scalar("W", default=int(getattr(src, "shape", [1, 1, 1])[2])))
+
+            # Stable output buffers are required for CUDA graph capture.
+            out = torch.empty((c_dim, 2 * h_dim, 2 * w_dim), device=src.device, dtype=src.dtype)
+            block_w = 128
+            grid = (2 * h_dim, c_dim, ((2 * int(w_dim)) + int(block_w) - 1) // int(block_w))
+
+            def _run() -> None:
+                callee[grid](src, out, c_dim, h_dim, w_dim, BLOCK_W=int(block_w))
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_resize", "arg_count": 6}
+
     if kernel_key == "aibenchwarp":
         callee = getattr(module, "ai_bench_warp_kernel", None)
         if callable(callee):
