@@ -10,12 +10,10 @@
 
 - Repo: `/home/kingdom/intentir`
 - Branch: `compiler-cleanup-v1`
-- HEAD: `4a4cb217e05592881446c0c0a6265902617c8b17`
-- 最新“真实执行/性能”证据对应的 commit：
+- Workspace commit：请在 repo 根目录执行 `git rev-parse HEAD` 获取（该值会随着提交而变化，不适合硬编码在文档里）。
+- 最新“真实执行/性能”证据对应的 commit（可核对且应保持可复现）：
   - perf v7 的 `run_summary.repo.head_commit = c4088ecb42878ecc1e301fe74a43297372c7cbe0`
-  - HEAD 相对该 commit 仅新增交接文档（不影响代码/性能结论）
 - 关键提交（按时间倒序）：
-  - `4a4cb21` `docs(handoff): real-mlir coverage+perf status and next plan`
   - `c4088ec` `workflow: log triton-native real-mlir perf smoke v7`
   - `d27db08` `refactor(workflow): only derive full196/gpu_perf from their lanes`
   - `35b4b5f` `workflow: rebuild state after attn warp reduction`
