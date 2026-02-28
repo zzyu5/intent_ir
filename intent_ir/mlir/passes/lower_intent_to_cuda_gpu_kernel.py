@@ -96,6 +96,8 @@ def _dtype_to_mlir(dtype: str) -> str:
         return "i1"
     if dt == "i8":
         return "i8"
+    if dt == "i16":
+        return "i16"
     if dt == "i32":
         return "i32"
     if dt == "i64":
@@ -1605,6 +1607,81 @@ def lower_intent_to_cuda_gpu_kernel(
     row_layer_norm_residual2d: dict[str, Any] | None = None
     row_rms_norm2d: dict[str, Any] | None = None
     row_rms_norm_residual2d: dict[str, Any] | None = None
+    rope_v1: dict[str, Any] | None = None
+    warp_v1: dict[str, Any] | None = None
+
+    # Pattern: ai_bench_rope (const + rope) and ai_bench_warp (single warp op).
+    # These ops are non-elementwise (inputs may have different numel) and need
+    # explicit index math, so we lower them as dedicated kernels.
+    ops_list = [op for op in list(intent.ops or []) if op is not None]
+    if ops_list:
+        last = ops_list[-1]
+        last_name = str(getattr(last, "op", "")).strip()
+        if last_name == "rope" and len(getattr(last, "inputs", []) or []) == 3:
+            inp_name = str((getattr(last, "inputs", []) or [])[0])
+            cos_name = str((getattr(last, "inputs", []) or [])[1])
+            sin_name = str((getattr(last, "inputs", []) or [])[2])
+            out_name2 = str(getattr(last, "output", "")).strip()
+            inp_tt = (intent.tensors or {}).get(inp_name)
+            cos_tt = (intent.tensors or {}).get(cos_name)
+            sin_tt = (intent.tensors or {}).get(sin_name)
+            out_tt2 = (intent.tensors or {}).get(out_name2)
+            if inp_tt is not None and cos_tt is not None and sin_tt is not None and out_tt2 is not None:
+                in_shape = list(getattr(inp_tt, "shape", []) or [])
+                cos_shape = list(getattr(cos_tt, "shape", []) or [])
+                sin_shape = list(getattr(sin_tt, "shape", []) or [])
+                out_shape2 = list(getattr(out_tt2, "shape", []) or [])
+                if len(in_shape) == 4 and len(out_shape2) == 4 and len(cos_shape) == 2 and len(sin_shape) == 2:
+                    seq_len = _resolve_dim_int(in_shape[0], bindings)
+                    batch_num = _resolve_dim_int(in_shape[1], bindings)
+                    head_num = _resolve_dim_int(in_shape[2], bindings)
+                    head_dim = _resolve_dim_int(in_shape[3], bindings)
+                    half = _resolve_dim_int(cos_shape[1], bindings)
+                    if (
+                        seq_len is not None
+                        and batch_num is not None
+                        and head_num is not None
+                        and head_dim is not None
+                        and half is not None
+                        and head_dim > 0
+                        and half > 0
+                        and head_dim == 2 * half
+                    ):
+                        rope_v1 = {
+                            "inp": str(inp_name),
+                            "cos": str(cos_name),
+                            "sin": str(sin_name),
+                            "out": str(out_name2),
+                            "SEQ_LEN": int(seq_len),
+                            "BATCH_NUM": int(batch_num),
+                            "HEAD_NUM": int(head_num),
+                            "HEAD_DIM": int(head_dim),
+                            "HALF": int(half),
+                        }
+        if last_name == "warp" and len(ops_list) == 1 and len(getattr(last, "inputs", []) or []) == 2:
+            src_name = str((getattr(last, "inputs", []) or [])[0])
+            off_name = str((getattr(last, "inputs", []) or [])[1])
+            out_name2 = str(getattr(last, "output", "")).strip()
+            src_tt = (intent.tensors or {}).get(src_name)
+            off_tt = (intent.tensors or {}).get(off_name)
+            out_tt2 = (intent.tensors or {}).get(out_name2)
+            if src_tt is not None and off_tt is not None and out_tt2 is not None:
+                src_shape = list(getattr(src_tt, "shape", []) or [])
+                off_shape = list(getattr(off_tt, "shape", []) or [])
+                out_shape2 = list(getattr(out_tt2, "shape", []) or [])
+                if len(src_shape) == 3 and len(off_shape) == 2 and len(out_shape2) == 3:
+                    c_dim = _resolve_dim_int(src_shape[0], bindings)
+                    h_dim = _resolve_dim_int(src_shape[1], bindings)
+                    w_dim = _resolve_dim_int(src_shape[2], bindings)
+                    if c_dim is not None and h_dim is not None and w_dim is not None and c_dim > 0 and h_dim > 0 and w_dim > 0:
+                        warp_v1 = {
+                            "src": str(src_name),
+                            "offset": str(off_name),
+                            "out": str(out_name2),
+                            "C": int(c_dim),
+                            "H": int(h_dim),
+                            "W": int(w_dim),
+                        }
     if out_rank in {1, 2}:
         red_sum_ops: list[tuple[int, Any]] = []
         red_max_ops: list[tuple[int, Any]] = []
@@ -2111,7 +2188,175 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  gpu.module @kernels {")
     gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
-    if row_masked_softmax_axis1 is not None:
+    if rope_v1 is not None:
+        kernel_kind = "rope_v1"
+        inp_name = str(rope_v1["inp"])
+        cos_name = str(rope_v1["cos"])
+        sin_name = str(rope_v1["sin"])
+        out_name2 = str(rope_v1["out"])
+        seq_len = int(rope_v1["SEQ_LEN"])
+        batch_num = int(rope_v1["BATCH_NUM"])
+        head_num = int(rope_v1["HEAD_NUM"])
+        head_dim = int(rope_v1["HEAD_DIM"])
+        half = int(rope_v1["HALF"])
+
+        if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_rope expects f32 input tensor")
+        if str(arg_specs[cos_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_rope expects f32 cos tensor")
+        if str(arg_specs[sin_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_rope expects f32 sin tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("ai_bench_rope expects f32 output tensor")
+
+        in_memref = str(arg_specs[inp_name]["memref"])
+        cos_memref = str(arg_specs[cos_name]["memref"])
+        sin_memref = str(arg_specs[sin_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        # Match the Triton kernel's grid mapping: (head, batch, seq).
+        launch_override = {"block": [256, 1, 1], "grid": [int(head_num), int(batch_num), int(seq_len)]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_head = gpu.block_id x")
+        lines.append("      %bid_batch = gpu.block_id y")
+        lines.append("      %bid_seq = gpu.block_id z")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cSeq = arith.constant {int(seq_len)} : index")
+        lines.append(f"      %cBatch = arith.constant {int(batch_num)} : index")
+        lines.append(f"      %cHead = arith.constant {int(head_num)} : index")
+        lines.append(f"      %cHeadDim = arith.constant {int(head_dim)} : index")
+        lines.append(f"      %cHalf = arith.constant {int(half)} : index")
+        lines.append("      %pred_head = arith.cmpi ult, %bid_head, %cHead : index")
+        lines.append("      %pred_batch = arith.cmpi ult, %bid_batch, %cBatch : index")
+        lines.append("      %pred_seq = arith.cmpi ult, %bid_seq, %cSeq : index")
+        lines.append("      %pred_hb = arith.andi %pred_head, %pred_batch : i1")
+        lines.append("      %pred_all = arith.andi %pred_hb, %pred_seq : i1")
+        lines.append("      scf.if %pred_all {")
+        lines.append("        %t0 = arith.muli %bid_seq, %cBatch : index")
+        lines.append("        %t1 = arith.addi %t0, %bid_batch : index")
+        lines.append("        %t2 = arith.muli %t1, %cHead : index")
+        lines.append("        %t3 = arith.addi %t2, %bid_head : index")
+        lines.append("        %base = arith.muli %t3, %cHeadDim : index")
+        lines.append("        %cos_base = arith.muli %bid_seq, %cHalf : index")
+        lines.append("        scf.for %j = %tid to %cHalf step %bdim {")
+        lines.append("          %idx1 = arith.addi %base, %j : index")
+        lines.append("          %j2 = arith.addi %j, %cHalf : index")
+        lines.append("          %idx2 = arith.addi %base, %j2 : index")
+        lines.append("          %cidx = arith.addi %cos_base, %j : index")
+        lines.append(f"          %x1 = memref.load {arg_ssa[inp_name]}[%idx1] : {in_memref}")
+        lines.append(f"          %x2 = memref.load {arg_ssa[inp_name]}[%idx2] : {in_memref}")
+        # Avoid SSA name collisions with memref arguments (e.g. `%cos`/`%sin`).
+        lines.append(f"          %cos_v = memref.load {arg_ssa[cos_name]}[%cidx] : {cos_memref}")
+        lines.append(f"          %sin_v = memref.load {arg_ssa[sin_name]}[%cidx] : {sin_memref}")
+        lines.append(f"          %x1c = arith.mulf %x1, %cos_v{fm} : f32")
+        lines.append(f"          %x2s = arith.mulf %x2, %sin_v{fm} : f32")
+        lines.append(f"          %y1 = arith.subf %x1c, %x2s{fm} : f32")
+        lines.append(f"          %x1s = arith.mulf %x1, %sin_v{fm} : f32")
+        lines.append(f"          %x2c = arith.mulf %x2, %cos_v{fm} : f32")
+        lines.append(f"          %y2 = arith.addf %x1s, %x2c{fm} : f32")
+        lines.append(f"          memref.store %y1, {arg_ssa[out_name2]}[%idx1] : {out_memref}")
+        lines.append(f"          memref.store %y2, {arg_ssa[out_name2]}[%idx2] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif warp_v1 is not None:
+        kernel_kind = "warp_v1"
+        src_name = str(warp_v1["src"])
+        offset_name = str(warp_v1["offset"])
+        out_name2 = str(warp_v1["out"])
+        c_dim = int(warp_v1["C"])
+        h_dim = int(warp_v1["H"])
+        w_dim = int(warp_v1["W"])
+
+        if str(arg_specs[src_name].get("memref_elem_ty")) != "i8":
+            raise RuntimeError("ai_bench_warp expects i8 src tensor")
+        if str(arg_specs[offset_name].get("memref_elem_ty")) != "i16":
+            raise RuntimeError("ai_bench_warp expects i16 offset tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "i8":
+            raise RuntimeError("ai_bench_warp expects i8 output tensor")
+
+        src_memref = str(arg_specs[src_name]["memref"])
+        offset_memref = str(arg_specs[offset_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        block_w = 128
+        blocks_w = (int(w_dim) + int(block_w) - 1) // int(block_w)
+        launch_override = {"block": [int(block_w), 1, 1], "grid": [int(h_dim), int(c_dim), int(blocks_w)]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_h = gpu.block_id x")
+        lines.append("      %bid_c = gpu.block_id y")
+        lines.append("      %bid_w = gpu.block_id z")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cC = arith.constant {int(c_dim)} : index")
+        lines.append(f"      %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"      %cBlockW = arith.constant {int(block_w)} : index")
+        lines.append("      %pred_h = arith.cmpi ult, %bid_h, %cH : index")
+        lines.append("      %pred_c = arith.cmpi ult, %bid_c, %cC : index")
+        lines.append("      %pred_hc = arith.andi %pred_h, %pred_c : i1")
+        lines.append("      scf.if %pred_hc {")
+        lines.append("        %w_base = arith.muli %bid_w, %cBlockW : index")
+        lines.append("        %w = arith.addi %w_base, %tid : index")
+        lines.append("        %pred_w = arith.cmpi ult, %w, %cW : index")
+        lines.append("        scf.if %pred_w {")
+        lines.append("          %off_base = arith.muli %bid_h, %cW : index")
+        lines.append("          %off_idx = arith.addi %off_base, %w : index")
+        lines.append(f"          %off_val = memref.load {arg_ssa[offset_name]}[%off_idx] : {offset_memref}")
+        lines.append("          %c8_i16 = arith.constant 8 : i16")
+        lines.append("          %off_hi = arith.shrsi %off_val, %c8_i16 : i16")
+        lines.append("          %off_int = arith.trunci %off_hi : i16 to i8")
+        lines.append("          %off_lsh = arith.shli %off_val, %c8_i16 : i16")
+        lines.append("          %off_rsh = arith.shrsi %off_lsh, %c8_i16 : i16")
+        lines.append("          %off_frac = arith.trunci %off_rsh : i16 to i8")
+        lines.append("          %w_i32 = arith.index_cast %w : index to i32")
+        lines.append("          %w_i8 = arith.trunci %w_i32 : i32 to i8")
+        lines.append("          %right_i8 = arith.subi %w_i8, %off_int : i8")
+        lines.append("          %c1_i8 = arith.constant 1 : i8")
+        lines.append("          %left_i8 = arith.subi %right_i8, %c1_i8 : i8")
+        lines.append("          %c0_i8 = arith.constant 0 : i8")
+        lines.append("          %pred_right = arith.cmpi sge, %right_i8, %c0_i8 : i8")
+        lines.append("          %pred_left = arith.cmpi sge, %left_i8, %c0_i8 : i8")
+        lines.append("          %mask_right = arith.andi %pred_w, %pred_right : i1")
+        lines.append("          %mask_left = arith.andi %pred_w, %pred_left : i1")
+        lines.append("          %t0 = arith.muli %bid_c, %cH : index")
+        lines.append("          %t1 = arith.addi %t0, %bid_h : index")
+        lines.append("          %src_base = arith.muli %t1, %cW : index")
+        lines.append("          %z_i8 = arith.constant 0 : i8")
+        lines.append("          %right_val = scf.if %mask_right -> (i8) {")
+        lines.append("            %ri32 = arith.extsi %right_i8 : i8 to i32")
+        lines.append("            %ridx = arith.index_cast %ri32 : i32 to index")
+        lines.append("            %src_idx = arith.addi %src_base, %ridx : index")
+        lines.append(f"            %rv = memref.load {arg_ssa[src_name]}[%src_idx] : {src_memref}")
+        lines.append("            scf.yield %rv : i8")
+        lines.append("          } else {")
+        lines.append("            scf.yield %z_i8 : i8")
+        lines.append("          }")
+        lines.append("          %left_val = scf.if %mask_left -> (i8) {")
+        lines.append("            %li32 = arith.extsi %left_i8 : i8 to i32")
+        lines.append("            %lidx = arith.index_cast %li32 : i32 to index")
+        lines.append("            %src_idx2 = arith.addi %src_base, %lidx : index")
+        lines.append(f"            %lv = memref.load {arg_ssa[src_name]}[%src_idx2] : {src_memref}")
+        lines.append("            scf.yield %lv : i8")
+        lines.append("          } else {")
+        lines.append("            scf.yield %z_i8 : i8")
+        lines.append("          }")
+        lines.append("          %rv16 = arith.extsi %right_val : i8 to i16")
+        lines.append("          %lv16 = arith.extsi %left_val : i8 to i16")
+        lines.append("          %rv16_sh = arith.shli %rv16, %c8_i16 : i16")
+        lines.append("          %diff_i8 = arith.subi %left_val, %right_val : i8")
+        lines.append("          %diff16 = arith.extsi %diff_i8 : i8 to i16")
+        lines.append("          %frac16 = arith.extsi %off_frac : i8 to i16")
+        lines.append("          %prod = arith.muli %diff16, %frac16 : i16")
+        lines.append("          %acc = arith.addi %rv16_sh, %prod : i16")
+        lines.append("          %out16 = arith.shrsi %acc, %c8_i16 : i16")
+        lines.append("          %out8 = arith.trunci %out16 : i16 to i8")
+        lines.append("          %out_idx = arith.addi %src_base, %w : index")
+        lines.append(f"          memref.store %out8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif row_masked_softmax_axis1 is not None:
         kernel_kind = "row_masked_softmax_axis1_v1"
         assert out_m is not None
         assert out_n is not None

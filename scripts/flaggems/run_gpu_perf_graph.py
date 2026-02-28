@@ -738,6 +738,47 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:ai_bench_softmax", "arg_count": 4}
 
+    if kernel_key == "aibenchrope":
+        callee = getattr(module, "ai_bench_rope_fwd_kernel", None)
+        if callable(callee):
+            inp = _pick_tensor("input", "inp", "x", "input_ptr")
+            cos = _pick_tensor("cos", "cos_ptr")
+            sin = _pick_tensor("sin", "sin_ptr")
+
+            seq_len = int(_pick_scalar("SEQ_LEN", "seq_len", default=int(getattr(inp, "shape", [1])[0])))
+            batch_num = int(_pick_scalar("BATCH_NUM", "batch_num", default=int(getattr(inp, "shape", [1, 1])[1])))
+            head_num = int(_pick_scalar("HEAD_NUM", "head_num", default=int(getattr(inp, "shape", [1, 1, 1])[2])))
+            head_dim = int(_pick_scalar("HEAD_DIM", "head_dim", default=int(getattr(inp, "shape", [1, 1, 1, 1])[3])))
+
+            # Stable output buffers are required for CUDA graph capture.
+            out = torch.empty((seq_len, batch_num, head_num, head_dim), device=inp.device, dtype=torch.float32)
+            grid = (head_num, batch_num, seq_len)
+            block = 32
+
+            def _run() -> None:
+                callee[grid](inp, out, cos, sin, seq_len, batch_num, head_num, head_dim, BLOCK_SIZE=block)
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_rope", "arg_count": 8}
+
+    if kernel_key == "aibenchwarp":
+        callee = getattr(module, "ai_bench_warp_kernel", None)
+        if callable(callee):
+            src = _pick_tensor("src", "input", "inp", "x", "src_ptr")
+            offset = _pick_tensor("offset", "offset_ptr")
+            c_dim = int(_pick_scalar("C", default=int(getattr(src, "shape", [1])[0])))
+            h_dim = int(_pick_scalar("H", default=int(getattr(src, "shape", [1, 1])[1])))
+            w_dim = int(_pick_scalar("W", default=int(getattr(src, "shape", [1, 1, 1])[2])))
+
+            # Stable output buffers are required for CUDA graph capture.
+            out = torch.empty((c_dim, h_dim, w_dim), device=src.device, dtype=src.dtype)
+            block_w = 128
+            grid = (h_dim, c_dim, (int(w_dim) + int(block_w) - 1) // int(block_w))
+
+            def _run() -> None:
+                callee[grid](src, offset, out, c_dim, h_dim, w_dim, BLOCK_W=int(block_w))
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_warp", "arg_count": 6}
+
     if kernel_key == "rmsnorm2d":
         callee = _pick_callable("rms_norm2d")
         if callee is not None:
