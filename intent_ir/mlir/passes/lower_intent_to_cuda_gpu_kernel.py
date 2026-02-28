@@ -1613,6 +1613,7 @@ def lower_intent_to_cuda_gpu_kernel(
     rope_v1: dict[str, Any] | None = None
     warp_v1: dict[str, Any] | None = None
     matmul_v1: dict[str, Any] | None = None
+    mlp2d_v1: dict[str, Any] | None = None
 
     ops_list = [op for op in list(intent.ops or []) if op is not None]
     if ops_list:
@@ -1876,10 +1877,10 @@ def lower_intent_to_cuda_gpu_kernel(
                                     and _elem(b_name) == "f32"
                                     and _elem(bias_name) == "f32"
                                     and _elem(str(out_name)) == "f32"
-                                ):
-                                    matmul_v1 = {
-                                        "A": a_name,
-                                        "B": b_name,
+                                    ):
+                                        matmul_v1 = {
+                                            "A": a_name,
+                                            "B": b_name,
                                         "out": str(out_name),
                                         "M": int(m),
                                         "N": int(n),
@@ -1892,6 +1893,64 @@ def lower_intent_to_cuda_gpu_kernel(
                                         "row_mask": None,
                                         "col_mask": None,
                                     }
+
+            # NOTE: backend_legalize may simplify bias broadcast into `add(matmul_out, Bias)` directly.
+            if matmul_v1 is None and intent_name == "matmul_bias_relu2d" and op_names == ["matmul", "add", "relu"]:
+                op0, op1, op2 = ops_list
+                ins0 = _op_inputs(op0)
+                out0 = _op_out(op0)
+                ins1 = _op_inputs(op1)
+                out1 = _op_out(op1)
+                ins2 = _op_inputs(op2)
+                out2 = _op_out(op2)
+                if (
+                    len(ins0) == 2
+                    and len(ins1) == 2
+                    and len(ins2) == 1
+                    and out2 == str(out_name)
+                    and str(ins2[0]) == str(out1)
+                    and set(map(str, ins1)) == {str(out0), "Bias"}
+                ):
+                    a_name, b_name = str(ins0[0]), str(ins0[1])
+                    bias_name = "Bias"
+                    a_dims = _dims(a_name)
+                    b_dims = _dims(b_name)
+                    c_dims = _dims(str(out_name))
+                    bias_dims = _dims(bias_name)
+                    if (
+                        a_dims
+                        and b_dims
+                        and c_dims
+                        and bias_dims
+                        and len(a_dims) == 2
+                        and len(b_dims) == 2
+                        and len(c_dims) == 2
+                        and len(bias_dims) == 1
+                    ):
+                        m, k = int(a_dims[0]), int(a_dims[1])
+                        k2, n = int(b_dims[0]), int(b_dims[1])
+                        if k2 == k and int(c_dims[0]) == m and int(c_dims[1]) == n and int(bias_dims[0]) == n:
+                            if (
+                                _elem(a_name) == "f32"
+                                and _elem(b_name) == "f32"
+                                and _elem(bias_name) == "f32"
+                                and _elem(str(out_name)) == "f32"
+                            ):
+                                matmul_v1 = {
+                                    "A": a_name,
+                                    "B": b_name,
+                                    "out": str(out_name),
+                                    "M": int(m),
+                                    "N": int(n),
+                                    "K": int(k),
+                                    "BM": 32,
+                                    "BN": 32,
+                                    "BK": 16,
+                                    "relu": True,
+                                    "bias": bias_name,
+                                    "row_mask": None,
+                                    "col_mask": None,
+                                }
 
             if matmul_v1 is None and intent_name == "matmul_fused_epilogue2d" and op_names == [
                 "matmul",
@@ -1984,8 +2043,8 @@ def lower_intent_to_cuda_gpu_kernel(
                                 _elem(a_name) == "f32"
                                 and _elem(b_name) == "f32"
                                 and _elem(bias_name) == "f32"
-                                and _elem(row_mask_name) == "i1"
-                                and _elem(col_mask_name) == "i1"
+                                and _elem(row_mask_name) in {"i1", "i8"}
+                                and _elem(col_mask_name) in {"i1", "i8"}
                                 and _elem(str(out_name)) == "f32"
                             ):
                                 matmul_v1 = {
@@ -2003,6 +2062,308 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "row_mask": row_mask_name,
                                     "col_mask": col_mask_name,
                                 }
+
+            # NOTE: backend_legalize may simplify bias broadcast and col-mask broadcast for this fused epilogue:
+            #   add_bias = add(matmul_out, Bias)
+            #   row_mask_bcast = broadcast_in_dim(RowMask, out_shape=[M,N], dims=[0])
+            #   mask = and(row_mask_bcast, ColMask)   # ColMask is rank-1 and broadcasted implicitly
+            #   C = where(mask, add_bias, 0.0)
+            if matmul_v1 is None and intent_name == "matmul_fused_epilogue2d" and op_names == [
+                "matmul",
+                "add",
+                "broadcast_in_dim",
+                "and",
+                "const",
+                "where",
+            ]:
+                op0, op1, op2, op3, op4, op5 = ops_list
+                ins0 = _op_inputs(op0)
+                out0 = _op_out(op0)
+                ins1 = _op_inputs(op1)
+                out1 = _op_out(op1)
+                ins2 = _op_inputs(op2)
+                out2 = _op_out(op2)
+                ins3 = _op_inputs(op3)
+                out3 = _op_out(op3)
+                out4 = _op_out(op4)
+                ins5 = _op_inputs(op5)
+                out5 = _op_out(op5)
+                attrs2 = dict(getattr(op2, "attrs", {}) or {})
+                attrs4 = dict(getattr(op4, "attrs", {}) or {})
+                if (
+                    len(ins0) == 2
+                    and len(ins1) == 2
+                    and len(ins2) == 1
+                    and len(ins3) == 2
+                    and not _op_inputs(op4)
+                    and len(ins5) == 3
+                    and out5 == str(out_name)
+                    and set(map(str, ins1)) == {str(out0), "Bias"}
+                    and str(ins2[0]) == "RowMask"
+                    and list(attrs2.get("broadcast_dims") or []) == [0]
+                    and list(attrs2.get("out_shape") or []) == ["M", "N"]
+                    and set(map(str, ins3)) == {str(out2), "ColMask"}
+                    and float(attrs4.get("value") or 0.0) == 0.0
+                    and str(attrs4.get("dtype") or "").strip() in {"", "f32"}
+                    and str(ins5[0]) == str(out3)
+                    and str(ins5[1]) == str(out1)
+                    and str(ins5[2]) == str(out4)
+                ):
+                    a_name, b_name = str(ins0[0]), str(ins0[1])
+                    bias_name = "Bias"
+                    row_mask_name = "RowMask"
+                    col_mask_name = "ColMask"
+                    a_dims = _dims(a_name)
+                    b_dims = _dims(b_name)
+                    c_dims = _dims(str(out_name))
+                    bias_dims = _dims(bias_name)
+                    rm_dims = _dims(row_mask_name)
+                    cm_dims = _dims(col_mask_name)
+                    if (
+                        a_dims
+                        and b_dims
+                        and c_dims
+                        and bias_dims
+                        and rm_dims
+                        and cm_dims
+                        and len(a_dims) == 2
+                        and len(b_dims) == 2
+                        and len(c_dims) == 2
+                        and len(bias_dims) == 1
+                        and len(rm_dims) == 1
+                        and len(cm_dims) == 1
+                    ):
+                        m, k = int(a_dims[0]), int(a_dims[1])
+                        k2, n = int(b_dims[0]), int(b_dims[1])
+                        if (
+                            k2 == k
+                            and int(c_dims[0]) == m
+                            and int(c_dims[1]) == n
+                            and int(bias_dims[0]) == n
+                            and int(rm_dims[0]) == m
+                            and int(cm_dims[0]) == n
+                        ):
+                            if (
+                                _elem(a_name) == "f32"
+                                and _elem(b_name) == "f32"
+                                and _elem(bias_name) == "f32"
+                                and _elem(row_mask_name) in {"i1", "i8"}
+                                and _elem(col_mask_name) in {"i1", "i8"}
+                                and _elem(str(out_name)) == "f32"
+                            ):
+                                matmul_v1 = {
+                                    "A": a_name,
+                                    "B": b_name,
+                                    "out": str(out_name),
+                                    "M": int(m),
+                                    "N": int(n),
+                                    "K": int(k),
+                                    "BM": 32,
+                                    "BN": 32,
+                                    "BK": 16,
+                                    "relu": False,
+                                    "bias": bias_name,
+                                    "row_mask": row_mask_name,
+                                    "col_mask": col_mask_name,
+                                }
+
+        # Pattern: mlp2d (fused 2x matmul + bias + relu + bias).
+        #
+        # Expected op graph:
+        #   aw1 = matmul(A, W1)
+        #   aw1_b1 = add(aw1, broadcast(b1))
+        #   hidden = max(aw1_b1, 0)
+        #   hw2 = matmul(hidden, W2)
+        #   C = add(hw2, broadcast(b2))
+        if mlp2d_v1 is None and intent_name == "mlp2d":
+            op_names = [str(getattr(op, "op", "")).strip() for op in ops_list]
+
+            def _op_inputs(op: Any) -> list[str]:
+                return [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+
+            def _op_out(op: Any) -> str:
+                return str(getattr(op, "output", "") or "").strip()
+
+            def _dims(name: str) -> list[int] | None:
+                spec = arg_specs.get(str(name))
+                if not isinstance(spec, dict):
+                    return None
+                dims = list(spec.get("dims") or [])
+                return [int(x) for x in dims] if dims else []
+
+            def _elem(name: str) -> str:
+                return str((arg_specs.get(str(name)) or {}).get("memref_elem_ty") or "").strip()
+
+            # NOTE: backend_legalize may simplify broadcast+add+max(.,0) into add+relu.
+            if op_names == ["matmul", "add", "relu", "matmul", "add"]:
+                op0, op1, op2, op3, op4 = ops_list
+                ins0, out0 = _op_inputs(op0), _op_out(op0)
+                ins1, out1 = _op_inputs(op1), _op_out(op1)
+                ins2, out2 = _op_inputs(op2), _op_out(op2)
+                ins3, out3 = _op_inputs(op3), _op_out(op3)
+                ins4, out4 = _op_inputs(op4), _op_out(op4)
+                if (
+                    len(ins0) == 2
+                    and len(ins1) == 2
+                    and len(ins2) == 1
+                    and len(ins3) == 2
+                    and len(ins4) == 2
+                    and out4 == str(out_name)
+                    and set(map(str, ins1)) == {str(out0), "b1"}
+                    and str(ins2[0]) == str(out1)
+                    and str(ins3[0]) == str(out2)
+                    and str(ins3[1]) == "W2"
+                    and set(map(str, ins4)) == {str(out3), "b2"}
+                ):
+                    a_name, w1_name = str(ins0[0]), str(ins0[1])
+                    b1_name = "b1"
+                    w2_name = "W2"
+                    b2_name = "b2"
+                    a_dims = _dims(a_name)
+                    w1_dims = _dims(w1_name)
+                    w2_dims = _dims(w2_name)
+                    c_dims = _dims(str(out_name))
+                    b1_dims = _dims(b1_name)
+                    b2_dims = _dims(b2_name)
+                    if (
+                        a_dims
+                        and w1_dims
+                        and w2_dims
+                        and c_dims
+                        and b1_dims
+                        and b2_dims
+                        and len(a_dims) == 2
+                        and len(w1_dims) == 2
+                        and len(w2_dims) == 2
+                        and len(c_dims) == 2
+                        and len(b1_dims) == 1
+                        and len(b2_dims) == 1
+                    ):
+                        m, k = int(a_dims[0]), int(a_dims[1])
+                        k1, h = int(w1_dims[0]), int(w1_dims[1])
+                        h2, n = int(w2_dims[0]), int(w2_dims[1])
+                        if (
+                            k1 == k
+                            and h2 == h
+                            and int(c_dims[0]) == m
+                            and int(c_dims[1]) == n
+                            and int(b1_dims[0]) == h
+                            and int(b2_dims[0]) == n
+                        ):
+                            if (
+                                _elem(a_name) == "f32"
+                                and _elem(w1_name) == "f32"
+                                and _elem(b1_name) == "f32"
+                                and _elem(w2_name) == "f32"
+                                and _elem(b2_name) == "f32"
+                                and _elem(str(out_name)) == "f32"
+                            ):
+                                mlp2d_v1 = {
+                                    "A": a_name,
+                                    "W1": w1_name,
+                                    "b1": b1_name,
+                                    "W2": w2_name,
+                                    "b2": b2_name,
+                                    "out": str(out_name),
+                                    "M": int(m),
+                                    "N": int(n),
+                                    "K": int(k),
+                                    "H": int(h),
+                                    "BM": 32,
+                                    "BN": 32,
+                                    "BK": 16,
+                                    "BH": 16,
+                                }
+
+            if op_names == ["matmul", "broadcast_in_dim", "add", "const", "max", "matmul", "broadcast_in_dim", "add"]:
+                op0, op1, op2, op3, op4, op5, op6, op7 = ops_list
+                ins0, out0 = _op_inputs(op0), _op_out(op0)
+                ins1, out1 = _op_inputs(op1), _op_out(op1)
+                ins2, out2 = _op_inputs(op2), _op_out(op2)
+                out3 = _op_out(op3)
+                ins4, out4 = _op_inputs(op4), _op_out(op4)
+                ins5, out5 = _op_inputs(op5), _op_out(op5)
+                ins6, out6 = _op_inputs(op6), _op_out(op6)
+                ins7, out7 = _op_inputs(op7), _op_out(op7)
+                attrs1 = dict(getattr(op1, "attrs", {}) or {})
+                attrs6 = dict(getattr(op6, "attrs", {}) or {})
+                attrs3 = dict(getattr(op3, "attrs", {}) or {})
+                if (
+                    len(ins0) == 2
+                    and len(ins1) == 1
+                    and len(ins2) == 2
+                    and not _op_inputs(op3)
+                    and len(ins4) == 2
+                    and len(ins5) == 2
+                    and len(ins6) == 1
+                    and len(ins7) == 2
+                    and out7 == str(out_name)
+                    and list(attrs1.get("broadcast_dims") or []) == [1]
+                    and list(attrs1.get("out_shape") or []) == ["M", "H"]
+                    and list(attrs6.get("broadcast_dims") or []) == [1]
+                    and list(attrs6.get("out_shape") or []) == ["M", "N"]
+                    and str(attrs3.get("dtype") or "").strip() == "f32"
+                    and float(attrs3.get("value") or 0.0) == 0.0
+                    and set(map(str, ins2)) == {str(out0), str(out1)}
+                    and set(map(str, ins4)) == {str(out2), str(out3)}
+                    and str(ins5[0]) == str(out4)
+                    and str(ins5[1]) == "W2"
+                    and set(map(str, ins7)) == {str(out5), str(out6)}
+                    and str(ins1[0]) == "b1"
+                    and str(ins6[0]) == "b2"
+                ):
+                    a_name, w1_name = str(ins0[0]), str(ins0[1])
+                    b1_name = str(ins1[0])
+                    w2_name = str(ins5[1])
+                    b2_name = str(ins6[0])
+                    a_dims = _dims(a_name)
+                    w1_dims = _dims(w1_name)
+                    w2_dims = _dims(w2_name)
+                    c_dims = _dims(str(out_name))
+                    b1_dims = _dims(b1_name)
+                    b2_dims = _dims(b2_name)
+                    if (
+                        a_dims
+                        and w1_dims
+                        and w2_dims
+                        and c_dims
+                        and b1_dims
+                        and b2_dims
+                        and len(a_dims) == 2
+                        and len(w1_dims) == 2
+                        and len(w2_dims) == 2
+                        and len(c_dims) == 2
+                        and len(b1_dims) == 1
+                        and len(b2_dims) == 1
+                    ):
+                        m, k = int(a_dims[0]), int(a_dims[1])
+                        k1, h = int(w1_dims[0]), int(w1_dims[1])
+                        h2, n = int(w2_dims[0]), int(w2_dims[1])
+                        if k1 == k and h2 == h and int(c_dims[0]) == m and int(c_dims[1]) == n and int(b1_dims[0]) == h and int(b2_dims[0]) == n:
+                            if (
+                                _elem(a_name) == "f32"
+                                and _elem(w1_name) == "f32"
+                                and _elem(b1_name) == "f32"
+                                and _elem(w2_name) == "f32"
+                                and _elem(b2_name) == "f32"
+                                and _elem(str(out_name)) == "f32"
+                            ):
+                                mlp2d_v1 = {
+                                    "A": a_name,
+                                    "W1": w1_name,
+                                    "b1": b1_name,
+                                    "W2": w2_name,
+                                    "b2": b2_name,
+                                    "out": str(out_name),
+                                    "M": int(m),
+                                    "N": int(n),
+                                    "K": int(k),
+                                    "H": int(h),
+                                    "BM": 32,
+                                    "BN": 32,
+                                    "BK": 16,
+                                    "BH": 16,
+                                    }
 
         # Pattern: ai_bench_rope (const + rope) and ai_bench_warp (single warp op).
         # These ops are non-elementwise (inputs may have different numel) and need
@@ -3122,9 +3483,11 @@ def lower_intent_to_cuda_gpu_kernel(
         if bias_name is not None and str(arg_specs[str(bias_name)].get("memref_elem_ty")) != "f32":
             raise RuntimeError("matmul bias expects f32 tensor")
         if row_mask_name is not None and str(arg_specs[str(row_mask_name)].get("memref_elem_ty")) != "i1":
-            raise RuntimeError("matmul row_mask expects i1 tensor")
+            if str(arg_specs[str(row_mask_name)].get("memref_elem_ty")) != "i8":
+                raise RuntimeError("matmul row_mask expects bool-like tensor (i8 ABI) for cuda real-mlir wave")
         if col_mask_name is not None and str(arg_specs[str(col_mask_name)].get("memref_elem_ty")) != "i1":
-            raise RuntimeError("matmul col_mask expects i1 tensor")
+            if str(arg_specs[str(col_mask_name)].get("memref_elem_ty")) != "i8":
+                raise RuntimeError("matmul col_mask expects bool-like tensor (i8 ABI) for cuda real-mlir wave")
 
         a_memref = str(arg_specs[a_name]["memref"])
         b_memref = str(arg_specs[b_name]["memref"])
@@ -3344,11 +3707,21 @@ def lower_intent_to_cuda_gpu_kernel(
             if row_mask_name is not None and col_mask_name is not None:
                 rm = _fresh("rm")
                 cm = _fresh("cm")
+                rm0 = _fresh("rm0")
+                cm0 = _fresh("cm0")
+                rm1 = _fresh("rm1")
+                cm1 = _fresh("cm1")
                 cond = _fresh("cond")
                 sel = _fresh("sel")
+                row_mask_elem_ty = str(arg_specs[str(row_mask_name)].get("memref_elem_ty") or "i8")
+                col_mask_elem_ty = str(arg_specs[str(col_mask_name)].get("memref_elem_ty") or "i8")
                 lines.append(f"        {rm} = memref.load {arg_ssa[str(row_mask_name)]}[{gm}] : {row_mask_memref}")
                 lines.append(f"        {cm} = memref.load {arg_ssa[str(col_mask_name)]}[%gn] : {col_mask_memref}")
-                lines.append(f"        {cond} = arith.andi {rm}, {cm} : i1")
+                lines.append(f"        {rm0} = arith.constant 0 : {row_mask_elem_ty}")
+                lines.append(f"        {cm0} = arith.constant 0 : {col_mask_elem_ty}")
+                lines.append(f"        {rm1} = arith.cmpi ne, {rm}, {rm0} : {row_mask_elem_ty}")
+                lines.append(f"        {cm1} = arith.cmpi ne, {cm}, {cm0} : {col_mask_elem_ty}")
+                lines.append(f"        {cond} = arith.andi {rm1}, {cm1} : i1")
                 lines.append(f"        {sel} = arith.select {cond}, {val}, {z} : f32")
                 val = str(sel)
             mul = _fresh("mul_c")
@@ -3356,6 +3729,405 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"        {mul} = arith.muli {gm}, %cN : index")
             lines.append(f"        {idx} = arith.addi {mul}, %gn : index")
             lines.append(f"        memref.store {val}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+            lines.append("      }")
+
+        _store_one("%gm0", acc0_out)
+        _store_one("%gm1", acc1_out)
+        _store_one("%gm2", acc2_out)
+        _store_one("%gm3", acc3_out)
+    elif mlp2d_v1 is not None:
+        kernel_kind = "mlp2d_fused_v1"
+        a_name = str(mlp2d_v1["A"])
+        w1_name = str(mlp2d_v1["W1"])
+        b1_name = str(mlp2d_v1["b1"])
+        w2_name = str(mlp2d_v1["W2"])
+        b2_name = str(mlp2d_v1["b2"])
+        out_name2 = str(mlp2d_v1["out"])
+
+        m_dim = int(mlp2d_v1["M"])
+        n_dim = int(mlp2d_v1["N"])
+        k_dim = int(mlp2d_v1["K"])
+        h_dim = int(mlp2d_v1["H"])
+        bm = int(mlp2d_v1["BM"])
+        bn = int(mlp2d_v1["BN"])
+        bk = int(mlp2d_v1["BK"])
+        bh = int(mlp2d_v1["BH"])
+        if bm <= 0 or bn <= 0 or bk <= 0 or bh <= 0:
+            raise RuntimeError(f"invalid mlp2d tile: BM={bm} BN={bn} BK={bk} BH={bh}")
+
+        for nm in (a_name, w1_name, b1_name, w2_name, b2_name, out_name2):
+            if nm not in arg_specs:
+                raise RuntimeError(f"mlp2d missing tensor in arg_specs: {nm}")
+        for nm in (a_name, w1_name, b1_name, w2_name, b2_name, out_name2):
+            if str(arg_specs[str(nm)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError(f"mlp2d expects f32 tensor for {nm}")
+
+        a_memref = str(arg_specs[a_name]["memref"])
+        w1_memref = str(arg_specs[w1_name]["memref"])
+        b1_memref = str(arg_specs[b1_name]["memref"])
+        w2_memref = str(arg_specs[w2_name]["memref"])
+        b2_memref = str(arg_specs[b2_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        threads = 256
+        grid_x = (int(n_dim) + int(bn) - 1) // int(bn)
+        grid_y = (int(m_dim) + int(bm) - 1) // int(bm)
+        launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), int(grid_y), 1]}
+
+        tile_a_elems = int(bm) * int(bk)
+        tile_w1_elems = int(bk) * int(bh)
+        tile_acc1_elems = int(bm) * int(bh)
+        tile_w2_elems = int(bh) * int(bn)
+        sh_elems = int(tile_a_elems + tile_w1_elems + tile_acc1_elems + tile_w2_elems)
+        offset_w1 = int(tile_a_elems)
+        offset_acc1 = int(offset_w1 + tile_w1_elems)
+        offset_w2 = int(offset_acc1 + tile_acc1_elems)
+
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_n = gpu.block_id x")
+        lines.append("      %bid_m = gpu.block_id y")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cK = arith.constant {int(k_dim)} : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cBM = arith.constant {int(bm)} : index")
+        lines.append(f"      %cBN = arith.constant {int(bn)} : index")
+        lines.append(f"      %cBK = arith.constant {int(bk)} : index")
+        lines.append(f"      %cBH = arith.constant {int(bh)} : index")
+        lines.append(f"      %cTileA = arith.constant {int(tile_a_elems)} : index")
+        lines.append(f"      %cTileW1 = arith.constant {int(tile_w1_elems)} : index")
+        lines.append(f"      %cTileAcc1 = arith.constant {int(tile_acc1_elems)} : index")
+        lines.append(f"      %cTileW2 = arith.constant {int(tile_w2_elems)} : index")
+        lines.append(f"      %cOffsetW1 = arith.constant {int(offset_w1)} : index")
+        lines.append(f"      %cOffsetAcc1 = arith.constant {int(offset_acc1)} : index")
+        lines.append(f"      %cOffsetW2 = arith.constant {int(offset_w2)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %base_m = arith.muli %bid_m, %cBM : index")
+        lines.append("      %base_n = arith.muli %bid_n, %cBN : index")
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+
+        # out indices within the tile: tid + {0,256,512,768}
+        lines.append("      %c256 = arith.constant 256 : index")
+        lines.append("      %c512 = arith.constant 512 : index")
+        lines.append("      %c768 = arith.constant 768 : index")
+        lines.append("      %out0 = arith.addi %tid, %c0 : index")
+        lines.append("      %out1 = arith.addi %tid, %c256 : index")
+        lines.append("      %out2 = arith.addi %tid, %c512 : index")
+        lines.append("      %out3 = arith.addi %tid, %c768 : index")
+        lines.append("      %row0 = arith.divui %out0, %cBN : index")
+        lines.append("      %col0 = arith.remui %out0, %cBN : index")
+        lines.append("      %row1 = arith.divui %out1, %cBN : index")
+        lines.append("      %row2 = arith.divui %out2, %cBN : index")
+        lines.append("      %row3 = arith.divui %out3, %cBN : index")
+        lines.append("      %gm0 = arith.addi %base_m, %row0 : index")
+        lines.append("      %gm1 = arith.addi %base_m, %row1 : index")
+        lines.append("      %gm2 = arith.addi %base_m, %row2 : index")
+        lines.append("      %gm3 = arith.addi %base_m, %row3 : index")
+        lines.append("      %gn = arith.addi %base_n, %col0 : index")
+
+        # Precompute row offsets into acc1 tile (row * BH).
+        lines.append("      %row0_off = arith.muli %row0, %cBH : index")
+        lines.append("      %row1_off = arith.muli %row1, %cBH : index")
+        lines.append("      %row2_off = arith.muli %row2, %cBH : index")
+        lines.append("      %row3_off = arith.muli %row3, %cBH : index")
+
+        acc0_out = _fresh("acc0")
+        acc1_out = _fresh("acc1")
+        acc2_out = _fresh("acc2")
+        acc3_out = _fresh("acc3")
+        lines.append(
+            f"      {acc0_out}, {acc1_out}, {acc2_out}, {acc3_out} = scf.for %h0 = %c0 to %cH step %cBH "
+            "iter_args(%acc0 = %c0f, %acc1 = %c0f, %acc2 = %c0f, %acc3 = %c0f) -> (f32, f32, f32, f32) {"
+        )
+
+        # Each thread computes up to 2 acc1 elements (idx0=tid, idx1=tid+256) for this h0 segment.
+        idx0 = "%tid"
+        idx1 = _fresh("acc1_idx1")
+        lines.append(f"        {idx1} = arith.addi %tid, %c256 : index")
+
+        # K loop to compute acc1 values for idx0/idx1.
+        a0_out = _fresh("a0")
+        a1_out = _fresh("a1")
+        lines.append(
+            f"        {a0_out}, {a1_out} = scf.for %k0 = %c0 to %cK step %cBK "
+            "iter_args(%a0 = %c0f, %a1 = %c0f) -> (f32, f32) {"
+        )
+
+        # Cooperative A tile load into shared[0:tile_a_elems).
+        loads_a = (int(tile_a_elems) + int(threads) - 1) // int(threads)
+        for i in range(int(loads_a)):
+            off = int(i) * int(threads)
+            c_off = _fresh("c_off_a")
+            idx = _fresh("idx_a")
+            pred = _fresh("pred_a")
+            lines.append(f"          {c_off} = arith.constant {int(off)} : index")
+            lines.append(f"          {idx} = arith.addi %tid, {c_off} : index")
+            lines.append(f"          {pred} = arith.cmpi ult, {idx}, %cTileA : index")
+            lines.append(f"          scf.if {pred} {{")
+            row = _fresh("a_row")
+            kk = _fresh("a_k")
+            g_row = _fresh("a_gm")
+            g_k = _fresh("a_gk")
+            p_row = _fresh("a_pr")
+            p_k = _fresh("a_pk")
+            p_ok = _fresh("a_p")
+            val = _fresh("a_val")
+            lines.append(f"            {row} = arith.divui {idx}, %cBK : index")
+            lines.append(f"            {kk} = arith.remui {idx}, %cBK : index")
+            lines.append(f"            {g_row} = arith.addi %base_m, {row} : index")
+            lines.append(f"            {g_k} = arith.addi %k0, {kk} : index")
+            lines.append(f"            {p_row} = arith.cmpi ult, {g_row}, %cM : index")
+            lines.append(f"            {p_k} = arith.cmpi ult, {g_k}, %cK : index")
+            lines.append(f"            {p_ok} = arith.andi {p_row}, {p_k} : i1")
+            lines.append(f"            {val} = scf.if {p_ok} -> (f32) {{")
+            mul = _fresh("a_mul")
+            g_idx = _fresh("a_idx")
+            lines.append(f"              {mul} = arith.muli {g_row}, %cK : index")
+            lines.append(f"              {g_idx} = arith.addi {mul}, {g_k} : index")
+            v = _fresh("a_load")
+            lines.append(f"              {v} = memref.load {arg_ssa[a_name]}[{g_idx}] : {a_memref}")
+            lines.append(f"              scf.yield {v} : f32")
+            lines.append("            } else {")
+            lines.append("              scf.yield %c0f : f32")
+            lines.append("            }")
+            lines.append(f"            memref.store {val}, %sh[{idx}] : {shared_global_memref_ty}")
+            lines.append("          }")
+
+        # Cooperative W1 tile load into shared[offset_w1:).
+        loads_w1 = (int(tile_w1_elems) + int(threads) - 1) // int(threads)
+        for i in range(int(loads_w1)):
+            off = int(i) * int(threads)
+            c_off = _fresh("c_off_w1")
+            idx = _fresh("idx_w1")
+            pred = _fresh("pred_w1")
+            lines.append(f"          {c_off} = arith.constant {int(off)} : index")
+            lines.append(f"          {idx} = arith.addi %tid, {c_off} : index")
+            lines.append(f"          {pred} = arith.cmpi ult, {idx}, %cTileW1 : index")
+            lines.append(f"          scf.if {pred} {{")
+            kk = _fresh("w1_k")
+            hh = _fresh("w1_h")
+            g_k = _fresh("w1_gk")
+            g_h = _fresh("w1_gh")
+            p_k = _fresh("w1_pk")
+            p_h = _fresh("w1_ph")
+            p_ok = _fresh("w1_p")
+            val = _fresh("w1_val")
+            sh_idx = _fresh("w1_sh")
+            lines.append(f"            {kk} = arith.divui {idx}, %cBH : index")
+            lines.append(f"            {hh} = arith.remui {idx}, %cBH : index")
+            lines.append(f"            {g_k} = arith.addi %k0, {kk} : index")
+            lines.append(f"            {g_h} = arith.addi %h0, {hh} : index")
+            lines.append(f"            {p_k} = arith.cmpi ult, {g_k}, %cK : index")
+            lines.append(f"            {p_h} = arith.cmpi ult, {g_h}, %cH : index")
+            lines.append(f"            {p_ok} = arith.andi {p_k}, {p_h} : i1")
+            lines.append(f"            {val} = scf.if {p_ok} -> (f32) {{")
+            mul = _fresh("w1_mul")
+            g_idx = _fresh("w1_idx")
+            lines.append(f"              {mul} = arith.muli {g_k}, %cH : index")
+            lines.append(f"              {g_idx} = arith.addi {mul}, {g_h} : index")
+            v = _fresh("w1_load")
+            lines.append(f"              {v} = memref.load {arg_ssa[w1_name]}[{g_idx}] : {w1_memref}")
+            lines.append(f"              scf.yield {v} : f32")
+            lines.append("            } else {")
+            lines.append("              scf.yield %c0f : f32")
+            lines.append("            }")
+            lines.append(f"            {sh_idx} = arith.addi {idx}, %cOffsetW1 : index")
+            lines.append(f"            memref.store {val}, %sh[{sh_idx}] : {shared_global_memref_ty}")
+            lines.append("          }")
+
+        lines.append("          gpu.barrier")
+
+        # Accumulate acc1 for idx0 and idx1 (two elements per thread).
+        def _acc1_update(idx_ssa: str, acc_ssa: str) -> str:
+            row = _fresh("acc1_row")
+            hh = _fresh("acc1_h")
+            acc_cur = str(acc_ssa)
+            lines.append(f"          {row} = arith.divui {idx_ssa}, %cBH : index")
+            lines.append(f"          {hh} = arith.remui {idx_ssa}, %cBH : index")
+            for ki in range(int(bk)):
+                cki = _fresh("cki")
+                lines.append(f"          {cki} = arith.constant {int(ki)} : index")
+                # A[row, ki]
+                a_mul = _fresh("acc1_amul")
+                a_idx = _fresh("acc1_aidx")
+                lines.append(f"          {a_mul} = arith.muli {row}, %cBK : index")
+                lines.append(f"          {a_idx} = arith.addi {a_mul}, {cki} : index")
+                a_val = _fresh("a")
+                lines.append(f"          {a_val} = memref.load %sh[{a_idx}] : {shared_global_memref_ty}")
+                # W1[ki, hh]
+                w_mul = _fresh("acc1_wmul")
+                w_idx0 = _fresh("acc1_widx0")
+                w_idx = _fresh("acc1_widx")
+                lines.append(f"          {w_mul} = arith.muli {cki}, %cBH : index")
+                lines.append(f"          {w_idx0} = arith.addi {w_mul}, {hh} : index")
+                lines.append(f"          {w_idx} = arith.addi {w_idx0}, %cOffsetW1 : index")
+                w_val = _fresh("w1")
+                lines.append(f"          {w_val} = memref.load %sh[{w_idx}] : {shared_global_memref_ty}")
+                prod = _fresh("prod")
+                acc_new = _fresh("acc")
+                lines.append(f"          {prod} = arith.mulf {a_val}, {w_val}{fm} : f32")
+                lines.append(f"          {acc_new} = arith.addf {acc_cur}, {prod}{fm} : f32")
+                acc_cur = str(acc_new)
+            return acc_cur
+
+        acc0_cur = _acc1_update(idx0, "%a0")
+        acc1_cur = _acc1_update(idx1, "%a1")
+
+        lines.append("          gpu.barrier")
+        lines.append(f"          scf.yield {acc0_cur}, {acc1_cur} : f32, f32")
+        lines.append("        }")
+
+        # Apply bias+relu and store acc1 tile into shared[offset_acc1:).
+        def _store_acc1(idx_ssa: str, acc_ssa: str) -> None:
+            pred = _fresh("p_acc1")
+            lines.append(f"        {pred} = arith.cmpi ult, {idx_ssa}, %cTileAcc1 : index")
+            lines.append(f"        scf.if {pred} {{")
+            row = _fresh("row")
+            hh = _fresh("hh")
+            gm = _fresh("gm")
+            gh = _fresh("gh")
+            p_row = _fresh("p_row")
+            p_h = _fresh("p_h")
+            p_ok = _fresh("p_ok")
+            val = _fresh("val")
+            sh_idx0 = _fresh("sh_idx0")
+            sh_idx = _fresh("sh_idx")
+            lines.append(f"          {row} = arith.divui {idx_ssa}, %cBH : index")
+            lines.append(f"          {hh} = arith.remui {idx_ssa}, %cBH : index")
+            lines.append(f"          {gm} = arith.addi %base_m, {row} : index")
+            lines.append(f"          {gh} = arith.addi %h0, {hh} : index")
+            lines.append(f"          {p_row} = arith.cmpi ult, {gm}, %cM : index")
+            lines.append(f"          {p_h} = arith.cmpi ult, {gh}, %cH : index")
+            lines.append(f"          {p_ok} = arith.andi {p_row}, {p_h} : i1")
+            lines.append(f"          {val} = scf.if {p_ok} -> (f32) {{")
+            bias = _fresh("b1")
+            v2 = _fresh("v2")
+            relu = _fresh("relu")
+            lines.append(f"            {bias} = memref.load {arg_ssa[b1_name]}[{gh}] : {b1_memref}")
+            lines.append(f"            {v2} = arith.addf {acc_ssa}, {bias}{fm} : f32")
+            lines.append(f"            {relu} = arith.maximumf {v2}, %c0f{fm} : f32")
+            lines.append(f"            scf.yield {relu} : f32")
+            lines.append("          } else {")
+            lines.append("            scf.yield %c0f : f32")
+            lines.append("          }")
+            lines.append(f"          {sh_idx0} = arith.addi {idx_ssa}, %cOffsetAcc1 : index")
+            lines.append(f"          {sh_idx} = arith.addi {sh_idx0}, %c0 : index")
+            lines.append(f"          memref.store {val}, %sh[{sh_idx}] : {shared_global_memref_ty}")
+            lines.append("        }")
+
+        _store_acc1(idx0, a0_out)
+        _store_acc1(idx1, a1_out)
+
+        lines.append("        gpu.barrier")
+
+        # Cooperative W2 tile load into shared[offset_w2:).
+        loads_w2 = (int(tile_w2_elems) + int(threads) - 1) // int(threads)
+        for i in range(int(loads_w2)):
+            off = int(i) * int(threads)
+            c_off = _fresh("c_off_w2")
+            idx = _fresh("idx_w2")
+            pred = _fresh("pred_w2")
+            lines.append(f"        {c_off} = arith.constant {int(off)} : index")
+            lines.append(f"        {idx} = arith.addi %tid, {c_off} : index")
+            lines.append(f"        {pred} = arith.cmpi ult, {idx}, %cTileW2 : index")
+            lines.append(f"        scf.if {pred} {{")
+            hh = _fresh("w2_h")
+            col = _fresh("w2_col")
+            gh = _fresh("w2_gh")
+            gn = _fresh("w2_gn")
+            p_h = _fresh("w2_ph")
+            p_col = _fresh("w2_pn")
+            p_ok = _fresh("w2_p")
+            val = _fresh("w2_val")
+            sh_idx = _fresh("w2_sh")
+            lines.append(f"          {hh} = arith.divui {idx}, %cBN : index")
+            lines.append(f"          {col} = arith.remui {idx}, %cBN : index")
+            lines.append(f"          {gh} = arith.addi %h0, {hh} : index")
+            lines.append(f"          {gn} = arith.addi %base_n, {col} : index")
+            lines.append(f"          {p_h} = arith.cmpi ult, {gh}, %cH : index")
+            lines.append(f"          {p_col} = arith.cmpi ult, {gn}, %cN : index")
+            lines.append(f"          {p_ok} = arith.andi {p_h}, {p_col} : i1")
+            lines.append(f"          {val} = scf.if {p_ok} -> (f32) {{")
+            mul = _fresh("w2_mul")
+            g_idx = _fresh("w2_idx")
+            lines.append(f"            {mul} = arith.muli {gh}, %cN : index")
+            lines.append(f"            {g_idx} = arith.addi {mul}, {gn} : index")
+            v = _fresh("w2_load")
+            lines.append(f"            {v} = memref.load {arg_ssa[w2_name]}[{g_idx}] : {w2_memref}")
+            lines.append(f"            scf.yield {v} : f32")
+            lines.append("          } else {")
+            lines.append("            scf.yield %c0f : f32")
+            lines.append("          }")
+            lines.append(f"          {sh_idx} = arith.addi {idx}, %cOffsetW2 : index")
+            lines.append(f"          memref.store {val}, %sh[{sh_idx}] : {shared_global_memref_ty}")
+            lines.append("        }")
+
+        lines.append("        gpu.barrier")
+
+        # Compute acc2 update for this H segment.
+        seg_acc0 = "%acc0"
+        seg_acc1 = "%acc1"
+        seg_acc2 = "%acc2"
+        seg_acc3 = "%acc3"
+        for hi in range(int(bh)):
+            chi = _fresh("chi")
+            w2_mul = _fresh("w2_mul")
+            w2_idx0 = _fresh("w2_idx0")
+            w2_idx = _fresh("w2_idx")
+            w2_val = _fresh("w2v")
+            lines.append(f"        {chi} = arith.constant {int(hi)} : index")
+            lines.append(f"        {w2_mul} = arith.muli {chi}, %cBN : index")
+            lines.append(f"        {w2_idx0} = arith.addi {w2_mul}, %col0 : index")
+            lines.append(f"        {w2_idx} = arith.addi {w2_idx0}, %cOffsetW2 : index")
+            lines.append(f"        {w2_val} = memref.load %sh[{w2_idx}] : {shared_global_memref_ty}")
+
+            def _acc2_update(row_off: str, acc_ssa: str) -> str:
+                a_idx0 = _fresh("a1_idx0")
+                a_idx1 = _fresh("a1_idx1")
+                a_idx = _fresh("a1_idx")
+                a_val = _fresh("a1v")
+                prod = _fresh("prod")
+                acc_new = _fresh("acc")
+                lines.append(f"        {a_idx0} = arith.addi {row_off}, {chi} : index")
+                lines.append(f"        {a_idx1} = arith.addi {a_idx0}, %cOffsetAcc1 : index")
+                lines.append(f"        {a_idx} = arith.addi {a_idx1}, %c0 : index")
+                lines.append(f"        {a_val} = memref.load %sh[{a_idx}] : {shared_global_memref_ty}")
+                lines.append(f"        {prod} = arith.mulf {a_val}, {w2_val}{fm} : f32")
+                lines.append(f"        {acc_new} = arith.addf {acc_ssa}, {prod}{fm} : f32")
+                return str(acc_new)
+
+            seg_acc0 = _acc2_update("%row0_off", seg_acc0)
+            seg_acc1 = _acc2_update("%row1_off", seg_acc1)
+            seg_acc2 = _acc2_update("%row2_off", seg_acc2)
+            seg_acc3 = _acc2_update("%row3_off", seg_acc3)
+
+        lines.append("        gpu.barrier")
+        lines.append(f"        scf.yield {seg_acc0}, {seg_acc1}, {seg_acc2}, {seg_acc3} : f32, f32, f32, f32")
+        lines.append("      }")
+
+        # Store outputs with bias b2.
+        def _store_one(gm: str, acc: str) -> None:
+            p_row = _fresh("p_row")
+            p_col = _fresh("p_col")
+            p_ok = _fresh("p_ok")
+            lines.append(f"      {p_row} = arith.cmpi ult, {gm}, %cM : index")
+            lines.append(f"      {p_col} = arith.cmpi ult, %gn, %cN : index")
+            lines.append(f"      {p_ok} = arith.andi {p_row}, {p_col} : i1")
+            lines.append(f"      scf.if {p_ok} {{")
+            bias = _fresh("b2")
+            v2 = _fresh("v2")
+            mul = _fresh("mul_c")
+            idx = _fresh("idx_c")
+            lines.append(f"        {bias} = memref.load {arg_ssa[b2_name]}[%gn] : {b2_memref}")
+            lines.append(f"        {v2} = arith.addf {acc}, {bias}{fm} : f32")
+            lines.append(f"        {mul} = arith.muli {gm}, %cN : index")
+            lines.append(f"        {idx} = arith.addi {mul}, %gn : index")
+            lines.append(f"        memref.store {v2}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
             lines.append("      }")
 
         _store_one("%gm0", acc0_out)

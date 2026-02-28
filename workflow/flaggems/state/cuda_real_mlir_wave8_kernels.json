@@ -82,6 +82,7 @@
     "matmul_relu2d",
     "maximum2d",
     "minimum2d",
+    "mlp2d",
     "mul2d",
     "nan_to_num2d",
     "ne2d",
