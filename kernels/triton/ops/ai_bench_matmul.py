@@ -37,7 +37,8 @@ def ai_bench_matmul_kernel(
     for k in range(0, tl.cdiv(K, BLOCK_K)):
         a = tl.load(a_ptrs, mask=(offs_am[:, None] < M) & (offs_k[None, :] < K - k * BLOCK_K), other=0.0).to(tl.float32)
         b = tl.load(b_ptrs, mask=(offs_k[:, None] < K - k * BLOCK_K) & (offs_bn[None, :] < N), other=0.0).to(tl.float32)
-        acc += tl.dot(a, b)
+        # For correctness comparability, keep fp32 dot in IEEE mode (no TF32 TensorCore lowering).
+        acc += tl.dot(a, b, allow_tf32=False)
         a_ptrs += BLOCK_K * stride_ak
         b_ptrs += BLOCK_K * stride_bk
 
