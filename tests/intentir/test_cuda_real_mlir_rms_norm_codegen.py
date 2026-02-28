@@ -56,6 +56,6 @@ def test_cuda_real_mlir_rms_norm_accepts_eps_tensor_and_emits_kernel(monkeypatch
     mod = to_mlir(intent)
     mod.meta["shape_bindings"] = {"M": 4, "N": 64}
     out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
-    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "rms_norm_axis1_v2"
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "rms_norm_axis1_v3"
     assert "memref.load %eps[%c0]" in out.module_text
     _verify_with_mlir_opt(out.module_text)
