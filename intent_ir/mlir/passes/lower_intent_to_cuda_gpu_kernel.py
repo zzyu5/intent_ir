@@ -6138,10 +6138,15 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
         sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
 
-        launch_override = {"block": [256, 1, 1], "grid": [int(q_ctx), 1, 1]}
+        # Performance note: older versions used block.x=256 and reduced a HD-length dot
+        # with many idle threads participating in gpu.barrier. For the small HEAD_DIM
+        # values in Triton-native coverage (16/32/64), a single warp is enough.
+        block_x = 32
+        lanes_per_thread = int((int(hd) + int(block_x) - 1) // int(block_x))
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
         scratch_off = int(hd)
-        scores_off = int(scratch_off + 256)
+        scores_off = int(scratch_off + int(block_x))
         weights_off = int(scores_off + kv_ctx)
         sh_elems = int(weights_off + kv_ctx)
         shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
@@ -6154,19 +6159,31 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %cQ = arith.constant {int(q_ctx)} : index")
         lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
         lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+        lines.append(f"      %cBX = arith.constant {int(block_x)} : index")
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cQ : index")
         lines.append("      scf.if %pred_row {")
         lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
         lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
 
         # Load q row into shared[0:HD].
-        lines.append("        %pred_qd = arith.cmpi ult, %tid, %cHD : index")
-        lines.append("        scf.if %pred_qd {")
-        lines.append("          %mul_q = arith.muli %bid, %cHD : index")
-        lines.append("          %idx_q = arith.addi %mul_q, %tid : index")
-        lines.append(f"          %qv = memref.load {arg_ssa[q_name]}[%idx_q] : {q_memref}")
-        lines.append(f"          memref.store %qv, %sh[%tid] : {shared_global_memref_ty}")
-        lines.append("        }")
+        lines.append("        %mul_q = arith.muli %bid, %cHD : index")
+        for lane in range(lanes_per_thread):
+            if lane == 0:
+                gd = "%tid"
+            else:
+                c_lane = _fresh(f"c_lane_{lane}")
+                gd = _fresh(f"gd_{lane}")
+                lines.append(f"        {c_lane} = arith.constant {int(lane * int(block_x))} : index")
+                lines.append(f"        {gd} = arith.addi %tid, {c_lane} : index")
+            pred = _fresh(f"pred_qd_{lane}")
+            idx = _fresh(f"idx_q_{lane}")
+            qv = _fresh(f"qv_{lane}")
+            lines.append(f"        {pred} = arith.cmpi ult, {gd}, %cHD : index")
+            lines.append(f"        scf.if {pred} {{")
+            lines.append(f"          {idx} = arith.addi %mul_q, {gd} : index")
+            lines.append(f"          {qv} = memref.load {arg_ssa[q_name]}[{idx}] : {q_memref}")
+            lines.append(f"          memref.store {qv}, %sh[{gd}] : {shared_global_memref_ty}")
+            lines.append("        }")
         lines.append("        gpu.barrier")
 
         lines.append(f"        %cScratch = arith.constant {int(scratch_off)} : index")
@@ -6177,21 +6194,52 @@ def lower_intent_to_cuda_gpu_kernel(
 
         # Compute scores[kv] = dot(Q[q,:], K[kv,:]) * sm_scale, with causal mask kv>q.
         lines.append("        scf.for %kv = %c0 to %cKV step %c1 {")
-        lines.append("          %pred_d = arith.cmpi ult, %tid, %cHD : index")
-        lines.append("          %prod = scf.if %pred_d -> (f32) {")
-        lines.append("            %mul_k = arith.muli %kv, %cHD : index")
-        lines.append("            %idx_k = arith.addi %mul_k, %tid : index")
-        lines.append(f"            %kvv = memref.load {arg_ssa[k_name]}[%idx_k] : {k_memref}")
-        lines.append(f"            %qvv = memref.load %sh[%tid] : {shared_global_memref_ty}")
-        lines.append(f"            %p = arith.mulf %kvv, %qvv{fm} : f32")
-        lines.append("            scf.yield %p : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %c0f : f32")
-        lines.append("          }")
+        lines.append("          %mul_k = arith.muli %kv, %cHD : index")
+        lane_ps: list[str] = []
+        for lane in range(lanes_per_thread):
+            if lane == 0:
+                gd = "%tid"
+            else:
+                c_lane = _fresh(f"c_lane_k_{lane}")
+                gd = _fresh(f"gd_k_{lane}")
+                lines.append(f"          {c_lane} = arith.constant {int(lane * int(block_x))} : index")
+                lines.append(f"          {gd} = arith.addi %tid, {c_lane} : index")
+            pred_d = _fresh(f"pred_d_{lane}")
+            prod_lane = _fresh(f"prod_{lane}")
+            idx_k = _fresh(f"idx_k_{lane}")
+            kvv = _fresh(f"kvv_{lane}")
+            qvv = _fresh(f"qvv_{lane}")
+            p = _fresh(f"p_{lane}")
+            lines.append(f"          {pred_d} = arith.cmpi ult, {gd}, %cHD : index")
+            lines.append(f"          {prod_lane} = scf.if {pred_d} -> (f32) {{")
+            lines.append(f"            {idx_k} = arith.addi %mul_k, {gd} : index")
+            lines.append(f"            {kvv} = memref.load {arg_ssa[k_name]}[{idx_k}] : {k_memref}")
+            lines.append(f"            {qvv} = memref.load %sh[{gd}] : {shared_global_memref_ty}")
+            lines.append(f"            {p} = arith.mulf {kvv}, {qvv}{fm} : f32")
+            lines.append(f"            scf.yield {p} : f32")
+            lines.append("          } else {")
+            lines.append("            scf.yield %c0f : f32")
+            lines.append("          }")
+            lane_ps.append(str(prod_lane))
+        if len(lane_ps) == 1:
+            # MLIR has no SSA "alias" assignment; materialize a cheap identity op.
+            lines.append(f"          %prod = arith.addf {lane_ps[0]}, %c0f{fm} : f32")
+        else:
+            acc = lane_ps[0]
+            for i, p_lane in enumerate(lane_ps[1:], start=1):
+                s = _fresh(f"sum_lane_{i}")
+                lines.append(f"          {s} = arith.addf {acc}, {p_lane}{fm} : f32")
+                acc = str(s)
+            lines.append(f"          %prod = arith.addf {acc}, %c0f{fm} : f32")
         lines.append("          %sidx = arith.addi %cScratch, %tid : index")
         lines.append(f"          memref.store %prod, %sh[%sidx] : {shared_global_memref_ty}")
         lines.append("          gpu.barrier")
-        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+        dot_strides: list[int] = []
+        s = int(block_x) // 2
+        while s >= 1:
+            dot_strides.append(int(s))
+            s //= 2
+        for stride in dot_strides:
             cS = f"%cS_dot_{stride}"
             pS = f"%pS_dot_{stride}"
             tid2 = f"%tid_dot_{stride}"
@@ -6294,10 +6342,14 @@ def lower_intent_to_cuda_gpu_kernel(
         sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
 
         blocks = int(z_dim) * int(h_dim) * int(q_ctx)
-        launch_override = {"block": [256, 1, 1], "grid": [int(blocks), 1, 1]}
+        # Same rationale as attn2d_v1: keep the dot-product reduction warp-sized
+        # to avoid large-idle-thread gpu.barrier overhead.
+        block_x = 32
+        lanes_per_thread = int((int(hd) + int(block_x) - 1) // int(block_x))
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(blocks), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
         scratch_off = int(hd)
-        scores_off = int(scratch_off + 256)
+        scores_off = int(scratch_off + int(block_x))
         weights_off = int(scores_off + kv_ctx)
         sh_elems = int(weights_off + kv_ctx)
         shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
@@ -6312,6 +6364,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %cQ = arith.constant {int(q_ctx)} : index")
         lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
         lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+        lines.append(f"      %cBX = arith.constant {int(block_x)} : index")
         lines.append(f"      %cBlocks = arith.constant {int(blocks)} : index")
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cBlocks : index")
         lines.append("      scf.if %pred_row {")
@@ -6325,17 +6378,30 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %z = arith.divui %tmp0, %cH : index")
 
         # Load q vector into shared[0:HD].
-        lines.append("        %pred_qd = arith.cmpi ult, %tid, %cHD : index")
-        lines.append("        scf.if %pred_qd {")
-        lines.append("          %mul_zh = arith.muli %z, %cH : index")
-        lines.append("          %zh = arith.addi %mul_zh, %head : index")
-        lines.append("          %mul_qrow = arith.muli %zh, %cQ : index")
-        lines.append("          %qrow = arith.addi %mul_qrow, %q : index")
-        lines.append("          %base_q = arith.muli %qrow, %cHD : index")
-        lines.append("          %idx_q = arith.addi %base_q, %tid : index")
-        lines.append(f"          %qv = memref.load {arg_ssa[q_name]}[%idx_q] : {q_memref}")
-        lines.append(f"          memref.store %qv, %sh[%tid] : {shared_global_memref_ty}")
-        lines.append("        }")
+        # Use distinct SSA names in the outer scope to avoid collisions with
+        # later (nested) regions that also compute z/head helpers.
+        lines.append("        %mul_zh_q = arith.muli %z, %cH : index")
+        lines.append("        %zh_q = arith.addi %mul_zh_q, %head : index")
+        lines.append("        %mul_qrow_q = arith.muli %zh_q, %cQ : index")
+        lines.append("        %qrow_q = arith.addi %mul_qrow_q, %q : index")
+        lines.append("        %base_q_q = arith.muli %qrow_q, %cHD : index")
+        for lane in range(lanes_per_thread):
+            if lane == 0:
+                gd = "%tid"
+            else:
+                c_lane = _fresh(f"c_lane_q_{lane}")
+                gd = _fresh(f"gd_q_{lane}")
+                lines.append(f"        {c_lane} = arith.constant {int(lane * int(block_x))} : index")
+                lines.append(f"        {gd} = arith.addi %tid, {c_lane} : index")
+            pred = _fresh(f"pred_qd2_{lane}")
+            idx = _fresh(f"idx_q2_{lane}")
+            qv = _fresh(f"qv2_{lane}")
+            lines.append(f"        {pred} = arith.cmpi ult, {gd}, %cHD : index")
+            lines.append(f"        scf.if {pred} {{")
+            lines.append(f"          {idx} = arith.addi %base_q_q, {gd} : index")
+            lines.append(f"          {qv} = memref.load {arg_ssa[q_name]}[{idx}] : {q_memref}")
+            lines.append(f"          memref.store {qv}, %sh[{gd}] : {shared_global_memref_ty}")
+            lines.append("        }")
         lines.append("        gpu.barrier")
 
         lines.append(f"        %cScratch = arith.constant {int(scratch_off)} : index")
@@ -6345,25 +6411,53 @@ def lower_intent_to_cuda_gpu_kernel(
 
         # Compute scores[kv] = dot(Q[q,:], K[kv,:]) * sm_scale (no causal mask).
         lines.append("        scf.for %kv = %c0 to %cKV step %c1 {")
-        lines.append("          %pred_d = arith.cmpi ult, %tid, %cHD : index")
-        lines.append("          %prod = scf.if %pred_d -> (f32) {")
-        lines.append("            %mul_zh = arith.muli %z, %cH : index")
-        lines.append("            %zh = arith.addi %mul_zh, %head : index")
-        lines.append("            %mul_krow = arith.muli %zh, %cKV : index")
-        lines.append("            %krow = arith.addi %mul_krow, %kv : index")
-        lines.append("            %base_k = arith.muli %krow, %cHD : index")
-        lines.append("            %idx_k = arith.addi %base_k, %tid : index")
-        lines.append(f"            %kvv = memref.load {arg_ssa[k_name]}[%idx_k] : {k_memref}")
-        lines.append(f"            %qvv = memref.load %sh[%tid] : {shared_global_memref_ty}")
-        lines.append(f"            %p = arith.mulf %kvv, %qvv{fm} : f32")
-        lines.append("            scf.yield %p : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %c0f : f32")
-        lines.append("          }")
+        lines.append("          %mul_krow = arith.muli %zh_q, %cKV : index")
+        lines.append("          %krow = arith.addi %mul_krow, %kv : index")
+        lines.append("          %base_k = arith.muli %krow, %cHD : index")
+        lane_ps: list[str] = []
+        for lane in range(lanes_per_thread):
+            if lane == 0:
+                gd = "%tid"
+            else:
+                c_lane = _fresh(f"c_lane_k2_{lane}")
+                gd = _fresh(f"gd_k2_{lane}")
+                lines.append(f"          {c_lane} = arith.constant {int(lane * int(block_x))} : index")
+                lines.append(f"          {gd} = arith.addi %tid, {c_lane} : index")
+            pred_d = _fresh(f"pred_d2_{lane}")
+            prod_lane = _fresh(f"prod2_{lane}")
+            idx_k = _fresh(f"idx_k2_{lane}")
+            kvv = _fresh(f"kvv2_{lane}")
+            qvv = _fresh(f"qvv2_{lane}")
+            p = _fresh(f"p2_{lane}")
+            lines.append(f"          {pred_d} = arith.cmpi ult, {gd}, %cHD : index")
+            lines.append(f"          {prod_lane} = scf.if {pred_d} -> (f32) {{")
+            lines.append(f"            {idx_k} = arith.addi %base_k, {gd} : index")
+            lines.append(f"            {kvv} = memref.load {arg_ssa[k_name]}[{idx_k}] : {k_memref}")
+            lines.append(f"            {qvv} = memref.load %sh[{gd}] : {shared_global_memref_ty}")
+            lines.append(f"            {p} = arith.mulf {kvv}, {qvv}{fm} : f32")
+            lines.append(f"            scf.yield {p} : f32")
+            lines.append("          } else {")
+            lines.append("            scf.yield %c0f : f32")
+            lines.append("          }")
+            lane_ps.append(str(prod_lane))
+        if len(lane_ps) == 1:
+            lines.append(f"          %prod = arith.addf {lane_ps[0]}, %c0f{fm} : f32")
+        else:
+            acc = lane_ps[0]
+            for i, p_lane in enumerate(lane_ps[1:], start=1):
+                s = _fresh(f"sum_lane2_{i}")
+                lines.append(f"          {s} = arith.addf {acc}, {p_lane}{fm} : f32")
+                acc = str(s)
+            lines.append(f"          %prod = arith.addf {acc}, %c0f{fm} : f32")
         lines.append("          %sidx = arith.addi %cScratch, %tid : index")
         lines.append(f"          memref.store %prod, %sh[%sidx] : {shared_global_memref_ty}")
         lines.append("          gpu.barrier")
-        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+        dot_strides: list[int] = []
+        s = int(block_x) // 2
+        while s >= 1:
+            dot_strides.append(int(s))
+            s //= 2
+        for stride in dot_strides:
             cS = f"%cS_dot2_{stride}"
             pS = f"%pS_dot2_{stride}"
             tid2 = f"%tid_dot2_{stride}"
