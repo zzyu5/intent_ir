@@ -1,10 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-28T17:02:47+00:00
-- Commit: `bcc6f43ad2444d986fb1f147e95d2ebfdf142723`
+- Timestamp: 2026-02-28T17:36:08+00:00
+- Commit: `f7cc741d4a7f9c927176f19d498c017e7560e98c`
 - Lane: `workflow`
-- Summary: real-mlir wave9 triton-native perf smoke (38): min=0.850 p50=0.999 fallback=0; hard kernels >=0.85; shape telemetry filled
+- Summary: real-mlir wave9 allowlist perf: measured=92 min=0.806 p50=32.85 fallback=0; fix PTX grid infer
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v34_matmul_mask_vecselect/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v34_matmul_mask_vecselect/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v34_matmul_mask_vecselect/gpu_perf_graph.json, artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v34_matmul_mask_vecselect/run_summary.json, artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v34_matmul_mask_vecselect/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v34_matmul_mask_vecselect/status_converged.json, artifacts/validation_rounds/20260228/triton_native_coverage_full_wave9_realmlir_v34_matmul_mask_vecselect
+- Run Summary: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave9_realmlir_allowlist_v2_fixgrid/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave9_realmlir_allowlist_v2_fixgrid/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave9_realmlir_allowlist_v2_fixgrid/gpu_perf_graph.json, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave9_realmlir_allowlist_v2_fixgrid/run_summary.json, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave9_realmlir_allowlist_v2_fixgrid/status_converged.json, artifacts/validation_rounds/20260228/flaggems_coverage_wave9_realmlir_allowlist_cb101_v1
