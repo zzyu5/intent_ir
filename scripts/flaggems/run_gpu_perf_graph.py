@@ -1033,6 +1033,164 @@ def _build_native_launch_fn(
     if "axis" in scalar_map and "dim" not in scalar_map:
         scalar_map["dim"] = scalar_map["axis"]
 
+    # Special-case a few Triton-native kernels that are not directly callable as
+    # Python functions (they must be launched via `kernel[grid](...)`).
+    #
+    # The generic heuristic path below tries to resolve a callable and bind args
+    # via signature inspection. That breaks for wrapper objects like `_attn_fwd`
+    # and for raw `@triton.jit` kernels when invoked without grid syntax.
+    if source == "triton_native" and str(kernel) == "_attn_fwd":
+        try:
+            import triton  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(f"triton_unavailable: {type(e).__name__}: {e}") from e
+        try:
+            from kernels.triton.ops.attention import _attn_fwd as _attn_obj  # noqa: PLC0415
+        except Exception as e:
+            raise RuntimeError(f"native_import_failed: {type(e).__name__}: {e}") from e
+
+        Q = tensor_map.get("Q")
+        K = tensor_map.get("K")
+        V = tensor_map.get("V")
+        attn_mask = tensor_map.get("attn_mask")
+        if attn_mask is None:
+            attn_mask = tensor_map.get("mask")
+        if not all(isinstance(x, torch.Tensor) for x in (Q, K, V, attn_mask)):
+            raise RuntimeError("missing native tensors for _attn_fwd baseline (need Q,K,V,attn_mask)")
+
+        # Shapes (Z, num_head, ctx, head_dim).
+        batch = int(Q.shape[0])
+        q_numhead = int(Q.shape[1])
+        Q_CTX = int(Q.shape[2])
+        HEAD_DIM = int(Q.shape[3])
+        kv_numhead = int(K.shape[1])
+        KV_CTX = int(K.shape[2])
+        sm_scale = float(scalar_map.get("sm_scale", 1.0 / (HEAD_DIM ** 0.5)))
+
+        Out = torch.empty((batch, q_numhead, Q_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+        kernel_fn = getattr(_attn_obj, "fn", None)
+        if kernel_fn is None:
+            raise RuntimeError("no native callable found for _attn_fwd.fn")
+
+        # Keep meta consistent with the reference runner.
+        BLOCK_M = 16
+        BLOCK_N = 16
+        STAGE = 1
+        HAS_ATTN_MASK = 0
+        PRE_LOAD_V = 0
+
+        grid = lambda meta: (triton.cdiv(Q_CTX, BLOCK_M), batch * q_numhead)  # noqa: E731
+        stride_q_batch, stride_q_head, stride_q_seqlen, stride_q_headsize = Q.stride()
+        stride_k_batch, stride_k_head, stride_k_seqlen, stride_k_headsize = K.stride()
+        stride_v_batch, stride_v_head, stride_v_seqlen, stride_v_headsize = V.stride()
+        stride_o_batch, stride_o_head, stride_o_seqlen, stride_o_headsize = Out.stride()
+        stride_m_batch, stride_m_head, stride_m_q, stride_m_kv = attn_mask.stride()
+
+        def _run() -> None:
+            kernel_fn[grid](
+                Q,
+                K,
+                V,
+                attn_mask,
+                sm_scale,
+                Out,
+                stride_q_batch,
+                stride_q_head,
+                stride_q_seqlen,
+                stride_q_headsize,
+                stride_k_batch,
+                stride_k_head,
+                stride_k_seqlen,
+                stride_k_headsize,
+                stride_v_batch,
+                stride_v_head,
+                stride_v_seqlen,
+                stride_v_headsize,
+                stride_m_batch,
+                stride_m_head,
+                stride_m_q,
+                stride_m_kv,
+                stride_o_batch,
+                stride_o_head,
+                stride_o_seqlen,
+                stride_o_headsize,
+                KV_CTX,
+                q_numhead,
+                kv_numhead,
+                Q_CTX,
+                KV_CTX,
+                HEAD_DIM=HEAD_DIM,
+                BLOCK_M=BLOCK_M,
+                BLOCK_N=BLOCK_N,
+                STAGE=STAGE,
+                HAS_ATTN_MASK=HAS_ATTN_MASK,
+                PRE_LOAD_V=PRE_LOAD_V,
+            )
+
+        return _run, str(getattr(module, "__name__", "")), {
+            "arg_count": int(0),  # opaque; kernel launch args are not signature-bound
+            "spec_source": source,
+            "launch_source": "_attn_fwd.fn:grid_launch_fixed_meta",
+        }
+
+    if source == "triton_native" and str(kernel) == "ai_bench_matmul":
+        try:
+            import triton  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(f"triton_unavailable: {type(e).__name__}: {e}") from e
+        try:
+            from kernels.triton.ops.ai_bench_matmul import ai_bench_matmul_kernel  # noqa: PLC0415
+        except Exception as e:
+            raise RuntimeError(f"native_import_failed: {type(e).__name__}: {e}") from e
+
+        A = tensor_map.get("A")
+        if A is None:
+            A = tensor_map.get("a")
+        if A is None:
+            A = tensor_map.get("x")
+        B = tensor_map.get("B")
+        if B is None:
+            B = tensor_map.get("b")
+        if B is None:
+            B = tensor_map.get("w")
+        if not (isinstance(A, torch.Tensor) and isinstance(B, torch.Tensor)):
+            raise RuntimeError("missing native tensors for ai_bench_matmul baseline (need A,B)")
+        M, K = (int(A.shape[0]), int(A.shape[1]))
+        K2, N = (int(B.shape[0]), int(B.shape[1]))
+        if K2 != K:
+            raise RuntimeError(f"ai_bench_matmul baseline shape mismatch: A is {tuple(A.shape)} B is {tuple(B.shape)}")
+        C = torch.empty((M, N), device=device, dtype=torch.float32)
+
+        BLOCK_M = 64
+        BLOCK_N = 16
+        BLOCK_K = 16
+        grid = lambda meta: (triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),)  # noqa: E731
+
+        def _run() -> None:
+            ai_bench_matmul_kernel[grid](
+                A,
+                B,
+                C,
+                M,
+                N,
+                K,
+                int(A.stride(0)),
+                int(A.stride(1)),
+                int(B.stride(0)),
+                int(B.stride(1)),
+                int(C.stride(0)),
+                int(C.stride(1)),
+                BLOCK_M=BLOCK_M,
+                BLOCK_N=BLOCK_N,
+                BLOCK_K=BLOCK_K,
+            )
+
+        return _run, str(getattr(module, "__name__", "")), {
+            "arg_count": int(0),  # opaque; kernel launch args are not signature-bound
+            "spec_source": source,
+            "launch_source": "ai_bench_matmul_kernel:grid_launch_fixed_meta",
+        }
+
     by_param_tensor: dict[str, tuple[str, torch.Tensor]] = {}
     for name, tensor in tensor_map.items():
         key = _kernel_param_key(name)

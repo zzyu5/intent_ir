@@ -2088,7 +2088,9 @@ def _run_ai_bench_correlation_reference(case: TestCase) -> Dict[str, np.ndarray]
     in_size = in_channel * height * width
     vals0 = (torch.arange(in_size, device=device) % 16).to(torch.int8).reshape((in_channel, height, width))
     vals1 = (torch.arange(in_size, device=device) % 35).to(torch.int8).reshape((in_channel, height, width))
-    out = torch.empty((out_channel, height, width), device=device, dtype=torch.int8)
+    # The kernel stores with a mask (w >= pid_z); make masked-out elements deterministic
+    # so downstream diff/perf tooling does not compare uninitialized bytes.
+    out = torch.zeros((out_channel, height, width), device=device, dtype=torch.int8)
     grid = lambda meta: (
         triton.cdiv(width, meta["BLOCK_W"]),
         triton.cdiv(height, meta["BLOCK_H"]),
