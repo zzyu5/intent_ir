@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-28T00:35:23+00:00",
+  "updated_at": "2026-02-28T00:43:22+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "1106cea backend(cuda-real-mlir): add ai_bench_rope/warp lowering + perf native adapters\ne8419ef workflow: rebuild state after softmax real-mlir perf fix\n8f6479e backend(cuda): unroll row softmax tile + prefer std_llvm contract\nf98ee1a workflow: rebuild state after ai_bench_softmax real-mlir\n5d1f32b backend(cuda-real-mlir): enable ai_bench_softmax lowering + native adapter\n4d09cd7 workflow: rebuild state after group_norm_kernel real-mlir\nbff12ea backend(cuda-real-mlir): add group_norm_kernel lowering\nd17efc2 workflow: rebuild state after ai_bench_layernorm native perf adapter\ne680152 perf(native): add ai_bench_layernorm adapter for cuda-graph capture\nb9920b1 workflow: rebuild state after ai_bench_layernorm real-mlir\n450dd3d backend(cuda): enable ai_bench_layernorm in real-mlir wave8\n4a284f7 workflow: rebuild state after grouped_row_sum2d real-mlir\n31d17c4 backend(cuda): add grouped_row_sum2d real-mlir lowering\n8c28a0d workflow: rebuild state after cuda wave8 norms lowering\n2a39f48 backend(cuda): extend real-mlir wave8 norms + robust unary casts\nf70f97a workflow: rebuild state after masked_softmax2d real-mlir perf\n47c4f3f perf(native): add masked_softmax2d adapter for cuda-graph capture\n2241cc0 mlir(cuda): include masked_softmax2d in real-mlir wave8\n50625f5 backend(cuda-real-mlir): add masked_softmax2d lowering\nf2b6824 workflow: rebuild state after softmax_inner real-mlir perf",
+  "git_log_short": "2fe4479 backend(cuda-real-mlir): add ai_bench_resize lowering + perf adapter\nb766bff workflow: rebuild state after rope/warp real-mlir expansion\n1106cea backend(cuda-real-mlir): add ai_bench_rope/warp lowering + perf native adapters\ne8419ef workflow: rebuild state after softmax real-mlir perf fix\n8f6479e backend(cuda): unroll row softmax tile + prefer std_llvm contract\nf98ee1a workflow: rebuild state after ai_bench_softmax real-mlir\n5d1f32b backend(cuda-real-mlir): enable ai_bench_softmax lowering + native adapter\n4d09cd7 workflow: rebuild state after group_norm_kernel real-mlir\nbff12ea backend(cuda-real-mlir): add group_norm_kernel lowering\nd17efc2 workflow: rebuild state after ai_bench_layernorm native perf adapter\ne680152 perf(native): add ai_bench_layernorm adapter for cuda-graph capture\nb9920b1 workflow: rebuild state after ai_bench_layernorm real-mlir\n450dd3d backend(cuda): enable ai_bench_layernorm in real-mlir wave8\n4a284f7 workflow: rebuild state after grouped_row_sum2d real-mlir\n31d17c4 backend(cuda): add grouped_row_sum2d real-mlir lowering\n8c28a0d workflow: rebuild state after cuda wave8 norms lowering\n2a39f48 backend(cuda): extend real-mlir wave8 norms + robust unary casts\nf70f97a workflow: rebuild state after masked_softmax2d real-mlir perf\n47c4f3f perf(native): add masked_softmax2d adapter for cuda-graph capture\n2241cc0 mlir(cuda): include masked_softmax2d in real-mlir wave8",
   "progress_tail": [
     {
       "ts": "2026-02-26T16:26:31+00:00",
