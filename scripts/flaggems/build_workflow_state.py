@@ -431,6 +431,12 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in reversed(rows):
         if not isinstance(row, dict):
             continue
+        # Only treat coverage lane sessions as candidates for full196 state.
+        # Other lanes may run coverage-like suites for local experiments and
+        # should not overwrite the gate-relevant validated commit tracking.
+        lane = str(row.get("lane") or "").strip().lower()
+        if lane and lane != "coverage":
+            continue
         run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
         is_full, is_ok, metadata = _classify_full196_run(run_summary_path)
         if not is_full or run_summary_path is None:
@@ -484,6 +490,12 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _latest_gpu_perf_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in reversed(rows):
         if not isinstance(row, dict):
+            continue
+        # Only treat backend_compiler lane sessions as candidates for gpu_perf
+        # validated state. Monitor-only perf runs (e.g. triton-native perf
+        # experiments) should be logged under other lanes.
+        lane = str(row.get("lane") or "").strip().lower()
+        if lane and lane != "backend_compiler":
             continue
         run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
         is_perf, is_ok, metadata = _classify_gpu_perf_run(run_summary_path)
