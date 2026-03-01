@@ -21,6 +21,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
+# Avoid MKL/OpenMP threading-layer conflicts when importing torch after numpy in
+# some environments (torch is imported lazily by this module).
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
+
 import numpy as np
 
 

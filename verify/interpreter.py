@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+import os
+
+# Avoid MKL/OpenMP threading-layer conflicts when importing torch after numpy in
+# some environments (e.g., upsample_* ops use torch.nn.functional.interpolate).
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
+
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
 
