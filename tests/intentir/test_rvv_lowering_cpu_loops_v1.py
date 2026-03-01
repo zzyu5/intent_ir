@@ -42,6 +42,21 @@ def _add2d_intent() -> IntentFunction:
     )
 
 
+def _add_bias2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "add_bias2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "add", "inputs": ["x", "bias"], "output": "out", "attrs": {}}],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _relu2d_where_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -176,6 +191,17 @@ def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPat
     assert "scf.for" in str(out.module_text or "")
     assert "memref.load" in str(out.module_text or "")
     _verify_with_mlir_opt(str(out.module_text or ""))
+
+
+def test_rvv_cpu_loops_v1_supports_rank1_broadcast(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_add_bias2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    text = str(out.module_text or "")
+    assert "memref<64xf32>" in text
+    assert "memref.load %bias[%n]" in text
+    _verify_with_mlir_opt(text)
 
 
 def test_rvv_cpu_loops_v1_rewrites_relu_where_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
