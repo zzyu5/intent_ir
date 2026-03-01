@@ -318,6 +318,104 @@ def _emit_row_reduce_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _maybe_rewrite_relu2d_where_pattern(intent: IntentFunction) -> IntentFunction:
+    """
+    Canonicalize a common relu2d lowering pattern in expanded intents:
+
+      zero = const(0.0)
+      mask = gt(x, zero)
+      out  = where(mask, x, zero)
+
+    Our RVV cpu-loops v1 backend only supports a small op set and operates on
+    scalar SSA values inside a single `scf.for` loop. Rather than implementing
+    general boolean tensors + where, rewrite this pattern into a single `relu`
+    op which the emitter supports.
+    """
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1 or len(ops) != 3:
+        return intent
+
+    op0, op1, op2 = ops
+    if str(getattr(op0, "op", "")).strip() != "const":
+        return intent
+    if str(getattr(op1, "op", "")).strip() != "gt":
+        return intent
+    if str(getattr(op2, "op", "")).strip() != "where":
+        return intent
+
+    zero_name = str(getattr(op0, "output", "")).strip()
+    mask_name = str(getattr(op1, "output", "")).strip()
+    out_name = str(getattr(op2, "output", "")).strip()
+    if not zero_name or not mask_name or not out_name:
+        return intent
+    if out_name != outputs[0]:
+        return intent
+
+    attrs0 = dict(getattr(op0, "attrs", {}) or {})
+    if str(attrs0.get("dtype") or "f32").strip().lower() != "f32":
+        return intent
+    try:
+        v0 = float(attrs0.get("value"))
+    except Exception:
+        return intent
+    if v0 != 0.0:
+        return intent
+
+    ins1 = [str(x).strip() for x in list(getattr(op1, "inputs", []) or []) if str(x).strip()]
+    if len(ins1) != 2 or ins1[1] != zero_name:
+        return intent
+    x_name = str(ins1[0])
+    if not x_name:
+        return intent
+
+    ins2 = [str(x).strip() for x in list(getattr(op2, "inputs", []) or []) if str(x).strip()]
+    if len(ins2) != 3 or ins2[0] != mask_name or ins2[1] != x_name or ins2[2] != zero_name:
+        return intent
+
+    x_tt = (intent.tensors or {}).get(x_name)
+    out_tt = (intent.tensors or {}).get(out_name)
+    zero_tt = (intent.tensors or {}).get(zero_name)
+    if x_tt is None or out_tt is None or zero_tt is None:
+        return intent
+    if str(getattr(x_tt, "dtype", "")).strip().lower() != "f32":
+        return intent
+    if str(getattr(out_tt, "dtype", "")).strip().lower() != "f32":
+        return intent
+    if str(getattr(zero_tt, "dtype", "")).strip().lower() != "f32":
+        return intent
+    if len(list(getattr(zero_tt, "shape", []) or [])) != 0:
+        return intent
+    if list(getattr(x_tt, "shape", []) or []) != list(getattr(out_tt, "shape", []) or []):
+        return intent
+
+    def _dim_json(d: Any) -> int | str:
+        raw = getattr(d, "value", d)
+        if isinstance(raw, int):
+            return int(raw)
+        return str(raw)
+
+    return IntentFunction.from_json_dict(
+        {
+            "name": str(intent.name or "relu2d"),
+            "tensors": {
+                str(x_name): {
+                    "dtype": "f32",
+                    "shape": [_dim_json(d) for d in list(getattr(x_tt, "shape", []) or [])],
+                    "layout": "row_major",
+                },
+                str(out_name): {
+                    "dtype": "f32",
+                    "shape": [_dim_json(d) for d in list(getattr(out_tt, "shape", []) or [])],
+                    "layout": "row_major",
+                },
+            },
+            "ops": [{"op": "relu", "inputs": [str(x_name)], "output": str(out_name), "attrs": {}}],
+            "outputs": [str(out_name)],
+        }
+    )
+
+
 def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | None = None, **_: object) -> IntentMLIRModule:
     b = str(backend or "").strip().lower()
     if b and not b.startswith("rvv") and b != "riscv":
@@ -330,6 +428,7 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     bindings: dict[str, Any] = {str(k): int(v) for k, v in dict(bindings_raw).items() if str(k).strip()}
 
     intent = to_intent(module)
+    intent = _maybe_rewrite_relu2d_where_pattern(intent)
     _ = materialize_missing_op_output_tensors(intent)
     kernel_name = str(intent.name or "intent")
 

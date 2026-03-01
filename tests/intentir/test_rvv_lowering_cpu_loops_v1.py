@@ -42,6 +42,26 @@ def _add2d_intent() -> IntentFunction:
     )
 
 
+def _relu2d_where_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "relu2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "zero": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero", "attrs": {"value": 0.0, "dtype": "f32"}},
+                {"op": "gt", "inputs": ["x", "zero"], "output": "mask", "attrs": {}},
+                {"op": "where", "inputs": ["mask", "x", "zero"], "output": "output", "attrs": {}},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -52,3 +72,13 @@ def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPat
     assert "memref.load" in str(out.module_text or "")
     _verify_with_mlir_opt(str(out.module_text or ""))
 
+
+def test_rvv_cpu_loops_v1_rewrites_relu_where_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_relu2d_where_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_v1"
+    text = str(out.module_text or "")
+    assert "arith.maximumf" in text
+    _verify_with_mlir_opt(text)
