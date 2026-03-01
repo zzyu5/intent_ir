@@ -85,6 +85,39 @@ def _copy2d_divmod_intent() -> IntentFunction:
     )
 
 
+def _rowmask_where2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "rowmask_where2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+                "mask_2d": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "zero": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "zero_2d": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero", "attrs": {"value": 0.0}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["mask"],
+                    "output": "mask_2d",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["zero"],
+                    "output": "zero_2d",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": []},
+                },
+                {"op": "where", "inputs": ["mask_2d", "inp", "zero_2d"], "output": "out", "attrs": {}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _relu2d_where_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -252,6 +285,19 @@ def test_rvv_cpu_loops_v1_supports_identity_copy(monkeypatch: pytest.MonkeyPatch
     assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_v1"
     text = str(out.module_text or "")
     assert "memref.load %inp[%i]" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_rowmask_where2d(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_rowmask_where2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_v1"
+    text = str(out.module_text or "")
+    assert "memref<4xi32>" in text
+    assert "%c0i32 = arith.constant 0 : i32" in text
+    assert "arith.cmpi ne" in text
     _verify_with_mlir_opt(text)
 
 
