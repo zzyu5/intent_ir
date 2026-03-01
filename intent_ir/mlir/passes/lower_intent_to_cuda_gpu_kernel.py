@@ -2412,6 +2412,8 @@ def lower_intent_to_cuda_gpu_kernel(
             "ai_bench_matmul",
             "mm2d",
             "addmm2d",
+            "bmm3d",
+            "baddbmm3d",
             "mv2d",
             "matmul_relu2d",
             "matmul_bias_relu2d",
@@ -2494,6 +2496,56 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "row_mask": None,
                                     "col_mask": None,
                                 }
+
+            if matmul_v1 is None and intent_name == "bmm3d" and op_names == ["matmul"]:
+                op0 = ops_list[0]
+                ins = _op_inputs(op0)
+                out0 = _op_out(op0)
+                if len(ins) == 2 and out0 == str(out_name):
+                    a_name, b_name = str(ins[0]), str(ins[1])
+                    a_dims = _dims(a_name)
+                    b_dims = _dims(b_name)
+                    c_dims = _dims(str(out_name))
+                    if (
+                        a_dims
+                        and b_dims
+                        and c_dims
+                        and len(a_dims) == 3
+                        and len(b_dims) == 3
+                        and len(c_dims) == 3
+                        and _elem(a_name) == "f32"
+                        and _elem(b_name) == "f32"
+                        and _elem(str(out_name)) == "f32"
+                    ):
+                        batch, m, k = (int(a_dims[0]), int(a_dims[1]), int(a_dims[2]))
+                        batch2, k2, n = (int(b_dims[0]), int(b_dims[1]), int(b_dims[2]))
+                        if (
+                            batch > 0
+                            and batch2 == batch
+                            and m > 0
+                            and n > 0
+                            and k > 0
+                            and k2 == k
+                            and int(c_dims[0]) == int(batch)
+                            and int(c_dims[1]) == int(m)
+                            and int(c_dims[2]) == int(n)
+                        ):
+                            matmul_v1 = {
+                                "A": a_name,
+                                "B": b_name,
+                                "out": str(out_name),
+                                "BATCH": int(batch),
+                                "M": int(m),
+                                "N": int(n),
+                                "K": int(k),
+                                "BM": 64,
+                                "BN": 16,
+                                "BK": 16,
+                                "relu": False,
+                                "bias": None,
+                                "row_mask": None,
+                                "col_mask": None,
+                            }
 
             if matmul_v1 is None and intent_name == "addmm2d" and tuple(op_names) in {
                 ("matmul", "mul", "mul", "add"),
@@ -2601,9 +2653,128 @@ def lower_intent_to_cuda_gpu_kernel(
                                                 "row_mask": None,
                                                 "col_mask": None,
                                                 "add_inp": str(input_name),
-                                                "alpha": str(alpha_name),
-                                                "beta": str(beta_name),
-                                            }
+                                            "alpha": str(alpha_name),
+                                            "beta": str(beta_name),
+                                        }
+
+            if matmul_v1 is None and intent_name == "baddbmm3d" and tuple(op_names) in {("matmul", "mul", "mul", "add")}:
+                matmul_op, mul_a, mul_b, add_op = ops_list
+                ins0 = _op_inputs(matmul_op)
+                out0 = _op_out(matmul_op)
+                ins1 = _op_inputs(mul_a)
+                out1 = _op_out(mul_a)
+                ins2 = _op_inputs(mul_b)
+                out2 = _op_out(mul_b)
+                ins3 = _op_inputs(add_op)
+                out3 = _op_out(add_op)
+                if len(ins0) == 2 and len(ins1) == 2 and len(ins2) == 2 and len(ins3) == 2 and out3 == str(out_name):
+                    a_name, b_name = str(ins0[0]), str(ins0[1])
+                    matmul_out = str(out0)
+
+                    alpha_name = None
+                    beta_name = None
+                    bias_name = None
+                    matmul_scaled = None
+                    bias_scaled = None
+
+                    # Identify alpha scaling of matmul output.
+                    for ins, outv in ((ins1, out1), (ins2, out2)):
+                        if matmul_out in ins:
+                            other = [str(x) for x in ins if str(x) != matmul_out]
+                            if len(other) != 1:
+                                continue
+                            cand_alpha = str(other[0])
+                            spec = arg_specs.get(str(cand_alpha))
+                            if (
+                                isinstance(spec, dict)
+                                and bool(spec.get("scalar"))
+                                and str(spec.get("memref_elem_ty") or "") == "f32"
+                            ):
+                                alpha_name = cand_alpha
+                                matmul_scaled = str(outv)
+
+                    # Identify beta scaling of bias tensor.
+                    for ins, outv in ((ins1, out1), (ins2, out2)):
+                        if matmul_out in ins:
+                            continue
+                        scalar = None
+                        tensor = None
+                        for cand in ins:
+                            spec = arg_specs.get(str(cand))
+                            if (
+                                isinstance(spec, dict)
+                                and bool(spec.get("scalar"))
+                                and str(spec.get("memref_elem_ty") or "") == "f32"
+                            ):
+                                scalar = str(cand)
+                            elif (
+                                isinstance(spec, dict)
+                                and not bool(spec.get("scalar"))
+                                and str(spec.get("memref_elem_ty") or "") == "f32"
+                            ):
+                                tensor = str(cand)
+                        if scalar is None or tensor is None:
+                            continue
+                        beta_name = scalar
+                        bias_name = tensor
+                        bias_scaled = str(outv)
+
+                    if (
+                        alpha_name
+                        and beta_name
+                        and bias_name
+                        and matmul_scaled
+                        and bias_scaled
+                        and set(map(str, ins3)) == {str(matmul_scaled), str(bias_scaled)}
+                    ):
+                        a_dims = _dims(a_name)
+                        b_dims = _dims(b_name)
+                        out_dims2 = _dims(str(out_name))
+                        bias_dims = _dims(str(bias_name))
+                        if (
+                            a_dims
+                            and b_dims
+                            and out_dims2
+                            and bias_dims
+                            and len(a_dims) == 3
+                            and len(b_dims) == 3
+                            and len(out_dims2) == 3
+                            and len(bias_dims) == 3
+                        ):
+                            batch, m, k = (int(a_dims[0]), int(a_dims[1]), int(a_dims[2]))
+                            batch2, k2, n = (int(b_dims[0]), int(b_dims[1]), int(b_dims[2]))
+                            if (
+                                batch > 0
+                                and batch2 == batch
+                                and m > 0
+                                and n > 0
+                                and k > 0
+                                and k2 == k
+                                and list(out_dims2) == [int(batch), int(m), int(n)]
+                                and list(bias_dims) == [int(batch), int(m), int(n)]
+                                and _elem(a_name) == "f32"
+                                and _elem(b_name) == "f32"
+                                and _elem(str(out_name)) == "f32"
+                            ):
+                                matmul_v1 = {
+                                    "A": a_name,
+                                    "B": b_name,
+                                    "out": str(out_name),
+                                    "BATCH": int(batch),
+                                    "M": int(m),
+                                    "N": int(n),
+                                    "K": int(k),
+                                    "BM": 64,
+                                    "BN": 16,
+                                    "BK": 16,
+                                    "relu": False,
+                                    "bias": None,
+                                    "row_mask": None,
+                                    "col_mask": None,
+                                    "add_inp": str(bias_name),
+                                    "alpha": str(alpha_name),
+                                    "beta": str(beta_name),
+                                }
 
             if matvec_v1 is None and intent_name == "mv2d" and tuple(op_names) in {
                 ("matmul", "mul", "mul", "add"),
@@ -4824,6 +4995,12 @@ def lower_intent_to_cuda_gpu_kernel(
         col_mask_name = matmul_v1.get("col_mask")
         relu = bool(matmul_v1.get("relu") or False)
 
+        batch_dim = int(matmul_v1.get("BATCH") or 1)
+        if int(batch_dim) > 1 and str(intent_name) == "bmm3d":
+            kernel_kind = "bmm_tile_v2"
+        elif int(batch_dim) > 1 and str(intent_name) == "baddbmm3d":
+            kernel_kind = "baddbmm_tile_v2"
+
         m_dim = int(matmul_v1["M"])
         n_dim = int(matmul_v1["N"])
         k_dim = int(matmul_v1["K"])
@@ -4843,9 +5020,14 @@ def lower_intent_to_cuda_gpu_kernel(
             raise RuntimeError("matmul bias expects f32 tensor")
         if add_inp_name is not None:
             if str(arg_specs[str(add_inp_name)].get("memref_elem_ty")) != "f32":
-                raise RuntimeError("addmm2d expects f32 input tensor")
-            if list(arg_specs[str(add_inp_name)].get("dims") or []) != [int(m_dim), int(n_dim)]:
-                raise RuntimeError("addmm2d expects input dims [M,N]")
+                raise RuntimeError("matmul epilogue expects f32 input tensor")
+            add_inp_dims = list(arg_specs[str(add_inp_name)].get("dims") or [])
+            if int(batch_dim) > 1:
+                if add_inp_dims != [int(batch_dim), int(m_dim), int(n_dim)]:
+                    raise RuntimeError("baddbmm3d expects input dims [BATCH,M,N]")
+            else:
+                if add_inp_dims != [int(m_dim), int(n_dim)]:
+                    raise RuntimeError("addmm2d expects input dims [M,N]")
             if alpha_name is None or beta_name is None:
                 raise RuntimeError("addmm2d requires alpha/beta scalars")
             if not bool(arg_specs.get(str(alpha_name), {}).get("scalar")) or str(
@@ -4874,11 +5056,13 @@ def lower_intent_to_cuda_gpu_kernel(
         col_mask_memref = str(arg_specs[str(col_mask_name)]["memref"]) if col_mask_name is not None else ""
 
         cuda_real_mlir_matmul_cfg = {"BM": int(bm), "BN": int(bn), "BK": int(bk)}
+        if int(batch_dim) > 1:
+            cuda_real_mlir_matmul_cfg["BATCH"] = int(batch_dim)
 
         threads = 256
         grid_x = (int(n_dim) + int(bn) - 1) // int(bn)
         grid_y = (int(m_dim) + int(bm) - 1) // int(bm)
-        launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), int(grid_y), 1]}
+        launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), int(grid_y), int(batch_dim)]}
 
         tile_a_elems = int(bm) * int(bk)
         tile_b_elems = int(bk) * int(bn)
@@ -4902,6 +5086,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %tid = gpu.thread_id x")
         lines.append("      %bid_n = gpu.block_id x")
         lines.append("      %bid_m = gpu.block_id y")
+        lines.append("      %bid_b = gpu.block_id z")
         lines.append("      %c0 = arith.constant 0 : index")
         lines.append("      %c1 = arith.constant 1 : index")
         lines.append("      %c2 = arith.constant 2 : index")
@@ -4920,6 +5105,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %c0f = arith.constant 0.0 : f32")
         lines.append("      %base_m = arith.muli %bid_m, %cBM : index")
         lines.append("      %base_n = arith.muli %bid_n, %cBN : index")
+        lines.append("      %batch_m = arith.muli %bid_b, %cM : index")
+        lines.append("      %batch_k = arith.muli %bid_b, %cK : index")
         lines.append(f"      %sh0 = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
         lines.append(f"      %sh = memref.assume_alignment %sh0, 16 : {shared_global_memref_ty}")
 
@@ -4950,6 +5137,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 kk = _fresh("a_k")
                 g_row = _fresh("a_gm")
                 g_k = _fresh("a_gk")
+                g_row_b = _fresh("a_gm_b")
                 mul = _fresh("a_mul")
                 g_idx = _fresh("a_idx")
                 v = _fresh("a_load")
@@ -4957,7 +5145,8 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"        {kk} = arith.remui {idx}, %cBK : index")
                 lines.append(f"        {g_row} = arith.addi %base_m, {row} : index")
                 lines.append(f"        {g_k} = arith.addi %k0, {kk} : index")
-                lines.append(f"        {mul} = arith.muli {g_row}, %cK : index")
+                lines.append(f"        {g_row_b} = arith.addi %batch_m, {g_row} : index")
+                lines.append(f"        {mul} = arith.muli {g_row_b}, %cK : index")
                 lines.append(f"        {g_idx} = arith.addi {mul}, {g_k} : index")
                 lines.append(f"        {v} = memref.load {arg_ssa[a_name]}[{g_idx}] : {a_memref}")
                 lines.append(f"        memref.store {v}, %sh[{idx}] : {shared_global_memref_ty}")
@@ -4983,7 +5172,9 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"          {val} = scf.if {p_ok} -> (f32) {{")
                 mul = _fresh("a_mul")
                 g_idx = _fresh("a_idx")
-                lines.append(f"            {mul} = arith.muli {g_row}, %cK : index")
+                g_row_b = _fresh("a_gm_b")
+                lines.append(f"            {g_row_b} = arith.addi %batch_m, {g_row} : index")
+                lines.append(f"            {mul} = arith.muli {g_row_b}, %cK : index")
                 lines.append(f"            {g_idx} = arith.addi {mul}, {g_k} : index")
                 v = _fresh("a_load")
                 lines.append(f"            {v} = memref.load {arg_ssa[a_name]}[{g_idx}] : {a_memref}")
@@ -5007,6 +5198,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 col = _fresh("b_col")
                 g_k = _fresh("b_gk")
                 g_col = _fresh("b_gn")
+                g_k_b = _fresh("b_gk_b")
                 mul = _fresh("b_mul")
                 g_idx = _fresh("b_idx")
                 v = _fresh("b_load")
@@ -5015,7 +5207,8 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"        {col} = arith.remui {idx}, %cBN : index")
                 lines.append(f"        {g_k} = arith.addi %k0, {kk} : index")
                 lines.append(f"        {g_col} = arith.addi %base_n, {col} : index")
-                lines.append(f"        {mul} = arith.muli {g_k}, %cN : index")
+                lines.append(f"        {g_k_b} = arith.addi %batch_k, {g_k} : index")
+                lines.append(f"        {mul} = arith.muli {g_k_b}, %cN : index")
                 lines.append(f"        {g_idx} = arith.addi {mul}, {g_col} : index")
                 lines.append(f"        {v} = memref.load {arg_ssa[b_name]}[{g_idx}] : {b_memref}")
                 lines.append(f"        {sh_idx} = arith.addi {idx}, %cOffsetB : index")
@@ -5043,7 +5236,9 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"          {val} = scf.if {p_ok} -> (f32) {{")
                 mul = _fresh("b_mul")
                 g_idx = _fresh("b_idx")
-                lines.append(f"            {mul} = arith.muli {g_k}, %cN : index")
+                g_k_b = _fresh("b_gk_b")
+                lines.append(f"            {g_k_b} = arith.addi %batch_k, {g_k} : index")
+                lines.append(f"            {mul} = arith.muli {g_k_b}, %cN : index")
                 lines.append(f"            {g_idx} = arith.addi {mul}, {g_col} : index")
                 v = _fresh("b_load")
                 lines.append(f"            {v} = memref.load {arg_ssa[b_name]}[{g_idx}] : {b_memref}")
@@ -5097,9 +5292,11 @@ def lower_intent_to_cuda_gpu_kernel(
         # Store outputs (fused epilogue).
         if fast_no_bounds:
             val_vec = str(acc_out)
+            gm_b = _fresh("gm_b")
             mul_o = _fresh("mul_o")
             idx_o = _fresh("idx_o")
-            lines.append(f"      {mul_o} = arith.muli %gm, %cN : index")
+            lines.append(f"      {gm_b} = arith.addi %batch_m, %gm : index")
+            lines.append(f"      {mul_o} = arith.muli {gm_b}, %cN : index")
             lines.append(f"      {idx_o} = arith.addi {mul_o}, %gn0 : index")
             if alpha_name is not None:
                 alpha_s = _fresh("alpha")
@@ -5178,9 +5375,11 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("      %p_ok_vec = arith.andi %p_row, %p_col_vec : i1")
             lines.append("      scf.if %p_ok_vec {")
 
+            gm_b = _fresh("gm_b")
             mul_o = _fresh("mul_o")
             idx_o = _fresh("idx_o")
-            lines.append(f"        {mul_o} = arith.muli %gm, %cN : index")
+            lines.append(f"        {gm_b} = arith.addi %batch_m, %gm : index")
+            lines.append(f"        {mul_o} = arith.muli {gm_b}, %cN : index")
             lines.append(f"        {idx_o} = arith.addi {mul_o}, %gn0 : index")
             val_vec = str(acc_out)
             if alpha_name is not None:
@@ -5258,6 +5457,8 @@ def lower_intent_to_cuda_gpu_kernel(
             # Scalar fallback for boundary tiles (gm>=M or gn0+3>=N).
             z = _fresh("z")
             lines.append(f"        {z} = arith.constant 0.0 : f32")
+            gm_b = _fresh("gm_b")
+            lines.append(f"        {gm_b} = arith.addi %batch_m, %gm : index")
             for lane in range(4):
                 gn = _fresh(f"gn{lane}")
                 p_col = _fresh(f"p_col{lane}")
@@ -5269,7 +5470,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"        scf.if {p_ok} {{")
                 mul = _fresh("mul_c")
                 idx = _fresh("idx_c")
-                lines.append(f"          {mul} = arith.muli %gm, %cN : index")
+                lines.append(f"          {mul} = arith.muli {gm_b}, %cN : index")
                 lines.append(f"          {idx} = arith.addi {mul}, {gn} : index")
                 lines.append(f"          {val_lane} = vector.extract {acc_out}[{lane}] : f32 from {vec4_ty}")
                 val_scalar = str(val_lane)
