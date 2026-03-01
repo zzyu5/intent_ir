@@ -1376,12 +1376,12 @@ def run_remote(
                     f.write(llvm_ir_text)
                 compile_cmd = (
                     "if command -v clang >/dev/null 2>&1; then "
-                    f"clang -O3 -x ir {q_remote_target} -c -o {q_remote_obj} {q_remote_ll} && "
-                    f"clang -O3 {q_remote_target} -fopenmp -std=c11 -D_POSIX_C_SOURCE=200809L -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
+                    f"clang -O3 -x ir {q_remote_target} -march=rv64gcv -mabi=lp64d -c -o {q_remote_obj} {q_remote_ll} && "
+                    f"clang -O3 {q_remote_target} -march=rv64gcv -mabi=lp64d -fopenmp -std=c11 -D_POSIX_C_SOURCE=200809L -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
                     f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt; "
                     "elif command -v llc >/dev/null 2>&1; then "
-                    f"llc -O3 {q_remote_mtriple} -filetype=obj -o {q_remote_obj} {q_remote_ll} && "
-                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -fopenmp -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
+                    f"llc -O3 {q_remote_mtriple} -mattr=+v -filetype=obj -o {q_remote_obj} {q_remote_ll} && "
+                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
                     f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt; "
                     "else echo 'remote llvm toolchain missing: clang/llc' >&2; exit 127; fi"
                 )
@@ -1403,6 +1403,7 @@ def run_remote(
                 "compile_stderr": comp_err,
                 "compile_ms": compile_ms,
                 "compile_mode": str(execution_mode),
+                "rvv_vector_evidence": {"vsetvli_hits": 0, "vsetvli_sample": "", "vsetvli_error": "compile_failed"},
                 "run_rc": None,
                 "stdout": "",
                 "stderr": "",
@@ -1411,6 +1412,31 @@ def run_remote(
                 "omp": None,
                 "launch_ms": 0.0,
                 "total_ms": compile_ms,
+            }
+
+        rvv_vector_evidence: dict[str, Any] = {"vsetvli_hits": 0, "vsetvli_sample": "", "vsetvli_error": ""}
+        try:
+            cmd_count = f"objdump -d {q_remote_bin} | grep -n vsetvli | wc -l"
+            stdin, stdout, stderr = client.exec_command(cmd_count, timeout=20)
+            out_count = stdout.read().decode().strip()
+            err_count = stderr.read().decode().strip()
+            rc_count = stdout.channel.recv_exit_status()
+            hits = int(out_count) if (rc_count == 0 and out_count.isdigit()) else 0
+            cmd_sample = f"objdump -d {q_remote_bin} | grep -n vsetvli | head -n 20"
+            stdin, stdout, stderr = client.exec_command(cmd_sample, timeout=20)
+            sample = stdout.read().decode()
+            err_sample = stderr.read().decode()
+            rc_sample = stdout.channel.recv_exit_status()
+            rvv_vector_evidence = {
+                "vsetvli_hits": int(hits),
+                "vsetvli_sample": str(sample or ""),
+                "vsetvli_error": str(err_count or err_sample or "") if (rc_count != 0 or rc_sample != 0) else "",
+            }
+        except Exception as e:
+            rvv_vector_evidence = {
+                "vsetvli_hits": 0,
+                "vsetvli_sample": "",
+                "vsetvli_error": f"{type(e).__name__}: {e}",
             }
 
         def _parse_bench(stdout_text: str) -> dict | None:
@@ -1515,6 +1541,7 @@ def run_remote(
             "compile_stderr": comp_err,
             "compile_ms": compile_ms,
             "compile_mode": str(execution_mode),
+            "rvv_vector_evidence": dict(rvv_vector_evidence),
             "run_rc": run.get("run_rc"),
             "stdout": run.get("stdout") or "",
             "stderr": run.get("stderr") or "",
@@ -1639,6 +1666,7 @@ def run_remote(
         "execution_reason": str(execution_plan.get("reason") or ""),
         "execution_elf_machine": str(execution_plan.get("elf_machine") or ""),
         "execution_llvm_triple": str(execution_plan.get("llvm_triple") or ""),
+        "rvv_vector_evidence": chosen.get("rvv_vector_evidence"),
         "omp_threads": int(omp_threads),
         "omp": chosen.get("omp"),
         "schedule": {
