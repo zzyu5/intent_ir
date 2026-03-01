@@ -1,11 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-01T05:49:24+00:00
-- Commit: `92454af0379921a10f9c2a3a9b3071f423bba955`
+- Timestamp: 2026-03-01T09:09:48+00:00
+- Commit: `9a7868c9a849ec0db87a189ebd4d980096a31e3b`
 - Lane: `workflow`
-- Summary: wave13 allowlist perf: min=0.8706 strict no-fallback; wave13 coverage smoke OK (8/8)
+- Summary: wave14 allowlist perf v2 (fresh coverage artifacts)
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/gpu_perf_graph.json, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/status_converged.json, artifacts/validation_rounds/20260301/flaggems_coverage_wave13_smoke
-- Next Focus: CUDA wave14: tackle remaining 44->36 missing kernels (pool/conv/sort/topk/index*)
+- Run Summary: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/run_summary.json, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/status_converged.json, artifacts/validation_rounds/20260301/flaggems_coverage_wave14_realmlir_allowlist_cb101_full_v1
