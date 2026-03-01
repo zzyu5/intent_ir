@@ -1178,14 +1178,14 @@ def _nonzero2d_intent() -> IntentFunction:
         (
             _scaled_dot_product_attention_bhsd_intent,
             {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16, "IS_CAUSAL": 0},
-            "sdpa_bhsd_v1",
-            "gpu.func @scaled_dot_product_attention_bhsd",
+            "sdpa_bhsd_v2",
+            "gpu.shuffle xor",
         ),
         (
             _flash_attn_varlen_func_bhsd_intent,
             {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16, "IS_CAUSAL": 0},
-            "sdpa_bhsd_v1",
-            "gpu.func @flash_attn_varlen_func_bhsd",
+            "sdpa_bhsd_v2",
+            "gpu.shuffle xor",
         ),
         # wave24
         (
