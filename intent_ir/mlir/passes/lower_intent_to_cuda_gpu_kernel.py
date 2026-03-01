@@ -1702,6 +1702,10 @@ def lower_intent_to_cuda_gpu_kernel(
     attn2d_v1: dict[str, Any] | None = None
     attn_fwd_v1: dict[str, Any] | None = None
     sdpa_bhsd_v1: dict[str, Any] | None = None
+    conv1d_ncl_v1: dict[str, Any] | None = None
+    conv2d_nchw_v1: dict[str, Any] | None = None
+    conv3d_ncdhw_v1: dict[str, Any] | None = None
+    conv_depthwise2d_nchw_v1: dict[str, Any] | None = None
     upsample_bicubic2d_aa_v1: dict[str, Any] | None = None
     kron2d_v1: dict[str, Any] | None = None
     cumsum2d_v1: dict[str, Any] | None = None
@@ -1883,6 +1887,287 @@ def lower_intent_to_cuda_gpu_kernel(
                 "K": int(k_len),
                 "D": int(d_dim),
                 "is_causal": bool(is_causal),
+            }
+
+        if conv1d_ncl_v1 is None and intent_name == "conv1d_ncl":
+            if len(ops_list) != 1:
+                raise RuntimeError(f"conv1d_ncl expects 1 op, got {len(ops_list)}")
+            op0 = ops_list[0]
+            op0_name = str(getattr(op0, "op", "")).strip()
+            op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+            op0_out = str(getattr(op0, "output", "")).strip()
+            if op0_name != "conv1d" or len(op0_inputs) != 3 or op0_out != str(out_name):
+                raise RuntimeError("conv1d_ncl expects conv1d(input, weight, bias) -> out")
+            inp_name, w_name, b_name = (str(op0_inputs[0]), str(op0_inputs[1]), str(op0_inputs[2]))
+            required = {inp_name, w_name, b_name, str(out_name)}
+            if not required.issubset(set(arg_specs.keys())):
+                missing = sorted([x for x in required if x not in arg_specs])
+                raise RuntimeError(f"conv1d_ncl missing ABI tensors: {missing}")
+            in_dims = list(arg_specs[inp_name].get("dims") or [])
+            w_dims = list(arg_specs[w_name].get("dims") or [])
+            b_dims = list(arg_specs[b_name].get("dims") or [])
+            o_dims = list(arg_specs[str(out_name)].get("dims") or [])
+            if len(in_dims) != 3 or len(w_dims) != 3 or len(b_dims) != 1 or len(o_dims) != 3:
+                raise RuntimeError(f"conv1d_ncl expects input[N,C_IN,L], weight[C_OUT,C_PER_G,K], bias[C_OUT], out[N,C_OUT,OL]")
+            n_dim, c_in, l_dim = (int(in_dims[0]), int(in_dims[1]), int(in_dims[2]))
+            c_out, c_per_g, k_dim = (int(w_dims[0]), int(w_dims[1]), int(w_dims[2]))
+            n_out, c_out2, ol_dim = (int(o_dims[0]), int(o_dims[1]), int(o_dims[2]))
+            if n_out != n_dim or c_out2 != c_out or int(b_dims[0]) != c_out:
+                raise RuntimeError(f"conv1d_ncl shape mismatch: input={in_dims} weight={w_dims} bias={b_dims} out={o_dims}")
+            groups = int(bindings.get("GROUPS") or 1)
+            stride = int(bindings.get("STRIDE") or 1)
+            padding = int(bindings.get("PADDING") or 0)
+            dilation = int(bindings.get("DILATION") or 1)
+            if groups <= 0 or stride <= 0 or dilation <= 0 or padding < 0:
+                raise RuntimeError("conv1d_ncl invalid stride/padding/dilation/groups")
+            if c_in % groups != 0 or c_out % groups != 0:
+                raise RuntimeError(f"conv1d_ncl expects channels divisible by groups, got C_IN={c_in} C_OUT={c_out} groups={groups}")
+            if c_per_g != (c_in // groups):
+                raise RuntimeError(f"conv1d_ncl expects C_PER_G=C_IN/groups, got C_PER_G={c_per_g} C_IN={c_in} groups={groups}")
+            if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv1d_ncl expects f32 input tensor")
+            if str(arg_specs[w_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv1d_ncl expects f32 weight tensor")
+            if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv1d_ncl expects f32 bias tensor")
+            if str(arg_specs[str(out_name)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv1d_ncl expects f32 output tensor")
+            conv1d_ncl_v1 = {
+                "input": str(inp_name),
+                "weight": str(w_name),
+                "bias": str(b_name),
+                "out": str(out_name),
+                "N": int(n_dim),
+                "C_IN": int(c_in),
+                "C_OUT": int(c_out),
+                "L": int(l_dim),
+                "K": int(k_dim),
+                "STRIDE": int(stride),
+                "PADDING": int(padding),
+                "DILATION": int(dilation),
+                "GROUPS": int(groups),
+                "C_PER_G": int(c_per_g),
+                "OL": int(ol_dim),
+            }
+
+        if conv2d_nchw_v1 is None and intent_name == "conv2d_nchw":
+            if len(ops_list) != 1:
+                raise RuntimeError(f"conv2d_nchw expects 1 op, got {len(ops_list)}")
+            op0 = ops_list[0]
+            op0_name = str(getattr(op0, "op", "")).strip()
+            op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+            op0_out = str(getattr(op0, "output", "")).strip()
+            if op0_name != "conv2d" or len(op0_inputs) != 3 or op0_out != str(out_name):
+                raise RuntimeError("conv2d_nchw expects conv2d(input, weight, bias) -> out")
+            inp_name, w_name, b_name = (str(op0_inputs[0]), str(op0_inputs[1]), str(op0_inputs[2]))
+            required = {inp_name, w_name, b_name, str(out_name)}
+            if not required.issubset(set(arg_specs.keys())):
+                missing = sorted([x for x in required if x not in arg_specs])
+                raise RuntimeError(f"conv2d_nchw missing ABI tensors: {missing}")
+            in_dims = list(arg_specs[inp_name].get("dims") or [])
+            w_dims = list(arg_specs[w_name].get("dims") or [])
+            b_dims = list(arg_specs[b_name].get("dims") or [])
+            o_dims = list(arg_specs[str(out_name)].get("dims") or [])
+            if len(in_dims) != 4 or len(w_dims) != 4 or len(b_dims) != 1 or len(o_dims) != 4:
+                raise RuntimeError("conv2d_nchw expects input[N,C_IN,H,W], weight[C_OUT,C_PER_G,KH,KW], bias[C_OUT], out[N,C_OUT,OH,OW]")
+            n_dim, c_in, h_dim, w_dim = (int(in_dims[0]), int(in_dims[1]), int(in_dims[2]), int(in_dims[3]))
+            c_out, c_per_g, kh, kw = (int(w_dims[0]), int(w_dims[1]), int(w_dims[2]), int(w_dims[3]))
+            n_out, c_out2, oh, ow = (int(o_dims[0]), int(o_dims[1]), int(o_dims[2]), int(o_dims[3]))
+            if n_out != n_dim or c_out2 != c_out or int(b_dims[0]) != c_out:
+                raise RuntimeError(f"conv2d_nchw shape mismatch: input={in_dims} weight={w_dims} bias={b_dims} out={o_dims}")
+            groups = int(bindings.get("GROUPS") or 1)
+            sh = int(bindings.get("SH") or 1)
+            sw = int(bindings.get("SW") or 1)
+            ph = int(bindings.get("PH") or 0)
+            pw = int(bindings.get("PW") or 0)
+            dh = int(bindings.get("DH") or 1)
+            dw = int(bindings.get("DW") or 1)
+            if groups <= 0 or sh <= 0 or sw <= 0 or dh <= 0 or dw <= 0 or ph < 0 or pw < 0:
+                raise RuntimeError("conv2d_nchw invalid stride/padding/dilation/groups")
+            if c_in % groups != 0 or c_out % groups != 0:
+                raise RuntimeError(f"conv2d_nchw expects channels divisible by groups, got C_IN={c_in} C_OUT={c_out} groups={groups}")
+            if c_per_g != (c_in // groups):
+                raise RuntimeError(f"conv2d_nchw expects C_PER_G=C_IN/groups, got C_PER_G={c_per_g} C_IN={c_in} groups={groups}")
+            if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv2d_nchw expects f32 input tensor")
+            if str(arg_specs[w_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv2d_nchw expects f32 weight tensor")
+            if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv2d_nchw expects f32 bias tensor")
+            if str(arg_specs[str(out_name)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv2d_nchw expects f32 output tensor")
+            conv2d_nchw_v1 = {
+                "input": str(inp_name),
+                "weight": str(w_name),
+                "bias": str(b_name),
+                "out": str(out_name),
+                "N": int(n_dim),
+                "C_IN": int(c_in),
+                "C_OUT": int(c_out),
+                "H": int(h_dim),
+                "W": int(w_dim),
+                "KH": int(kh),
+                "KW": int(kw),
+                "SH": int(sh),
+                "SW": int(sw),
+                "PH": int(ph),
+                "PW": int(pw),
+                "DH": int(dh),
+                "DW": int(dw),
+                "GROUPS": int(groups),
+                "C_PER_G": int(c_per_g),
+                "OH": int(oh),
+                "OW": int(ow),
+            }
+
+        if conv3d_ncdhw_v1 is None and intent_name == "conv3d_ncdhw":
+            if len(ops_list) != 1:
+                raise RuntimeError(f"conv3d_ncdhw expects 1 op, got {len(ops_list)}")
+            op0 = ops_list[0]
+            op0_name = str(getattr(op0, "op", "")).strip()
+            op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+            op0_out = str(getattr(op0, "output", "")).strip()
+            if op0_name != "conv3d" or len(op0_inputs) != 3 or op0_out != str(out_name):
+                raise RuntimeError("conv3d_ncdhw expects conv3d(input, weight, bias) -> out")
+            inp_name, w_name, b_name = (str(op0_inputs[0]), str(op0_inputs[1]), str(op0_inputs[2]))
+            required = {inp_name, w_name, b_name, str(out_name)}
+            if not required.issubset(set(arg_specs.keys())):
+                missing = sorted([x for x in required if x not in arg_specs])
+                raise RuntimeError(f"conv3d_ncdhw missing ABI tensors: {missing}")
+            in_dims = list(arg_specs[inp_name].get("dims") or [])
+            w_dims = list(arg_specs[w_name].get("dims") or [])
+            b_dims = list(arg_specs[b_name].get("dims") or [])
+            o_dims = list(arg_specs[str(out_name)].get("dims") or [])
+            if len(in_dims) != 5 or len(w_dims) != 5 or len(b_dims) != 1 or len(o_dims) != 5:
+                raise RuntimeError("conv3d_ncdhw expects input[N,C_IN,D,H,W], weight[C_OUT,C_PER_G,KD,KH,KW], bias[C_OUT], out[N,C_OUT,OD,OH,OW]")
+            n_dim, c_in, d_dim, h_dim, w_dim = (int(in_dims[0]), int(in_dims[1]), int(in_dims[2]), int(in_dims[3]), int(in_dims[4]))
+            c_out, c_per_g, kd, kh, kw = (int(w_dims[0]), int(w_dims[1]), int(w_dims[2]), int(w_dims[3]), int(w_dims[4]))
+            n_out, c_out2, od, oh, ow = (int(o_dims[0]), int(o_dims[1]), int(o_dims[2]), int(o_dims[3]), int(o_dims[4]))
+            if n_out != n_dim or c_out2 != c_out or int(b_dims[0]) != c_out:
+                raise RuntimeError(f"conv3d_ncdhw shape mismatch: input={in_dims} weight={w_dims} bias={b_dims} out={o_dims}")
+            groups = int(bindings.get("GROUPS") or 1)
+            sd = int(bindings.get("SD") or 1)
+            sh = int(bindings.get("SH") or 1)
+            sw = int(bindings.get("SW") or 1)
+            pd = int(bindings.get("PD") or 0)
+            ph = int(bindings.get("PH") or 0)
+            pw = int(bindings.get("PW") or 0)
+            dd = int(bindings.get("DD") or 1)
+            dh = int(bindings.get("DH") or 1)
+            dw = int(bindings.get("DW") or 1)
+            if groups <= 0 or sd <= 0 or sh <= 0 or sw <= 0 or dd <= 0 or dh <= 0 or dw <= 0 or pd < 0 or ph < 0 or pw < 0:
+                raise RuntimeError("conv3d_ncdhw invalid stride/padding/dilation/groups")
+            if c_in % groups != 0 or c_out % groups != 0:
+                raise RuntimeError(f"conv3d_ncdhw expects channels divisible by groups, got C_IN={c_in} C_OUT={c_out} groups={groups}")
+            if c_per_g != (c_in // groups):
+                raise RuntimeError(f"conv3d_ncdhw expects C_PER_G=C_IN/groups, got C_PER_G={c_per_g} C_IN={c_in} groups={groups}")
+            if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv3d_ncdhw expects f32 input tensor")
+            if str(arg_specs[w_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv3d_ncdhw expects f32 weight tensor")
+            if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv3d_ncdhw expects f32 bias tensor")
+            if str(arg_specs[str(out_name)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv3d_ncdhw expects f32 output tensor")
+            conv3d_ncdhw_v1 = {
+                "input": str(inp_name),
+                "weight": str(w_name),
+                "bias": str(b_name),
+                "out": str(out_name),
+                "N": int(n_dim),
+                "C_IN": int(c_in),
+                "C_OUT": int(c_out),
+                "D": int(d_dim),
+                "H": int(h_dim),
+                "W": int(w_dim),
+                "KD": int(kd),
+                "KH": int(kh),
+                "KW": int(kw),
+                "SD": int(sd),
+                "SH": int(sh),
+                "SW": int(sw),
+                "PD": int(pd),
+                "PH": int(ph),
+                "PW": int(pw),
+                "DD": int(dd),
+                "DH": int(dh),
+                "DW": int(dw),
+                "GROUPS": int(groups),
+                "C_PER_G": int(c_per_g),
+                "OD": int(od),
+                "OH": int(oh),
+                "OW": int(ow),
+            }
+
+        if conv_depthwise2d_nchw_v1 is None and intent_name == "conv_depthwise2d_nchw":
+            if len(ops_list) != 1:
+                raise RuntimeError(f"conv_depthwise2d_nchw expects 1 op, got {len(ops_list)}")
+            op0 = ops_list[0]
+            op0_name = str(getattr(op0, "op", "")).strip()
+            op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+            op0_out = str(getattr(op0, "output", "")).strip()
+            if op0_name != "conv_depthwise2d" or len(op0_inputs) != 3 or op0_out != str(out_name):
+                raise RuntimeError("conv_depthwise2d_nchw expects conv_depthwise2d(input, weight, bias) -> out")
+            inp_name, w_name, b_name = (str(op0_inputs[0]), str(op0_inputs[1]), str(op0_inputs[2]))
+            required = {inp_name, w_name, b_name, str(out_name)}
+            if not required.issubset(set(arg_specs.keys())):
+                missing = sorted([x for x in required if x not in arg_specs])
+                raise RuntimeError(f"conv_depthwise2d_nchw missing ABI tensors: {missing}")
+            in_dims = list(arg_specs[inp_name].get("dims") or [])
+            w_dims = list(arg_specs[w_name].get("dims") or [])
+            b_dims = list(arg_specs[b_name].get("dims") or [])
+            o_dims = list(arg_specs[str(out_name)].get("dims") or [])
+            if len(in_dims) != 4 or len(w_dims) != 4 or len(b_dims) != 1 or len(o_dims) != 4:
+                raise RuntimeError("conv_depthwise2d_nchw expects input[N,C_IN,H,W], weight[C_OUT,1,KH,KW], bias[C_OUT], out[N,C_OUT,OH,OW]")
+            n_dim, c_in, h_dim, w_dim = (int(in_dims[0]), int(in_dims[1]), int(in_dims[2]), int(in_dims[3]))
+            c_out, one_dim, kh, kw = (int(w_dims[0]), int(w_dims[1]), int(w_dims[2]), int(w_dims[3]))
+            n_out, c_out2, oh, ow = (int(o_dims[0]), int(o_dims[1]), int(o_dims[2]), int(o_dims[3]))
+            if n_out != n_dim or c_out2 != c_out or int(b_dims[0]) != c_out:
+                raise RuntimeError(
+                    f"conv_depthwise2d_nchw shape mismatch: input={in_dims} weight={w_dims} bias={b_dims} out={o_dims}"
+                )
+            if one_dim != 1:
+                raise RuntimeError(f"conv_depthwise2d_nchw expects weight dim1==1, got {one_dim}")
+            sh = int(bindings.get("SH") or 1)
+            sw = int(bindings.get("SW") or 1)
+            ph = int(bindings.get("PH") or 0)
+            pw = int(bindings.get("PW") or 0)
+            dh = int(bindings.get("DH") or 1)
+            dw = int(bindings.get("DW") or 1)
+            mult = int(bindings.get("MULT") or 1)
+            if sh <= 0 or sw <= 0 or dh <= 0 or dw <= 0 or ph < 0 or pw < 0 or mult <= 0:
+                raise RuntimeError("conv_depthwise2d_nchw invalid stride/padding/dilation/mult")
+            if c_out != (c_in * mult):
+                raise RuntimeError(f"conv_depthwise2d_nchw expects C_OUT=C_IN*MULT, got C_OUT={c_out} C_IN={c_in} MULT={mult}")
+            if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv_depthwise2d_nchw expects f32 input tensor")
+            if str(arg_specs[w_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv_depthwise2d_nchw expects f32 weight tensor")
+            if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv_depthwise2d_nchw expects f32 bias tensor")
+            if str(arg_specs[str(out_name)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("conv_depthwise2d_nchw expects f32 output tensor")
+            conv_depthwise2d_nchw_v1 = {
+                "input": str(inp_name),
+                "weight": str(w_name),
+                "bias": str(b_name),
+                "out": str(out_name),
+                "N": int(n_dim),
+                "C_IN": int(c_in),
+                "C_OUT": int(c_out),
+                "H": int(h_dim),
+                "W": int(w_dim),
+                "KH": int(kh),
+                "KW": int(kw),
+                "SH": int(sh),
+                "SW": int(sw),
+                "PH": int(ph),
+                "PW": int(pw),
+                "DH": int(dh),
+                "DW": int(dw),
+                "MULT": int(mult),
+                "OH": int(oh),
+                "OW": int(ow),
             }
 
         if upsample_bicubic2d_aa_v1 is None and intent_name == "upsample_bicubic2d_aa":
@@ -13582,6 +13867,590 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          %out_idx = arith.addi %q_off, %tid : index")
         lines.append(f"          memref.store %acc, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
+        lines.append("      }")
+    elif conv1d_ncl_v1 is not None:
+        kernel_kind = "conv1d_ncl_v1"
+        in_name = str(conv1d_ncl_v1["input"])
+        w_name = str(conv1d_ncl_v1["weight"])
+        b_name = str(conv1d_ncl_v1["bias"])
+        out_name2 = str(conv1d_ncl_v1["out"])
+        n_dim = int(conv1d_ncl_v1["N"])
+        c_in = int(conv1d_ncl_v1["C_IN"])
+        c_out = int(conv1d_ncl_v1["C_OUT"])
+        l_dim = int(conv1d_ncl_v1["L"])
+        k_dim = int(conv1d_ncl_v1["K"])
+        stride = int(conv1d_ncl_v1["STRIDE"])
+        padding = int(conv1d_ncl_v1["PADDING"])
+        dilation = int(conv1d_ncl_v1["DILATION"])
+        groups = int(conv1d_ncl_v1["GROUPS"])
+        c_per_g = int(conv1d_ncl_v1["C_PER_G"])
+        ol_dim = int(conv1d_ncl_v1["OL"])
+        if (
+            n_dim <= 0
+            or c_in <= 0
+            or c_out <= 0
+            or l_dim <= 0
+            or k_dim <= 0
+            or ol_dim <= 0
+            or stride <= 0
+            or dilation <= 0
+            or padding < 0
+            or groups <= 0
+        ):
+            raise RuntimeError(
+                "conv1d_ncl_v1 expects positive dims/stride/dilation/groups, got "
+                f"N={n_dim} C_IN={c_in} C_OUT={c_out} L={l_dim} K={k_dim} OL={ol_dim} "
+                f"stride={stride} padding={padding} dilation={dilation} groups={groups}"
+            )
+        if c_in % groups != 0 or c_out % groups != 0:
+            raise RuntimeError(f"conv1d_ncl_v1 expects channels divisible by groups, got C_IN={c_in} C_OUT={c_out} groups={groups}")
+        if c_per_g != (c_in // groups):
+            raise RuntimeError(f"conv1d_ncl_v1 expects C_PER_G=C_IN/groups, got C_PER_G={c_per_g} C_IN={c_in} groups={groups}")
+        oc_per_g = int(c_out // groups)
+
+        in_memref = str(arg_specs[in_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cOL = arith.constant {int(ol_dim)} : index")
+        lines.append(f"        %cC_OUT = arith.constant {int(c_out)} : index")
+        lines.append(f"        %cL = arith.constant {int(l_dim)} : index")
+        lines.append(f"        %cC_IN = arith.constant {int(c_in)} : index")
+        lines.append(f"        %cC_PER_G = arith.constant {int(c_per_g)} : index")
+        lines.append(f"        %cK = arith.constant {int(k_dim)} : index")
+        lines.append(f"        %cStride = arith.constant {int(stride)} : index")
+        lines.append(f"        %cPad = arith.constant {int(padding)} : index")
+        lines.append(f"        %cDil = arith.constant {int(dilation)} : index")
+        lines.append(f"        %cOCPerG = arith.constant {int(oc_per_g)} : index")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %ol = arith.remui %lin, %cOL : index")
+        lines.append("        %t1 = arith.divui %lin, %cOL : index")
+        lines.append("        %oc = arith.remui %t1, %cC_OUT : index")
+        lines.append("        %nn = arith.divui %t1, %cC_OUT : index")
+        lines.append("        %g = arith.divui %oc, %cOCPerG : index")
+        lines.append("        %in_c_base = arith.muli %g, %cC_PER_G : index")
+        lines.append("        %nc0 = arith.muli %nn, %cC_IN : index")
+        lines.append("        %oc_base = arith.muli %oc, %cC_PER_G : index")
+        lines.append("        %ol_stride = arith.muli %ol, %cStride : index")
+        lines.append(f"        %bias_v = memref.load {arg_ssa[b_name]}[%oc] : {b_memref}")
+        lines.append("        %acc = scf.for %ic = %c0 to %cC_PER_G step %c1 iter_args(%a0 = %bias_v) -> (f32) {")
+        lines.append("          %in_c = arith.addi %in_c_base, %ic : index")
+        lines.append("          %nci = arith.addi %nc0, %in_c : index")
+        lines.append("          %base_in = arith.muli %nci, %cL : index")
+        lines.append("          %oc_ic = arith.addi %oc_base, %ic : index")
+        lines.append("          %w_base = arith.muli %oc_ic, %cK : index")
+        lines.append("          %acc2 = scf.for %kk = %c0 to %cK step %c1 iter_args(%a1 = %a0) -> (f32) {")
+        lines.append("            %kk_dil = arith.muli %kk, %cDil : index")
+        lines.append("            %tmp_l = arith.addi %ol_stride, %kk_dil : index")
+        lines.append("            %in_l = arith.subi %tmp_l, %cPad : index")
+        lines.append("            %ge0 = arith.cmpi sge, %in_l, %c0 : index")
+        lines.append("            %ltL = arith.cmpi slt, %in_l, %cL : index")
+        lines.append("            %in_ok = arith.andi %ge0, %ltL : i1")
+        lines.append("            %x = scf.if %in_ok -> (f32) {")
+        lines.append("              %in_idx = arith.addi %base_in, %in_l : index")
+        lines.append(f"              %v = memref.load {arg_ssa[in_name]}[%in_idx] : {in_memref}")
+        lines.append("              scf.yield %v : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append("            %w_idx = arith.addi %w_base, %kk : index")
+        lines.append(f"            %w = memref.load {arg_ssa[w_name]}[%w_idx] : {w_memref}")
+        lines.append(f"            %prod = arith.mulf %x, %w{fm} : f32")
+        lines.append(f"            %a_next = arith.addf %a1, %prod{fm} : f32")
+        lines.append("            scf.yield %a_next : f32")
+        lines.append("          }")
+        lines.append("          scf.yield %acc2 : f32")
+        lines.append("        }")
+        lines.append(f"        memref.store %acc, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif conv2d_nchw_v1 is not None:
+        kernel_kind = "conv2d_nchw_v1"
+        in_name = str(conv2d_nchw_v1["input"])
+        w_name = str(conv2d_nchw_v1["weight"])
+        b_name = str(conv2d_nchw_v1["bias"])
+        out_name2 = str(conv2d_nchw_v1["out"])
+        n_dim = int(conv2d_nchw_v1["N"])
+        c_in = int(conv2d_nchw_v1["C_IN"])
+        c_out = int(conv2d_nchw_v1["C_OUT"])
+        h_dim = int(conv2d_nchw_v1["H"])
+        w_dim = int(conv2d_nchw_v1["W"])
+        kh = int(conv2d_nchw_v1["KH"])
+        kw = int(conv2d_nchw_v1["KW"])
+        sh = int(conv2d_nchw_v1["SH"])
+        sw = int(conv2d_nchw_v1["SW"])
+        ph = int(conv2d_nchw_v1["PH"])
+        pw = int(conv2d_nchw_v1["PW"])
+        dh = int(conv2d_nchw_v1["DH"])
+        dw = int(conv2d_nchw_v1["DW"])
+        groups = int(conv2d_nchw_v1["GROUPS"])
+        c_per_g = int(conv2d_nchw_v1["C_PER_G"])
+        oh_dim = int(conv2d_nchw_v1["OH"])
+        ow_dim = int(conv2d_nchw_v1["OW"])
+        if (
+            n_dim <= 0
+            or c_in <= 0
+            or c_out <= 0
+            or h_dim <= 0
+            or w_dim <= 0
+            or kh <= 0
+            or kw <= 0
+            or oh_dim <= 0
+            or ow_dim <= 0
+            or sh <= 0
+            or sw <= 0
+            or dh <= 0
+            or dw <= 0
+            or ph < 0
+            or pw < 0
+            or groups <= 0
+        ):
+            raise RuntimeError(
+                "conv2d_nchw_v1 expects positive dims/stride/dilation/groups, got "
+                f"N={n_dim} C_IN={c_in} C_OUT={c_out} H={h_dim} W={w_dim} KH={kh} KW={kw} "
+                f"OH={oh_dim} OW={ow_dim} sh={sh} sw={sw} ph={ph} pw={pw} dh={dh} dw={dw} groups={groups}"
+            )
+        if c_in % groups != 0 or c_out % groups != 0:
+            raise RuntimeError(f"conv2d_nchw_v1 expects channels divisible by groups, got C_IN={c_in} C_OUT={c_out} groups={groups}")
+        if c_per_g != (c_in // groups):
+            raise RuntimeError(f"conv2d_nchw_v1 expects C_PER_G=C_IN/groups, got C_PER_G={c_per_g} C_IN={c_in} groups={groups}")
+        oc_per_g = int(c_out // groups)
+
+        in_memref = str(arg_specs[in_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        hw = int(h_dim * w_dim)
+        khkw = int(kh * kw)
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cC_OUT = arith.constant {int(c_out)} : index")
+        lines.append(f"        %cOW = arith.constant {int(ow_dim)} : index")
+        lines.append(f"        %cOH = arith.constant {int(oh_dim)} : index")
+        lines.append(f"        %cC_IN = arith.constant {int(c_in)} : index")
+        lines.append(f"        %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"        %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"        %cHW = arith.constant {int(hw)} : index")
+        lines.append(f"        %cKH = arith.constant {int(kh)} : index")
+        lines.append(f"        %cKW = arith.constant {int(kw)} : index")
+        lines.append(f"        %cKHKW = arith.constant {int(khkw)} : index")
+        lines.append(f"        %cSH = arith.constant {int(sh)} : index")
+        lines.append(f"        %cSW = arith.constant {int(sw)} : index")
+        lines.append(f"        %cPH = arith.constant {int(ph)} : index")
+        lines.append(f"        %cPW = arith.constant {int(pw)} : index")
+        lines.append(f"        %cDH = arith.constant {int(dh)} : index")
+        lines.append(f"        %cDW = arith.constant {int(dw)} : index")
+        lines.append(f"        %cC_PER_G = arith.constant {int(c_per_g)} : index")
+        lines.append(f"        %cOCPerG = arith.constant {int(oc_per_g)} : index")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %ow = arith.remui %lin, %cOW : index")
+        lines.append("        %t1 = arith.divui %lin, %cOW : index")
+        lines.append("        %oh = arith.remui %t1, %cOH : index")
+        lines.append("        %t2 = arith.divui %t1, %cOH : index")
+        lines.append("        %oc = arith.remui %t2, %cC_OUT : index")
+        lines.append("        %nn = arith.divui %t2, %cC_OUT : index")
+        lines.append("        %g = arith.divui %oc, %cOCPerG : index")
+        lines.append("        %in_c_base = arith.muli %g, %cC_PER_G : index")
+        lines.append("        %nc0 = arith.muli %nn, %cC_IN : index")
+        lines.append("        %oc_base = arith.muli %oc, %cC_PER_G : index")
+        lines.append("        %oh_sh = arith.muli %oh, %cSH : index")
+        lines.append("        %ow_sw = arith.muli %ow, %cSW : index")
+        lines.append(f"        %bias_v = memref.load {arg_ssa[b_name]}[%oc] : {b_memref}")
+        lines.append("        %acc = scf.for %ic = %c0 to %cC_PER_G step %c1 iter_args(%a0 = %bias_v) -> (f32) {")
+        lines.append("          %in_c = arith.addi %in_c_base, %ic : index")
+        lines.append("          %nci = arith.addi %nc0, %in_c : index")
+        lines.append("          %base_in = arith.muli %nci, %cHW : index")
+        lines.append("          %oc_ic = arith.addi %oc_base, %ic : index")
+        lines.append("          %w_base_ic = arith.muli %oc_ic, %cKHKW : index")
+        lines.append("          %acc_kh = scf.for %kh_i = %c0 to %cKH step %c1 iter_args(%a1 = %a0) -> (f32) {")
+        lines.append("            %kh_dh = arith.muli %kh_i, %cDH : index")
+        lines.append("            %tmp_h = arith.addi %oh_sh, %kh_dh : index")
+        lines.append("            %in_h = arith.subi %tmp_h, %cPH : index")
+        lines.append("            %h_ge0 = arith.cmpi sge, %in_h, %c0 : index")
+        lines.append("            %h_lt = arith.cmpi slt, %in_h, %cH : index")
+        lines.append("            %h_ok = arith.andi %h_ge0, %h_lt : i1")
+        lines.append("            %w_kh = arith.muli %kh_i, %cKW : index")
+        lines.append("            %acc_kw = scf.for %kw_i = %c0 to %cKW step %c1 iter_args(%a2 = %a1) -> (f32) {")
+        lines.append("              %kw_dw = arith.muli %kw_i, %cDW : index")
+        lines.append("              %tmp_w = arith.addi %ow_sw, %kw_dw : index")
+        lines.append("              %in_w = arith.subi %tmp_w, %cPW : index")
+        lines.append("              %w_ge0 = arith.cmpi sge, %in_w, %c0 : index")
+        lines.append("              %w_lt = arith.cmpi slt, %in_w, %cW : index")
+        lines.append("              %w_ok = arith.andi %w_ge0, %w_lt : i1")
+        lines.append("              %in_ok = arith.andi %h_ok, %w_ok : i1")
+        lines.append("              %x = scf.if %in_ok -> (f32) {")
+        lines.append("                %h_mul = arith.muli %in_h, %cW : index")
+        lines.append("                %hw_off = arith.addi %h_mul, %in_w : index")
+        lines.append("                %in_idx = arith.addi %base_in, %hw_off : index")
+        lines.append(f"                %v = memref.load {arg_ssa[in_name]}[%in_idx] : {in_memref}")
+        lines.append("                scf.yield %v : f32")
+        lines.append("              } else {")
+        lines.append("                scf.yield %c0f : f32")
+        lines.append("              }")
+        lines.append("              %w_off = arith.addi %w_kh, %kw_i : index")
+        lines.append("              %w_idx = arith.addi %w_base_ic, %w_off : index")
+        lines.append(f"              %w = memref.load {arg_ssa[w_name]}[%w_idx] : {w_memref}")
+        lines.append(f"              %prod = arith.mulf %x, %w{fm} : f32")
+        lines.append(f"              %a_next = arith.addf %a2, %prod{fm} : f32")
+        lines.append("              scf.yield %a_next : f32")
+        lines.append("            }")
+        lines.append("            scf.yield %acc_kw : f32")
+        lines.append("          }")
+        lines.append("          scf.yield %acc_kh : f32")
+        lines.append("        }")
+        lines.append(f"        memref.store %acc, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif conv3d_ncdhw_v1 is not None:
+        kernel_kind = "conv3d_ncdhw_v1"
+        in_name = str(conv3d_ncdhw_v1["input"])
+        w_name = str(conv3d_ncdhw_v1["weight"])
+        b_name = str(conv3d_ncdhw_v1["bias"])
+        out_name2 = str(conv3d_ncdhw_v1["out"])
+        n_dim = int(conv3d_ncdhw_v1["N"])
+        c_in = int(conv3d_ncdhw_v1["C_IN"])
+        c_out = int(conv3d_ncdhw_v1["C_OUT"])
+        d_dim = int(conv3d_ncdhw_v1["D"])
+        h_dim = int(conv3d_ncdhw_v1["H"])
+        w_dim = int(conv3d_ncdhw_v1["W"])
+        kd = int(conv3d_ncdhw_v1["KD"])
+        kh = int(conv3d_ncdhw_v1["KH"])
+        kw = int(conv3d_ncdhw_v1["KW"])
+        sd = int(conv3d_ncdhw_v1["SD"])
+        sh = int(conv3d_ncdhw_v1["SH"])
+        sw = int(conv3d_ncdhw_v1["SW"])
+        pd = int(conv3d_ncdhw_v1["PD"])
+        ph = int(conv3d_ncdhw_v1["PH"])
+        pw = int(conv3d_ncdhw_v1["PW"])
+        dd = int(conv3d_ncdhw_v1["DD"])
+        dh = int(conv3d_ncdhw_v1["DH"])
+        dw = int(conv3d_ncdhw_v1["DW"])
+        groups = int(conv3d_ncdhw_v1["GROUPS"])
+        c_per_g = int(conv3d_ncdhw_v1["C_PER_G"])
+        od_dim = int(conv3d_ncdhw_v1["OD"])
+        oh_dim = int(conv3d_ncdhw_v1["OH"])
+        ow_dim = int(conv3d_ncdhw_v1["OW"])
+        if (
+            n_dim <= 0
+            or c_in <= 0
+            or c_out <= 0
+            or d_dim <= 0
+            or h_dim <= 0
+            or w_dim <= 0
+            or kd <= 0
+            or kh <= 0
+            or kw <= 0
+            or od_dim <= 0
+            or oh_dim <= 0
+            or ow_dim <= 0
+            or sd <= 0
+            or sh <= 0
+            or sw <= 0
+            or dd <= 0
+            or dh <= 0
+            or dw <= 0
+            or pd < 0
+            or ph < 0
+            or pw < 0
+            or groups <= 0
+        ):
+            raise RuntimeError(
+                "conv3d_ncdhw_v1 expects positive dims/stride/dilation/groups, got "
+                f"N={n_dim} C_IN={c_in} C_OUT={c_out} D={d_dim} H={h_dim} W={w_dim} "
+                f"KD={kd} KH={kh} KW={kw} OD={od_dim} OH={oh_dim} OW={ow_dim} "
+                f"sd={sd} sh={sh} sw={sw} pd={pd} ph={ph} pw={pw} dd={dd} dh={dh} dw={dw} groups={groups}"
+            )
+        if c_in % groups != 0 or c_out % groups != 0:
+            raise RuntimeError(f"conv3d_ncdhw_v1 expects channels divisible by groups, got C_IN={c_in} C_OUT={c_out} groups={groups}")
+        if c_per_g != (c_in // groups):
+            raise RuntimeError(f"conv3d_ncdhw_v1 expects C_PER_G=C_IN/groups, got C_PER_G={c_per_g} C_IN={c_in} groups={groups}")
+        oc_per_g = int(c_out // groups)
+
+        in_memref = str(arg_specs[in_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        hw = int(h_dim * w_dim)
+        dhw = int(d_dim * h_dim * w_dim)
+        khkw = int(kh * kw)
+        kdhw = int(kd * kh * kw)
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cC_OUT = arith.constant {int(c_out)} : index")
+        lines.append(f"        %cOW = arith.constant {int(ow_dim)} : index")
+        lines.append(f"        %cOH = arith.constant {int(oh_dim)} : index")
+        lines.append(f"        %cOD = arith.constant {int(od_dim)} : index")
+        lines.append(f"        %cC_IN = arith.constant {int(c_in)} : index")
+        lines.append(f"        %cD = arith.constant {int(d_dim)} : index")
+        lines.append(f"        %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"        %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"        %cHW = arith.constant {int(hw)} : index")
+        lines.append(f"        %cDHW = arith.constant {int(dhw)} : index")
+        lines.append(f"        %cKD = arith.constant {int(kd)} : index")
+        lines.append(f"        %cKH = arith.constant {int(kh)} : index")
+        lines.append(f"        %cKW = arith.constant {int(kw)} : index")
+        lines.append(f"        %cKHKW = arith.constant {int(khkw)} : index")
+        lines.append(f"        %cKDKHKW = arith.constant {int(kdhw)} : index")
+        lines.append(f"        %cSD = arith.constant {int(sd)} : index")
+        lines.append(f"        %cSH = arith.constant {int(sh)} : index")
+        lines.append(f"        %cSW = arith.constant {int(sw)} : index")
+        lines.append(f"        %cPD = arith.constant {int(pd)} : index")
+        lines.append(f"        %cPH = arith.constant {int(ph)} : index")
+        lines.append(f"        %cPW = arith.constant {int(pw)} : index")
+        lines.append(f"        %cDD = arith.constant {int(dd)} : index")
+        lines.append(f"        %cDH = arith.constant {int(dh)} : index")
+        lines.append(f"        %cDW = arith.constant {int(dw)} : index")
+        lines.append(f"        %cC_PER_G = arith.constant {int(c_per_g)} : index")
+        lines.append(f"        %cOCPerG = arith.constant {int(oc_per_g)} : index")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %ow = arith.remui %lin, %cOW : index")
+        lines.append("        %t1 = arith.divui %lin, %cOW : index")
+        lines.append("        %oh = arith.remui %t1, %cOH : index")
+        lines.append("        %t2 = arith.divui %t1, %cOH : index")
+        lines.append("        %od = arith.remui %t2, %cOD : index")
+        lines.append("        %t3 = arith.divui %t2, %cOD : index")
+        lines.append("        %oc = arith.remui %t3, %cC_OUT : index")
+        lines.append("        %nn = arith.divui %t3, %cC_OUT : index")
+        lines.append("        %g = arith.divui %oc, %cOCPerG : index")
+        lines.append("        %in_c_base = arith.muli %g, %cC_PER_G : index")
+        lines.append("        %nc0 = arith.muli %nn, %cC_IN : index")
+        lines.append("        %oc_base = arith.muli %oc, %cC_PER_G : index")
+        lines.append("        %od_sd = arith.muli %od, %cSD : index")
+        lines.append("        %oh_sh = arith.muli %oh, %cSH : index")
+        lines.append("        %ow_sw = arith.muli %ow, %cSW : index")
+        lines.append(f"        %bias_v = memref.load {arg_ssa[b_name]}[%oc] : {b_memref}")
+        lines.append("        %acc = scf.for %ic = %c0 to %cC_PER_G step %c1 iter_args(%a0 = %bias_v) -> (f32) {")
+        lines.append("          %in_c = arith.addi %in_c_base, %ic : index")
+        lines.append("          %nci = arith.addi %nc0, %in_c : index")
+        lines.append("          %base_in = arith.muli %nci, %cDHW : index")
+        lines.append("          %oc_ic = arith.addi %oc_base, %ic : index")
+        lines.append("          %w_base_ic = arith.muli %oc_ic, %cKDKHKW : index")
+        lines.append("          %acc_kd = scf.for %kd_i = %c0 to %cKD step %c1 iter_args(%a1 = %a0) -> (f32) {")
+        lines.append("            %kd_dd = arith.muli %kd_i, %cDD : index")
+        lines.append("            %tmp_d = arith.addi %od_sd, %kd_dd : index")
+        lines.append("            %in_d = arith.subi %tmp_d, %cPD : index")
+        lines.append("            %d_ge0 = arith.cmpi sge, %in_d, %c0 : index")
+        lines.append("            %d_lt = arith.cmpi slt, %in_d, %cD : index")
+        lines.append("            %d_ok = arith.andi %d_ge0, %d_lt : i1")
+        lines.append("            %w_kd = arith.muli %kd_i, %cKHKW : index")
+        lines.append("            %acc_kh = scf.for %kh_i = %c0 to %cKH step %c1 iter_args(%a2 = %a1) -> (f32) {")
+        lines.append("              %kh_dh = arith.muli %kh_i, %cDH : index")
+        lines.append("              %tmp_h = arith.addi %oh_sh, %kh_dh : index")
+        lines.append("              %in_h = arith.subi %tmp_h, %cPH : index")
+        lines.append("              %h_ge0 = arith.cmpi sge, %in_h, %c0 : index")
+        lines.append("              %h_lt = arith.cmpi slt, %in_h, %cH : index")
+        lines.append("              %h_ok = arith.andi %h_ge0, %h_lt : i1")
+        lines.append("              %w_kh = arith.muli %kh_i, %cKW : index")
+        lines.append("              %w_kd_kh = arith.addi %w_kd, %w_kh : index")
+        lines.append("              %acc_kw = scf.for %kw_i = %c0 to %cKW step %c1 iter_args(%a3 = %a2) -> (f32) {")
+        lines.append("                %kw_dw = arith.muli %kw_i, %cDW : index")
+        lines.append("                %tmp_w = arith.addi %ow_sw, %kw_dw : index")
+        lines.append("                %in_w = arith.subi %tmp_w, %cPW : index")
+        lines.append("                %w_ge0 = arith.cmpi sge, %in_w, %c0 : index")
+        lines.append("                %w_lt = arith.cmpi slt, %in_w, %cW : index")
+        lines.append("                %w_ok = arith.andi %w_ge0, %w_lt : i1")
+        lines.append("                %dh_ok = arith.andi %d_ok, %h_ok : i1")
+        lines.append("                %in_ok = arith.andi %dh_ok, %w_ok : i1")
+        lines.append("                %x = scf.if %in_ok -> (f32) {")
+        lines.append("                  %d_off = arith.muli %in_d, %cHW : index")
+        lines.append("                  %h_off = arith.muli %in_h, %cW : index")
+        lines.append("                  %dh_off = arith.addi %d_off, %h_off : index")
+        lines.append("                  %dhw_off = arith.addi %dh_off, %in_w : index")
+        lines.append("                  %in_idx = arith.addi %base_in, %dhw_off : index")
+        lines.append(f"                  %v = memref.load {arg_ssa[in_name]}[%in_idx] : {in_memref}")
+        lines.append("                  scf.yield %v : f32")
+        lines.append("                } else {")
+        lines.append("                  scf.yield %c0f : f32")
+        lines.append("                }")
+        lines.append("                %w_off = arith.addi %w_kd_kh, %kw_i : index")
+        lines.append("                %w_idx = arith.addi %w_base_ic, %w_off : index")
+        lines.append(f"                %w = memref.load {arg_ssa[w_name]}[%w_idx] : {w_memref}")
+        lines.append(f"                %prod = arith.mulf %x, %w{fm} : f32")
+        lines.append(f"                %a_next = arith.addf %a3, %prod{fm} : f32")
+        lines.append("                scf.yield %a_next : f32")
+        lines.append("              }")
+        lines.append("              scf.yield %acc_kw : f32")
+        lines.append("            }")
+        lines.append("            scf.yield %acc_kh : f32")
+        lines.append("          }")
+        lines.append("          scf.yield %acc_kd : f32")
+        lines.append("        }")
+        lines.append(f"        memref.store %acc, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif conv_depthwise2d_nchw_v1 is not None:
+        kernel_kind = "conv_depthwise2d_nchw_v1"
+        in_name = str(conv_depthwise2d_nchw_v1["input"])
+        w_name = str(conv_depthwise2d_nchw_v1["weight"])
+        b_name = str(conv_depthwise2d_nchw_v1["bias"])
+        out_name2 = str(conv_depthwise2d_nchw_v1["out"])
+        n_dim = int(conv_depthwise2d_nchw_v1["N"])
+        c_in = int(conv_depthwise2d_nchw_v1["C_IN"])
+        c_out = int(conv_depthwise2d_nchw_v1["C_OUT"])
+        h_dim = int(conv_depthwise2d_nchw_v1["H"])
+        w_dim = int(conv_depthwise2d_nchw_v1["W"])
+        kh = int(conv_depthwise2d_nchw_v1["KH"])
+        kw = int(conv_depthwise2d_nchw_v1["KW"])
+        sh = int(conv_depthwise2d_nchw_v1["SH"])
+        sw = int(conv_depthwise2d_nchw_v1["SW"])
+        ph = int(conv_depthwise2d_nchw_v1["PH"])
+        pw = int(conv_depthwise2d_nchw_v1["PW"])
+        dh = int(conv_depthwise2d_nchw_v1["DH"])
+        dw = int(conv_depthwise2d_nchw_v1["DW"])
+        mult = int(conv_depthwise2d_nchw_v1["MULT"])
+        oh_dim = int(conv_depthwise2d_nchw_v1["OH"])
+        ow_dim = int(conv_depthwise2d_nchw_v1["OW"])
+        if (
+            n_dim <= 0
+            or c_in <= 0
+            or c_out <= 0
+            or h_dim <= 0
+            or w_dim <= 0
+            or kh <= 0
+            or kw <= 0
+            or oh_dim <= 0
+            or ow_dim <= 0
+            or sh <= 0
+            or sw <= 0
+            or dh <= 0
+            or dw <= 0
+            or ph < 0
+            or pw < 0
+            or mult <= 0
+        ):
+            raise RuntimeError(
+                "conv_depthwise2d_nchw_v1 expects positive dims/stride/dilation/mult, got "
+                f"N={n_dim} C_IN={c_in} C_OUT={c_out} H={h_dim} W={w_dim} KH={kh} KW={kw} "
+                f"OH={oh_dim} OW={ow_dim} sh={sh} sw={sw} ph={ph} pw={pw} dh={dh} dw={dw} mult={mult}"
+            )
+        if c_out != (c_in * mult):
+            raise RuntimeError(f"conv_depthwise2d_nchw_v1 expects C_OUT=C_IN*MULT, got C_OUT={c_out} C_IN={c_in} MULT={mult}")
+
+        in_memref = str(arg_specs[in_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        hw = int(h_dim * w_dim)
+        khkw = int(kh * kw)
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cC_OUT = arith.constant {int(c_out)} : index")
+        lines.append(f"        %cOW = arith.constant {int(ow_dim)} : index")
+        lines.append(f"        %cOH = arith.constant {int(oh_dim)} : index")
+        lines.append(f"        %cC_IN = arith.constant {int(c_in)} : index")
+        lines.append(f"        %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"        %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"        %cHW = arith.constant {int(hw)} : index")
+        lines.append(f"        %cKH = arith.constant {int(kh)} : index")
+        lines.append(f"        %cKW = arith.constant {int(kw)} : index")
+        lines.append(f"        %cKHKW = arith.constant {int(khkw)} : index")
+        lines.append(f"        %cSH = arith.constant {int(sh)} : index")
+        lines.append(f"        %cSW = arith.constant {int(sw)} : index")
+        lines.append(f"        %cPH = arith.constant {int(ph)} : index")
+        lines.append(f"        %cPW = arith.constant {int(pw)} : index")
+        lines.append(f"        %cDH = arith.constant {int(dh)} : index")
+        lines.append(f"        %cDW = arith.constant {int(dw)} : index")
+        lines.append(f"        %cMULT = arith.constant {int(mult)} : index")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %ow = arith.remui %lin, %cOW : index")
+        lines.append("        %t1 = arith.divui %lin, %cOW : index")
+        lines.append("        %oh = arith.remui %t1, %cOH : index")
+        lines.append("        %t2 = arith.divui %t1, %cOH : index")
+        lines.append("        %oc = arith.remui %t2, %cC_OUT : index")
+        lines.append("        %nn = arith.divui %t2, %cC_OUT : index")
+        lines.append("        %ic = arith.divui %oc, %cMULT : index")
+        lines.append("        %nc0 = arith.muli %nn, %cC_IN : index")
+        lines.append("        %nci = arith.addi %nc0, %ic : index")
+        lines.append("        %base_in = arith.muli %nci, %cHW : index")
+        lines.append("        %w_base = arith.muli %oc, %cKHKW : index")
+        lines.append("        %oh_sh = arith.muli %oh, %cSH : index")
+        lines.append("        %ow_sw = arith.muli %ow, %cSW : index")
+        lines.append(f"        %bias_v = memref.load {arg_ssa[b_name]}[%oc] : {b_memref}")
+        lines.append("        %acc = scf.for %kh_i = %c0 to %cKH step %c1 iter_args(%a0 = %bias_v) -> (f32) {")
+        lines.append("          %kh_dh = arith.muli %kh_i, %cDH : index")
+        lines.append("          %tmp_h = arith.addi %oh_sh, %kh_dh : index")
+        lines.append("          %in_h = arith.subi %tmp_h, %cPH : index")
+        lines.append("          %h_ge0 = arith.cmpi sge, %in_h, %c0 : index")
+        lines.append("          %h_lt = arith.cmpi slt, %in_h, %cH : index")
+        lines.append("          %h_ok = arith.andi %h_ge0, %h_lt : i1")
+        lines.append("          %w_kh = arith.muli %kh_i, %cKW : index")
+        lines.append("          %acc_kw = scf.for %kw_i = %c0 to %cKW step %c1 iter_args(%a1 = %a0) -> (f32) {")
+        lines.append("            %kw_dw = arith.muli %kw_i, %cDW : index")
+        lines.append("            %tmp_w = arith.addi %ow_sw, %kw_dw : index")
+        lines.append("            %in_w = arith.subi %tmp_w, %cPW : index")
+        lines.append("            %w_ge0 = arith.cmpi sge, %in_w, %c0 : index")
+        lines.append("            %w_lt = arith.cmpi slt, %in_w, %cW : index")
+        lines.append("            %w_ok = arith.andi %w_ge0, %w_lt : i1")
+        lines.append("            %in_ok = arith.andi %h_ok, %w_ok : i1")
+        lines.append("            %x = scf.if %in_ok -> (f32) {")
+        lines.append("              %h_mul = arith.muli %in_h, %cW : index")
+        lines.append("              %hw_off = arith.addi %h_mul, %in_w : index")
+        lines.append("              %in_idx = arith.addi %base_in, %hw_off : index")
+        lines.append(f"              %v = memref.load {arg_ssa[in_name]}[%in_idx] : {in_memref}")
+        lines.append("              scf.yield %v : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append("            %w_off = arith.addi %w_kh, %kw_i : index")
+        lines.append("            %w_idx = arith.addi %w_base, %w_off : index")
+        lines.append(f"            %w = memref.load {arg_ssa[w_name]}[%w_idx] : {w_memref}")
+        lines.append(f"            %prod = arith.mulf %x, %w{fm} : f32")
+        lines.append(f"            %a_next = arith.addf %a1, %prod{fm} : f32")
+        lines.append("            scf.yield %a_next : f32")
+        lines.append("          }")
+        lines.append("          scf.yield %acc_kw : f32")
+        lines.append("        }")
+        lines.append(f"        memref.store %acc, {arg_ssa[out_name2]}[%lin] : {out_memref}")
         lines.append("      }")
     elif attn2d_v1 is not None and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False):
         kernel_kind = "attn2d_causal_softmax_v2"
