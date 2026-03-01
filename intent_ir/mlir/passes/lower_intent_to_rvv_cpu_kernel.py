@@ -383,6 +383,97 @@ def _emit_elementwise_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _emit_transpose2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 supports only f32 outputs")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 transpose2d expects rank-2 output, got {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 transpose2d expects exactly 1 op, got {len(ops)}")
+    op0 = ops[0]
+    op_name = str(getattr(op0, "op", "")).strip()
+    ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    attrs = dict(getattr(op0, "attrs", {}) or {})
+    perm = list(attrs.get("perm") or []) if isinstance(attrs.get("perm"), list) else []
+    if op_name != "transpose" or len(ins) != 1 or perm != [1, 0]:
+        raise RuntimeError(f"rvv cpu-loops v1 unsupported transpose op={op_name} inputs={ins} perm={perm}")
+    in_name = str(ins[0])
+    in_tt = (intent.tensors or {}).get(in_name)
+    if in_tt is None:
+        raise RuntimeError(f"missing input tensor spec: {in_name}")
+    if _dtype(getattr(in_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 supports only f32 inputs for transpose2d")
+    in_shape = _shape(in_name, intent=intent, bindings=bindings)
+    if len(in_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 transpose2d expects rank-2 input, got {in_shape}")
+    m_dim, n_dim = int(in_shape[0]), int(in_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid transpose2d input shape: {in_shape}")
+    if list(out_shape) != [n_dim, m_dim]:
+        raise RuntimeError(f"rvv cpu-loops v1 transpose2d expects output shape [N,M], got out_shape={out_shape} in_shape={in_shape}")
+    total = int(m_dim * n_dim)
+
+    arg_order = [in_name, out_name]
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
+    for name in arg_order:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        if elem_ty != "f32":
+            raise RuntimeError("rvv cpu-loops v1 transpose2d supports only f32 tensors")
+        memref_ty = f"memref<{total}x{elem_ty}>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cM = arith.constant {m_dim} : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
+    lines.append("  scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("    %mN = arith.muli %m, %cN : index")
+    lines.append("    scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("      %in_idx = arith.addi %mN, %n : index")
+    lines.append(f"      %v = memref.load {arg_ssa[in_name]}[%in_idx] : {memref_ty_by_name[in_name]}")
+    lines.append("      %nM = arith.muli %n, %cM : index")
+    lines.append("      %out_idx = arith.addi %nM, %m : index")
+    lines.append(f"      memref.store %v, {arg_ssa[out_name]}[%out_idx] : {memref_ty_by_name[out_name]}")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def _emit_row_reduce_kernel(
     *,
     kernel_name: str,
@@ -631,9 +722,21 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     out_name = str((list(intent.outputs or []) or [""])[0]).strip()
     out_tt = (intent.tensors or {}).get(out_name) if out_name else None
     out_rank = len(list(getattr(out_tt, "shape", []) or [])) if out_tt is not None else 0
-    if out_rank == 1 and len(list(intent.ops or [])) == 1:
-        module_text = _emit_row_reduce_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
-        kind = "cpu_loops_row_reduce_v1"
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) == 1:
+        op0 = ops[0]
+        op_name = str(getattr(op0, "op", "")).strip()
+        attrs = dict(getattr(op0, "attrs", {}) or {})
+        perm = list(attrs.get("perm") or []) if isinstance(attrs.get("perm"), list) else []
+        if op_name == "transpose" and perm == [1, 0]:
+            module_text = _emit_transpose2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+            kind = "cpu_loops_transpose2d_v1"
+        elif out_rank == 1:
+            module_text = _emit_row_reduce_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+            kind = "cpu_loops_row_reduce_v1"
+        else:
+            module_text = _emit_elementwise_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+            kind = "cpu_loops_v1"
     else:
         module_text = _emit_elementwise_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_v1"
