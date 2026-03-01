@@ -8,6 +8,7 @@ from .ensure_llvm_ir_text import ensure_llvm_ir_text
 from .expand_macros_intent import expand_macros_intent
 from .extract_gpu_module_llvm import extract_gpu_module_llvm
 from .lower_intent_to_cuda_gpu_kernel import lower_intent_to_cuda_gpu_kernel
+from .lower_intent_to_rvv_cpu_kernel import lower_intent_to_rvv_cpu_kernel
 from .lower_intent_to_llvm_dialect import lower_intent_to_llvm_dialect
 from .normalize_symbols import normalize_symbols
 from .rewrite_cuda_nv_exp2f_calls import rewrite_cuda_nv_exp2f_calls
@@ -21,6 +22,7 @@ PASS_REGISTRY = {
     "cse_like": cse_like,
     "backend_legalize": backend_legalize,
     "lower_intent_to_cuda_gpu_kernel": lower_intent_to_cuda_gpu_kernel,
+    "lower_intent_to_rvv_cpu_kernel": lower_intent_to_rvv_cpu_kernel,
     "lower_intent_to_llvm_dialect": lower_intent_to_llvm_dialect,
     "ensure_llvm_ir_text": ensure_llvm_ir_text,
     "set_llvm_target_triple": set_llvm_target_triple,

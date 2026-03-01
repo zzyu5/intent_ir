@@ -1,8 +1,10 @@
 passes:
+  - python:backend_legalize
+  - python:attach_provider_meta
+  - python:lower_intent_to_rvv_cpu_kernel
   - python:set_llvm_target_triple
   - mlir-opt:verify-each canonicalize cse
-  - mlir-opt:one-shot-bufferize convert-linalg-to-loops lower-affine convert-scf-to-cf convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-func-to-llvm convert-cf-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
+  - mlir-opt:convert-scf-to-cf convert-cf-to-llvm convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-func-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
   - mlir-translate:mlir-to-llvmir
   - "llvm-as:"
-  - "opt:-O2"
-
+  - "opt:-O3"

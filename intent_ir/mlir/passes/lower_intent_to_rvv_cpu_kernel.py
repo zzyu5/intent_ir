@@ -1,0 +1,359 @@
+from __future__ import annotations
+
+import base64
+import json
+import re
+from typing import Any, Mapping
+
+from intent_ir.ir import IntentFunction
+from intent_ir.ir.repair import materialize_missing_op_output_tensors
+from intent_ir.mlir.convert_to_intent import to_intent
+from intent_ir.mlir.module import IntentMLIRModule
+
+
+def _resolve_dim_int(dim: Any, bindings: Mapping[str, Any]) -> int | None:
+    if dim is None:
+        return None
+    kind = getattr(dim, "kind", None)
+    raw = getattr(dim, "value", dim) if kind in {"sym", "const"} else dim
+    if isinstance(raw, int):
+        return int(raw)
+    key = str(raw).strip()
+    if not key:
+        return None
+    if key in bindings:
+        try:
+            return int(bindings[key])
+        except Exception:
+            return None
+    m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*(\d+)$", key)
+    if m:
+        base = str(m.group(1))
+        delta = int(m.group(2))
+        if base in bindings:
+            try:
+                return int(bindings[base]) + int(delta)
+            except Exception:
+                return None
+    try:
+        return int(key)
+    except Exception:
+        return None
+
+
+def _mlir_ident(raw: str) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return "v"
+    out = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in s)
+    if out and out[0].isdigit():
+        out = f"v_{out}"
+    return out or "v"
+
+
+def _b64_json(payload: dict[str, Any]) -> str:
+    text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def _dtype(dt: str) -> str:
+    s = str(dt or "").strip().lower()
+    if s != "f32":
+        raise RuntimeError(f"rvv cpu-loops v1 supports only f32, got dtype={dt!r}")
+    return "f32"
+
+
+def _shape(name: str, *, intent: IntentFunction, bindings: Mapping[str, Any]) -> list[int]:
+    tt = (intent.tensors or {}).get(str(name))
+    if tt is None:
+        return []
+    dims: list[int] = []
+    for d in list(getattr(tt, "shape", []) or []):
+        v = _resolve_dim_int(d, bindings)
+        if v is None:
+            raise RuntimeError(f"unbound dim for tensor={name} dim={d}")
+        dims.append(int(v))
+    return dims
+
+
+def _emit_elementwise_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 supports only f32 outputs")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 elementwise expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+    total = int(m_dim * n_dim)
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if not ops:
+        raise RuntimeError("rvv cpu-loops v1 requires non-empty ops")
+
+    produced = {str(getattr(op, "output", "")).strip() for op in ops if str(getattr(op, "output", "")).strip()}
+    used = {str(x).strip() for op in ops for x in list(getattr(op, "inputs", []) or []) if str(x).strip()}
+    external_inputs = sorted([n for n in used if n and n in (intent.tensors or {}) and n not in produced and n != out_name])
+    arg_order = [*external_inputs, out_name]
+
+    scalar_loads: list[str] = []
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    scalar_ssa: dict[str, str] = {}
+    for name in arg_order:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            raise RuntimeError(f"rvv cpu-loops v1 supports only f32, got tensor={name} dtype={getattr(tt, 'dtype', '')}")
+        sh = _shape(name, intent=intent, bindings=bindings)
+        if len(sh) == 2:
+            numel = int(sh[0] * sh[1])
+        elif len(sh) == 0:
+            numel = 1
+        else:
+            raise RuntimeError(f"rvv cpu-loops v1 elementwise supports only rank-2 or scalar tensors, got {name} shape={sh}")
+        memref_ty = f"memref<{numel}xf32>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+        if len(sh) == 0 and name != out_name:
+            vssa = f"%{_mlir_ident(name)}_s"
+            scalar_ssa[name] = vssa
+            scalar_loads.append(f"  {vssa} = memref.load {ssa}[%c0] : {memref_ty}")
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cN = arith.constant {total} : index")
+    lines.append("  %c0f = arith.constant 0.0 : f32")
+    lines.extend(scalar_loads)
+    lines.append("  scf.for %i = %c0 to %cN step %c1 {")
+
+    def _load(name: str) -> str:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"unknown tensor referenced: {name}")
+        sh = _shape(name, intent=intent, bindings=bindings)
+        if len(sh) == 0:
+            return scalar_ssa.get(name) or f"%{_mlir_ident(name)}_s"
+        numel = int(sh[0] * sh[1])
+        memref_ty = f"memref<{numel}xf32>"
+        ssa = f"%{_mlir_ident(name)}_v"
+        lines.append(f"    {ssa} = memref.load {arg_ssa[name]}[%i] : {memref_ty}")
+        return ssa
+
+    computed: dict[str, str] = {}
+
+    for op in ops:
+        name = str(getattr(op, "op", "")).strip()
+        out = str(getattr(op, "output", "")).strip()
+        ins = [str(x).strip() for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+        attrs = dict(getattr(op, "attrs", {}) or {})
+
+        def _in(idx: int) -> str:
+            nm = ins[idx]
+            return computed.get(nm) or _load(nm)
+
+        if name in {"add", "sub", "mul", "div", "max", "min"}:
+            if len(ins) != 2 or not out:
+                raise RuntimeError(f"invalid binary op: {name} inputs={ins} output={out!r}")
+            a = _in(0)
+            b = _in(1)
+            v = f"%{_mlir_ident(out)}_t"
+            if name == "add":
+                lines.append(f"    {v} = arith.addf {a}, {b} : f32")
+            elif name == "sub":
+                lines.append(f"    {v} = arith.subf {a}, {b} : f32")
+            elif name == "mul":
+                lines.append(f"    {v} = arith.mulf {a}, {b} : f32")
+            elif name == "div":
+                lines.append(f"    {v} = arith.divf {a}, {b} : f32")
+            elif name == "max":
+                lines.append(f"    {v} = arith.maximumf {a}, {b} : f32")
+            else:
+                lines.append(f"    {v} = arith.minimumf {a}, {b} : f32")
+            computed[out] = v
+            continue
+
+        if name in {"relu", "abs", "sqrt", "rsqrt", "exp", "exp2", "neg"}:
+            if len(ins) != 1 or not out:
+                raise RuntimeError(f"invalid unary op: {name} inputs={ins} output={out!r}")
+            a = _in(0)
+            v = f"%{_mlir_ident(out)}_t"
+            if name == "relu":
+                lines.append(f"    {v} = arith.maximumf {a}, %c0f : f32")
+            elif name == "abs":
+                lines.append(f"    {v} = math.absf {a} : f32")
+            elif name == "sqrt":
+                lines.append(f"    {v} = math.sqrt {a} : f32")
+            elif name == "rsqrt":
+                lines.append(f"    {v} = math.rsqrt {a} : f32")
+            elif name == "neg":
+                lines.append(f"    {v} = arith.negf {a} : f32")
+            elif name == "exp2":
+                lines.append(f"    {v} = math.exp2 {a} : f32")
+            else:
+                base = attrs.get("base")
+                if base in (2, 2.0):
+                    lines.append(f"    {v} = math.exp2 {a} : f32")
+                else:
+                    lines.append(f"    {v} = math.exp {a} : f32")
+            computed[out] = v
+            continue
+
+        raise RuntimeError(f"rvv cpu-loops v1 unsupported op: {name}")
+
+    final = computed.get(out_name) or _load(out_name)
+    out_memref_ty = f"memref<{total}xf32>"
+    lines.append(f"    memref.store {final}, {arg_ssa[out_name]}[%i] : {out_memref_ty}")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_row_reduce_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 supports only f32 outputs")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 row-reduce expects rank-1 output, got {out_shape}")
+    m_dim = int(out_shape[0])
+    if m_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError("rvv cpu-loops v1 row-reduce expects exactly 1 op")
+    op0 = ops[0]
+    op_name = str(getattr(op0, "op", "")).strip()
+    ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    attrs = dict(getattr(op0, "attrs", {}) or {})
+    dims = attrs.get("dims")
+    dims_list = list(dims) if isinstance(dims, list) else []
+    if op_name not in {"reduce_sum", "reduce_max"} or dims_list != [1] or len(ins) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 unsupported row-reduce op={op_name} dims={dims_list} inputs={ins}")
+    in_name = str(ins[0])
+    in_tt = (intent.tensors or {}).get(in_name)
+    if in_tt is None:
+        raise RuntimeError(f"missing input tensor spec: {in_name}")
+    if _dtype(getattr(in_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 supports only f32 inputs")
+    in_shape = _shape(in_name, intent=intent, bindings=bindings)
+    if len(in_shape) != 2 or int(in_shape[0]) != int(m_dim):
+        raise RuntimeError(f"rvv cpu-loops v1 row-reduce expects [M,N] input, got {in_name} shape={in_shape}")
+    n_dim = int(in_shape[1])
+    if n_dim <= 0:
+        raise RuntimeError(f"rvv cpu-loops v1 row-reduce expects N>0, got N={n_dim}")
+    total = int(m_dim * n_dim)
+
+    in_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = f"memref<{m_dim}xf32>"
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(%{_mlir_ident(in_name)}: {in_memref_ty}, %{_mlir_ident(out_name)}: {out_memref_ty}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    if op_name == "reduce_sum":
+        lines.append("    %init = arith.constant 0.0 : f32")
+    else:
+        lines.append("    %init = arith.constant 0xFF800000 : f32")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %base = arith.muli %m, %cN : index")
+    lines.append("      %acc = scf.for %n = %c0 to %cN step %c1 iter_args(%x = %init) -> (f32) {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %v = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    if op_name == "reduce_sum":
+        lines.append("        %y = arith.addf %x, %v : f32")
+    else:
+        lines.append("        %y = arith.maximumf %x, %v : f32")
+    lines.append("        scf.yield %y : f32")
+    lines.append("      }")
+    lines.append(f"      memref.store %acc, %{_mlir_ident(out_name)}[%m] : {out_memref_ty}")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | None = None, **_: object) -> IntentMLIRModule:
+    b = str(backend or "").strip().lower()
+    if b and not b.startswith("rvv") and b != "riscv":
+        return module
+
+    incoming_meta = dict(module.meta or {})
+    bindings_raw = incoming_meta.get("shape_bindings")
+    if not isinstance(bindings_raw, Mapping) or not bindings_raw:
+        raise RuntimeError("rvv cpu-loops v1 requires module.meta['shape_bindings']")
+    bindings: dict[str, Any] = {str(k): int(v) for k, v in dict(bindings_raw).items() if str(k).strip()}
+
+    intent = to_intent(module)
+    _ = materialize_missing_op_output_tensors(intent)
+    kernel_name = str(intent.name or "intent")
+
+    out_name = str((list(intent.outputs or []) or [""])[0]).strip()
+    out_tt = (intent.tensors or {}).get(out_name) if out_name else None
+    out_rank = len(list(getattr(out_tt, "shape", []) or [])) if out_tt is not None else 0
+    if out_rank == 1 and len(list(intent.ops or [])) == 1:
+        module_text = _emit_row_reduce_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_row_reduce_v1"
+    else:
+        module_text = _emit_elementwise_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_v1"
+
+    out = IntentMLIRModule(
+        module_text=str(module_text),
+        dialect_version="std_mlir_v1",
+        provenance=dict(module.provenance or {}),
+        symbols=list(module.symbols or []),
+        meta=dict(incoming_meta),
+        intent_json=intent.to_json_dict(),
+    )
+    out.meta["rvv_real_mlir_kernel_kind"] = str(kind)
+    out.meta["rvv_real_mlir_kernel_emitted"] = True
+    return out
+
+
+__all__ = ["lower_intent_to_rvv_cpu_kernel"]
