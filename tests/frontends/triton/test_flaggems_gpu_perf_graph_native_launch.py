@@ -157,9 +157,9 @@ def test_build_native_launch_fn_uses_kernel_adapter_for_known_blocked_kernels(
 
 @pytest.mark.parametrize(
     ("kernel", "inputs_np", "bindings", "expected_launch_source", "expected_scope_token", "expected_call"),
-    [
-        (
-            "scaled_dot_product_attention_bhsd",
+        [
+            (
+                "scaled_dot_product_attention_bhsd",
             {
                 "query": np.ones((1, 2, 8, 16), dtype=np.float32),
                 "key": np.ones((1, 2, 8, 16), dtype=np.float32),
@@ -167,13 +167,13 @@ def test_build_native_launch_fn_uses_kernel_adapter_for_known_blocked_kernels(
                 "scale": np.array(0.25, dtype=np.float32),
                 "is_causal": np.array(0, dtype=np.int32),
             },
-            {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16},
-            "kernel_adapter:scaled_dot_product_attention_bhsd",
-            "scaled_dot_product_attention",
-            "sdpa",
-        ),
-        (
-            "flash_attn_varlen_func_bhsd",
+                {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16},
+                "kernel_adapter:scaled_dot_product_attention_bhsd",
+                "",
+                "sdpa",
+            ),
+            (
+                "flash_attn_varlen_func_bhsd",
             {
                 "query": np.ones((1, 2, 8, 16), dtype=np.float32),
                 "key": np.ones((1, 2, 8, 16), dtype=np.float32),
@@ -181,13 +181,13 @@ def test_build_native_launch_fn_uses_kernel_adapter_for_known_blocked_kernels(
                 "scale": np.array(0.25, dtype=np.float32),
                 "is_causal": np.array(0, dtype=np.int32),
             },
-            {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16},
-            "kernel_adapter:scaled_dot_product_attention_bhsd",
-            "scaled_dot_product_attention",
-            "sdpa",
-        ),
-        (
-            "unique2d",
+                {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16},
+                "kernel_adapter:scaled_dot_product_attention_bhsd",
+                "",
+                "sdpa",
+            ),
+            (
+                "unique2d",
             {"inp": np.array([1, 2, 1, 3], dtype=np.int32)},
             {"N": 4},
             "kernel_adapter:unique2d",

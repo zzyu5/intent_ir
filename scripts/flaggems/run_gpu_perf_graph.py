@@ -1127,9 +1127,7 @@ def _build_native_launch_adapter(
 
     if kernel_key in {"scaleddotproductattentionbhsd", "flashattnvarlenfuncbhsd"}:
         fg_ops = getattr(module, "flag_gems_ops", None)
-        fg_runtime = getattr(module, "flag_gems", None)
         callee = getattr(fg_ops, "scaled_dot_product_attention", None) if fg_ops is not None else None
-        use_gems = getattr(fg_runtime, "use_gems", None) if fg_runtime is not None else None
         if callable(callee):
             query = _pick_tensor("query", "q")
             key = _pick_tensor("key", "k")
@@ -1139,18 +1137,16 @@ def _build_native_launch_adapter(
             is_causal = bool(int(is_causal_raw)) if isinstance(is_causal_raw, (int, float, np.integer, np.floating)) else bool(is_causal_raw)
 
             def _run() -> None:
-                scope = use_gems(include=["scaled_dot_product_attention", "scaled_dot_product_attention_forward"]) if callable(use_gems) else contextlib.nullcontext()
-                with scope:
-                    _ = callee(
-                        query,
-                        key,
-                        value,
-                        attn_mask=None,
-                        dropout_p=0.0,
-                        is_causal=is_causal,
-                        scale=float(scale),
-                        enable_gqa=False,
-                    )
+                _ = callee(
+                    query,
+                    key,
+                    value,
+                    attn_mask=None,
+                    dropout_p=0.0,
+                    is_causal=is_causal,
+                    scale=float(scale),
+                    enable_gqa=False,
+                )
 
             return _run, {"launch_source": "kernel_adapter:scaled_dot_product_attention_bhsd", "arg_count": 3}
 
