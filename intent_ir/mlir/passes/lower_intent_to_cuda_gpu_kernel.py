@@ -1701,6 +1701,7 @@ def lower_intent_to_cuda_gpu_kernel(
     mlp2d_v1: dict[str, Any] | None = None
     attn2d_v1: dict[str, Any] | None = None
     attn_fwd_v1: dict[str, Any] | None = None
+    sdpa_bhsd_v1: dict[str, Any] | None = None
     upsample_bicubic2d_aa_v1: dict[str, Any] | None = None
     kron2d_v1: dict[str, Any] | None = None
     cumsum2d_v1: dict[str, Any] | None = None
@@ -1808,6 +1809,81 @@ def lower_intent_to_cuda_gpu_kernel(
                             "HEAD_DIM": int(hd),
                             "causal": False,
                         }
+
+        if sdpa_bhsd_v1 is None and intent_name in {"scaled_dot_product_attention_bhsd", "flash_attn_varlen_func_bhsd"}:
+            if len(ops_list) != 1:
+                raise RuntimeError(f"{intent_name} expects 1 op, got {len(ops_list)}")
+            op0 = ops_list[0]
+            op0_name = str(getattr(op0, "op", "")).strip()
+            op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+            op0_out = str(getattr(op0, "output", "")).strip()
+            if op0_name != "scaled_dot_product_attention" or len(op0_inputs) != 3 or op0_out != str(out_name):
+                raise RuntimeError(f"{intent_name} expects scaled_dot_product_attention(query,key,value)->{out_name}")
+            q_name, k_name, v_name = (str(op0_inputs[0]), str(op0_inputs[1]), str(op0_inputs[2]))
+            required = {q_name, k_name, v_name, str(out_name)}
+            if not required.issubset(set(arg_specs.keys())):
+                missing = sorted([x for x in required if x not in arg_specs])
+                raise RuntimeError(f"{intent_name} missing ABI tensors: {missing}")
+
+            q_dims = list(arg_specs[q_name].get("dims") or [])
+            k_dims = list(arg_specs[k_name].get("dims") or [])
+            v_dims = list(arg_specs[v_name].get("dims") or [])
+            o_dims = list(arg_specs[str(out_name)].get("dims") or [])
+            if len(q_dims) != 4 or len(k_dims) != 4 or len(v_dims) != 4 or len(o_dims) != 4:
+                raise RuntimeError(f"{intent_name} expects rank-4 tensors (B,H,S,D)")
+            b_dim, h_dim, q_len, d_dim = (int(q_dims[0]), int(q_dims[1]), int(q_dims[2]), int(q_dims[3]))
+            b2, h2, k_len, d2 = (int(k_dims[0]), int(k_dims[1]), int(k_dims[2]), int(k_dims[3]))
+            b3, h3, k_len3, d3 = (int(v_dims[0]), int(v_dims[1]), int(v_dims[2]), int(v_dims[3]))
+            if (
+                b_dim <= 0
+                or h_dim <= 0
+                or q_len <= 0
+                or k_len <= 0
+                or d_dim <= 0
+                or b2 != b_dim
+                or b3 != b_dim
+                or h2 != h_dim
+                or h3 != h_dim
+                or k_len3 != k_len
+                or d2 != d_dim
+                or d3 != d_dim
+                or [int(o_dims[0]), int(o_dims[1]), int(o_dims[2]), int(o_dims[3])] != [b_dim, h_dim, q_len, d_dim]
+            ):
+                raise RuntimeError(
+                    f"{intent_name} shape mismatch: "
+                    f"query={q_dims} key={k_dims} value={v_dims} out={o_dims}"
+                )
+            if int(d_dim) > 256:
+                raise RuntimeError(f"{intent_name} currently requires D<=256, got D={d_dim}")
+
+            ok = (
+                str(arg_specs[q_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[k_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[v_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[str(out_name)].get("memref_elem_ty")) == "f32"
+            )
+            if not ok:
+                raise RuntimeError(f"{intent_name} expects f32 query/key/value/out")
+
+            attrs = dict(getattr(op0, "attrs", {}) or {})
+            is_causal = bool(attrs.get("is_causal", False))
+            if "IS_CAUSAL" in bindings:
+                try:
+                    is_causal = bool(int(bindings["IS_CAUSAL"]))
+                except Exception:
+                    is_causal = bool(is_causal)
+            sdpa_bhsd_v1 = {
+                "query": str(q_name),
+                "key": str(k_name),
+                "value": str(v_name),
+                "out": str(out_name),
+                "B": int(b_dim),
+                "H": int(h_dim),
+                "Q": int(q_len),
+                "K": int(k_len),
+                "D": int(d_dim),
+                "is_causal": bool(is_causal),
+            }
 
         if upsample_bicubic2d_aa_v1 is None and intent_name == "upsample_bicubic2d_aa":
             if len(ops_list) == 1:
@@ -13348,6 +13424,163 @@ def lower_intent_to_cuda_gpu_kernel(
         idx_o1 = _fresh("idx_o1")
         lines.append(f"          {idx_o1} = arith.addi %base_q, %d1 : index")
         lines.append(f"          memref.store {out1}, {arg_ssa[out_name2]}[{idx_o1}] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif sdpa_bhsd_v1 is not None:
+        kernel_kind = "sdpa_bhsd_v1"
+        q_name = str(sdpa_bhsd_v1["query"])
+        k_name = str(sdpa_bhsd_v1["key"])
+        v_name = str(sdpa_bhsd_v1["value"])
+        out_name2 = str(sdpa_bhsd_v1["out"])
+        b_dim = int(sdpa_bhsd_v1["B"])
+        h_dim = int(sdpa_bhsd_v1["H"])
+        q_len = int(sdpa_bhsd_v1["Q"])
+        k_len = int(sdpa_bhsd_v1["K"])
+        d_dim = int(sdpa_bhsd_v1["D"])
+        is_causal = bool(sdpa_bhsd_v1.get("is_causal"))
+        if b_dim <= 0 or h_dim <= 0 or q_len <= 0 or k_len <= 0 or d_dim <= 0:
+            raise RuntimeError(
+                f"sdpa_bhsd_v1 expects positive dims, got B={b_dim} H={h_dim} Q={q_len} K={k_len} D={d_dim}"
+            )
+        if int(d_dim) > 256:
+            raise RuntimeError(f"sdpa_bhsd_v1 currently requires D<=256, got D={d_dim}")
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        v_memref = str(arg_specs[v_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        blocks = int(int(b_dim) * int(h_dim) * int(q_len))
+        launch_override = {"block": [256, 1, 1], "grid": [int(blocks), 1, 1]}
+
+        sh_elems = int(256 + int(k_len) + 1)
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
+
+        scale_const = _as_f32_const(1.0 / math.sqrt(float(d_dim)))
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cBlocks = arith.constant {int(blocks)} : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cQ = arith.constant {int(q_len)} : index")
+        lines.append(f"      %cK = arith.constant {int(k_len)} : index")
+        lines.append(f"      %cD = arith.constant {int(d_dim)} : index")
+        lines.append("      %c256 = arith.constant 256 : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append(f"      %scale = arith.constant {scale_const} : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %pred = arith.cmpi ult, %bid, %cBlocks : index")
+        lines.append("      scf.if %pred {")
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+
+        # Decode block id -> (b,h,q). Flattened row-major: (b*H + h)*Q + q.
+        lines.append("        %bh = arith.divui %bid, %cQ : index")
+        lines.append("        %q = arith.remui %bid, %cQ : index")
+        lines.append("        %b = arith.divui %bh, %cH : index")
+        lines.append("        %h = arith.remui %bh, %cH : index")
+        lines.append("        %bh0 = arith.muli %b, %cH : index")
+        lines.append("        %bh2 = arith.addi %bh0, %h : index")
+        lines.append("        %q_base0 = arith.muli %bh2, %cQ : index")
+        lines.append("        %q_base = arith.addi %q_base0, %q : index")
+        lines.append("        %q_off = arith.muli %q_base, %cD : index")
+        lines.append("        %k_base0 = arith.muli %bh2, %cK : index")
+
+        # 1) Compute attention scores and store them at sh[256 + k] (thread0 only).
+        lines.append("        scf.for %kk = %c0 to %cK step %c1 {")
+        lines.append("          %k_base = arith.addi %k_base0, %kk : index")
+        lines.append("          %k_off = arith.muli %k_base, %cD : index")
+        lines.append("          %pred_d = arith.cmpi ult, %tid, %cD : index")
+        lines.append("          %partial = scf.if %pred_d -> (f32) {")
+        lines.append("            %q_idx = arith.addi %q_off, %tid : index")
+        lines.append("            %k_idx = arith.addi %k_off, %tid : index")
+        lines.append(f"            %qv = memref.load {arg_ssa[q_name]}[%q_idx] : {q_memref}")
+        lines.append(f"            %kv = memref.load {arg_ssa[k_name]}[%k_idx] : {k_memref}")
+        lines.append(f"            %prod = arith.mulf %qv, %kv{fm} : f32")
+        lines.append("            scf.yield %prod : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lines.append(f"          memref.store %partial, %sh[%tid] : {shared_global_memref_ty}")
+        lines.append("          gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_sdpa_{stride}"
+            pS = f"%pS_sdpa_{stride}"
+            tid2 = f"%tid_sdpa_{stride}"
+            a = f"%a_sdpa_{stride}"
+            b = f"%b_sdpa_{stride}"
+            s = f"%s_sdpa_{stride}"
+            lines.append(f"          {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"          {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"          scf.if {pS} {{")
+            lines.append(f"            {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"            {a} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"            {b} = memref.load %sh[{tid2}] : {shared_global_memref_ty}")
+            lines.append(f"            {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"            memref.store {s}, %sh[%tid] : {shared_global_memref_ty}")
+            lines.append("          }")
+            lines.append("          gpu.barrier")
+        lines.append(f"          %dot = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"          %score0 = arith.mulf %dot, %scale{fm} : f32")
+        score_ssa = "%score0"
+        if is_causal:
+            lines.append("          %mask = arith.cmpi ugt, %kk, %q : index")
+            lines.append("          %score = arith.select %mask, %neg_inf, %score0 : f32")
+            score_ssa = "%score"
+        lines.append("          %score_idx = arith.addi %c256, %kk : index")
+        lines.append("          scf.if %is0 {")
+        lines.append(f"            memref.store {score_ssa}, %sh[%score_idx] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+
+        # 2) Thread0 computes max + exp weights (in-place in sh[256 + k]) and writes inv_sum at sh[256 + K].
+        lines.append("        scf.if %is0 {")
+        lines.append("          %maxv = scf.for %kk2 = %c0 to %cK step %c1 iter_args(%m = %neg_inf) -> (f32) {")
+        lines.append("            %idx = arith.addi %c256, %kk2 : index")
+        lines.append(f"            %s = memref.load %sh[%idx] : {shared_global_memref_ty}")
+        lines.append(f"            %m2 = arith.maximumf %m, %s{fm} : f32")
+        lines.append("            scf.yield %m2 : f32")
+        lines.append("          }")
+        lines.append("          %sum = scf.for %kk3 = %c0 to %cK step %c1 iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("            %idx3 = arith.addi %c256, %kk3 : index")
+        lines.append(f"            %s3 = memref.load %sh[%idx3] : {shared_global_memref_ty}")
+        lines.append(f"            %xc = arith.subf %s3, %maxv{fm} : f32")
+        lines.append(f"            %e = math.exp %xc{fm} : f32")
+        lines.append(f"            memref.store %e, %sh[%idx3] : {shared_global_memref_ty}")
+        lines.append(f"            %acc2 = arith.addf %acc, %e{fm} : f32")
+        lines.append("            scf.yield %acc2 : f32")
+        lines.append("          }")
+        lines.append(f"          %inv = arith.divf %c1f, %sum{fm} : f32")
+        lines.append("          %inv_idx = arith.addi %c256, %cK : index")
+        lines.append(f"          memref.store %inv, %sh[%inv_idx] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %inv_idx2 = arith.addi %c256, %cK : index")
+        lines.append(f"        %inv_sum = memref.load %sh[%inv_idx2] : {shared_global_memref_ty}")
+
+        # 3) Each thread computes one output lane d (tid < D): out[b,h,q,d] = sum_k softmax(score_k) * value[b,h,k,d].
+        lines.append("        %pred_out = arith.cmpi ult, %tid, %cD : index")
+        lines.append("        scf.if %pred_out {")
+        lines.append("          %acc = scf.for %kk4 = %c0 to %cK step %c1 iter_args(%a = %c0f) -> (f32) {")
+        lines.append("            %idx4 = arith.addi %c256, %kk4 : index")
+        lines.append(f"            %e4 = memref.load %sh[%idx4] : {shared_global_memref_ty}")
+        lines.append(f"            %w = arith.mulf %e4, %inv_sum{fm} : f32")
+        lines.append("            %vk_base = arith.addi %k_base0, %kk4 : index")
+        lines.append("            %vk_off = arith.muli %vk_base, %cD : index")
+        lines.append("            %v_idx = arith.addi %vk_off, %tid : index")
+        lines.append(f"            %vv = memref.load {arg_ssa[v_name]}[%v_idx] : {v_memref}")
+        lines.append(f"            %wv = arith.mulf %w, %vv{fm} : f32")
+        lines.append(f"            %a2 = arith.addf %a, %wv{fm} : f32")
+        lines.append("            scf.yield %a2 : f32")
+        lines.append("          }")
+        lines.append("          %out_idx = arith.addi %q_off, %tid : index")
+        lines.append(f"          memref.store %acc, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif attn2d_v1 is not None and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False):
