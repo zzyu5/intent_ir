@@ -58,9 +58,9 @@ def _b64_json(payload: dict[str, Any]) -> str:
 
 def _dtype(dt: str) -> str:
     s = str(dt or "").strip().lower()
-    if s != "f32":
-        raise RuntimeError(f"rvv cpu-loops v1 supports only f32, got dtype={dt!r}")
-    return "f32"
+    if s in {"f32", "f16"}:
+        return s
+    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32, got dtype={dt!r}")
 
 
 def _shape(name: str, *, intent: IntentFunction, bindings: Mapping[str, Any]) -> list[int]:
@@ -112,12 +112,14 @@ def _emit_elementwise_kernel(
     arg_decls: list[str] = []
     arg_ssa: dict[str, str] = {}
     scalar_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
     for name in arg_order:
         tt = (intent.tensors or {}).get(name)
         if tt is None:
             raise RuntimeError(f"missing tensor spec: {name}")
-        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
-            raise RuntimeError(f"rvv cpu-loops v1 supports only f32, got tensor={name} dtype={getattr(tt, 'dtype', '')}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        if name == out_name and elem_ty != "f32":
+            raise RuntimeError(f"rvv cpu-loops v1 supports only f32 outputs, got output dtype={elem_ty!r}")
         sh = _shape(name, intent=intent, bindings=bindings)
         if len(sh) == 2:
             numel = int(sh[0] * sh[1])
@@ -125,9 +127,10 @@ def _emit_elementwise_kernel(
             numel = 1
         else:
             raise RuntimeError(f"rvv cpu-loops v1 elementwise supports only rank-2 or scalar tensors, got {name} shape={sh}")
-        memref_ty = f"memref<{numel}xf32>"
+        memref_ty = f"memref<{numel}x{elem_ty}>"
         ssa = f"%{_mlir_ident(name)}"
         arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
         arg_decls.append(f"    {ssa}: {memref_ty}")
         if len(sh) == 0 and name != out_name:
             vssa = f"%{_mlir_ident(name)}_s"
@@ -157,8 +160,11 @@ def _emit_elementwise_kernel(
         sh = _shape(name, intent=intent, bindings=bindings)
         if len(sh) == 0:
             return scalar_ssa.get(name) or f"%{_mlir_ident(name)}_s"
-        numel = int(sh[0] * sh[1])
-        memref_ty = f"memref<{numel}xf32>"
+        memref_ty = memref_ty_by_name.get(name)
+        if not memref_ty:
+            elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+            numel = int(sh[0] * sh[1])
+            memref_ty = f"memref<{numel}x{elem_ty}>"
         ssa = f"%{_mlir_ident(name)}_v"
         lines.append(f"    {ssa} = memref.load {arg_ssa[name]}[%i] : {memref_ty}")
         return ssa
@@ -178,15 +184,38 @@ def _emit_elementwise_kernel(
         if name == "cast":
             if len(ins) != 1 or not out:
                 raise RuntimeError(f"invalid cast op: inputs={ins} output={out!r}")
-            to = str(attrs.get("to") or attrs.get("dtype") or "f32").strip().lower()
-            if to != "f32":
-                raise RuntimeError(f"rvv cpu-loops v1 supports only cast to f32, got to={to!r}")
-            computed[out] = _in(0)
+            in_name = str(ins[0]).strip()
+            in_tt = (intent.tensors or {}).get(in_name)
+            out_tt = (intent.tensors or {}).get(out)
+            if in_tt is None or out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 cast missing tensor specs: in={in_name!r} out={out!r}")
+            in_ty = _dtype(getattr(in_tt, "dtype", "f32"))
+            out_ty = _dtype(getattr(out_tt, "dtype", "f32"))
+            to = str(attrs.get("to") or attrs.get("dtype") or out_ty).strip().lower()
+            if to != out_ty:
+                raise RuntimeError(f"rvv cpu-loops v1 cast dtype mismatch: attrs.to={to!r} tensor.dtype={out_ty!r}")
+            a = _in(0)
+            if in_ty == out_ty:
+                computed[out] = a
+            elif in_ty == "f16" and out_ty == "f32":
+                v = f"%{_mlir_ident(out)}_t"
+                lines.append(f"    {v} = arith.extf {a} : f16 to f32")
+                computed[out] = v
+            else:
+                raise RuntimeError(f"rvv cpu-loops v1 unsupported cast: {in_ty} -> {out_ty}")
             continue
 
         if name in {"add", "sub", "mul", "div", "max", "min"}:
             if len(ins) != 2 or not out:
                 raise RuntimeError(f"invalid binary op: {name} inputs={ins} output={out!r}")
+            for nm in [*ins, out]:
+                tt = (intent.tensors or {}).get(str(nm))
+                if tt is None:
+                    raise RuntimeError(f"rvv cpu-loops v1 missing tensor spec: {nm}")
+                if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+                    raise RuntimeError(
+                        f"rvv cpu-loops v1 supports only f32 for op {name}, got tensor={nm} dtype={getattr(tt, 'dtype', '')}"
+                    )
             a = _in(0)
             b = _in(1)
             v = f"%{_mlir_ident(out)}_t"
@@ -208,6 +237,14 @@ def _emit_elementwise_kernel(
         if name in {"relu", "abs", "sqrt", "rsqrt", "exp", "exp2", "neg"}:
             if len(ins) != 1 or not out:
                 raise RuntimeError(f"invalid unary op: {name} inputs={ins} output={out!r}")
+            for nm in [*ins, out]:
+                tt = (intent.tensors or {}).get(str(nm))
+                if tt is None:
+                    raise RuntimeError(f"rvv cpu-loops v1 missing tensor spec: {nm}")
+                if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+                    raise RuntimeError(
+                        f"rvv cpu-loops v1 supports only f32 for op {name}, got tensor={nm} dtype={getattr(tt, 'dtype', '')}"
+                    )
             a = _in(0)
             v = f"%{_mlir_ident(out)}_t"
             if name == "relu":

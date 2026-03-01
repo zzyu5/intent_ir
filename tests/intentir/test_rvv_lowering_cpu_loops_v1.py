@@ -82,6 +82,20 @@ def _clamp2d_cast_intent() -> IntentFunction:
     )
 
 
+def _cast2d_f16_to_f32_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cast2d",
+            "tensors": {
+                "x": {"dtype": "f16", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "cast", "inputs": ["x"], "output": "out", "attrs": {"to": "f32"}}],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -112,4 +126,15 @@ def test_rvv_cpu_loops_v1_supports_cast_to_f32(monkeypatch: pytest.MonkeyPatch) 
     text = str(out.module_text or "")
     assert "arith.maximumf" in text
     assert "arith.minimumf" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_cast_f16_to_f32(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_cast2d_f16_to_f32_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    text = str(out.module_text or "")
+    assert "arith.extf" in text
+    assert "xf16" in text
     _verify_with_mlir_opt(text)
