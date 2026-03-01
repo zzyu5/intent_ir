@@ -190,6 +190,7 @@ def lower_intent_to_cuda_gpu_kernel(
         "rms_norm2d",
         "rms_norm_residual2d",
         "min_dim2d",
+        "max_pool2d_with_indices_nchw",
     }
     if len(outputs) != 1 and not multi_output_ok:
         raise RuntimeError(f"cuda real-mlir wave supports single-output intents only; outputs={outputs}")
@@ -1703,6 +1704,8 @@ def lower_intent_to_cuda_gpu_kernel(
     row_sort_axis1_bitonic_v1: dict[str, Any] | None = None
     row_topk_axis1_bitonic_v1: dict[str, Any] | None = None
     row_quantile_axis1_sort_v1: dict[str, Any] | None = None
+    avg_pool2d_nchw_v1: dict[str, Any] | None = None
+    max_pool2d_with_indices_nchw_v1: dict[str, Any] | None = None
 
     ops_list = [op for op in list(intent.ops or []) if op is not None]
     if ops_list:
@@ -2749,6 +2752,158 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "M": int(m_dim),
                                     "N": int(n_dim),
                                 }
+
+        # Wave18 (coverage_batches backfill): NCHW pooling (static output shapes).
+        if avg_pool2d_nchw_v1 is None and intent_name == "avg_pool2d_nchw":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs = dict(getattr(op0, "attrs", {}) or {})
+                kernel_size = attrs.get("kernel_size")
+                stride = attrs.get("stride")
+                padding = attrs.get("padding")
+                ceil_mode = bool(attrs.get("ceil_mode")) if attrs.get("ceil_mode") is not None else False
+                kernel_size_list = list(kernel_size) if isinstance(kernel_size, list) else []
+                stride_list = list(stride) if isinstance(stride, list) else []
+                padding_list = list(padding) if isinstance(padding, list) else []
+                if (
+                    op0_name == "avg_pool2d"
+                    and len(op0_inputs) == 1
+                    and op0_out == str(out_name)
+                    and kernel_size_list == [2, 2]
+                    and stride_list == [2, 2]
+                    and padding_list == [0, 0]
+                    and not ceil_mode
+                ):
+                    in_name = str(op0_inputs[0])
+                    required = {in_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        in_dims = list(arg_specs[in_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(in_dims) == 4 and len(out_dims2) == 4 and out_rank == 4:
+                            n_dim, c_dim, h_dim, w_dim = map(int, in_dims)
+                            n2_dim, c2_dim, oh_dim, ow_dim = map(int, out_dims2)
+                            ok = (
+                                n_dim > 0
+                                and c_dim > 0
+                                and h_dim > 0
+                                and w_dim > 0
+                                and oh_dim > 0
+                                and ow_dim > 0
+                                and n2_dim == n_dim
+                                and c2_dim == c_dim
+                                and str(arg_specs[in_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                avg_pool2d_nchw_v1 = {
+                                    "inp": str(in_name),
+                                    "out": str(op0_out),
+                                    "N": int(n_dim),
+                                    "C": int(c_dim),
+                                    "H": int(h_dim),
+                                    "W": int(w_dim),
+                                    "OH": int(oh_dim),
+                                    "OW": int(ow_dim),
+                                    "KH": 2,
+                                    "KW": 2,
+                                    "SH": 2,
+                                    "SW": 2,
+                                    "PH": 0,
+                                    "PW": 0,
+                                }
+
+        if max_pool2d_with_indices_nchw_v1 is None and intent_name == "max_pool2d_with_indices_nchw":
+            # Canonical graph: two ops with select=values/indices producing two outputs.
+            if len(ops_list) == 2:
+                in_name = ""
+                out_values = ""
+                out_indices = ""
+                attrs0 = None
+                ok_graph = True
+                for op in ops_list:
+                    name = str(getattr(op, "op", "")).strip()
+                    ins = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+                    out2 = str(getattr(op, "output", "")).strip()
+                    attrs = dict(getattr(op, "attrs", {}) or {})
+                    if name != "max_pool2d_with_indices" or len(ins) != 1 or not out2:
+                        ok_graph = False
+                        break
+                    if not in_name:
+                        in_name = str(ins[0])
+                    if str(ins[0]) != str(in_name):
+                        ok_graph = False
+                        break
+                    select = str(attrs.get("select") or "").strip().lower()
+                    if select == "values":
+                        out_values = str(out2)
+                    elif select == "indices":
+                        out_indices = str(out2)
+                    else:
+                        ok_graph = False
+                        break
+                    if attrs0 is None:
+                        attrs0 = dict(attrs)
+                if ok_graph and in_name and out_values and out_indices and isinstance(attrs0, dict):
+                    kernel_size = attrs0.get("kernel_size")
+                    stride = attrs0.get("stride")
+                    padding = attrs0.get("padding")
+                    dilation = attrs0.get("dilation")
+                    ceil_mode = bool(attrs0.get("ceil_mode")) if attrs0.get("ceil_mode") is not None else False
+                    kernel_size_list = list(kernel_size) if isinstance(kernel_size, list) else []
+                    stride_list = list(stride) if isinstance(stride, list) else []
+                    padding_list = list(padding) if isinstance(padding, list) else []
+                    dilation_list = list(dilation) if isinstance(dilation, list) else []
+                    if (
+                        kernel_size_list == [2, 2]
+                        and stride_list == [2, 2]
+                        and padding_list == [0, 0]
+                        and dilation_list == [1, 1]
+                        and not ceil_mode
+                    ):
+                        required = {in_name, out_values, out_indices}
+                        if required.issubset(set(arg_specs.keys())):
+                            in_dims = list(arg_specs[in_name].get("dims") or [])
+                            out_dims2 = list(arg_specs[out_values].get("dims") or [])
+                            idx_dims = list(arg_specs[out_indices].get("dims") or [])
+                            if len(in_dims) == 4 and len(out_dims2) == 4 and out_dims2 == idx_dims and out_rank == 4:
+                                n_dim, c_dim, h_dim, w_dim = map(int, in_dims)
+                                n2_dim, c2_dim, oh_dim, ow_dim = map(int, out_dims2)
+                                ok = (
+                                    n_dim > 0
+                                    and c_dim > 0
+                                    and h_dim > 0
+                                    and w_dim > 0
+                                    and oh_dim > 0
+                                    and ow_dim > 0
+                                    and n2_dim == n_dim
+                                    and c2_dim == c_dim
+                                    and str(arg_specs[in_name].get("memref_elem_ty") or "") == "f32"
+                                    and str(arg_specs[out_values].get("memref_elem_ty") or "") == "f32"
+                                    and str(arg_specs[out_indices].get("memref_elem_ty") or "") == "i64"
+                                )
+                                if ok:
+                                    max_pool2d_with_indices_nchw_v1 = {
+                                        "inp": str(in_name),
+                                        "out": str(out_values),
+                                        "indices": str(out_indices),
+                                        "N": int(n_dim),
+                                        "C": int(c_dim),
+                                        "H": int(h_dim),
+                                        "W": int(w_dim),
+                                        "OH": int(oh_dim),
+                                        "OW": int(ow_dim),
+                                        "KH": 2,
+                                        "KW": 2,
+                                        "SH": 2,
+                                        "SW": 2,
+                                        "PH": 0,
+                                        "PW": 0,
+                                        "DH": 1,
+                                        "DW": 1,
+                                    }
 
         # Pattern: matmul family (Triton-native perf/coverage kernels).
         #
@@ -8796,6 +8951,166 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %outv = arith.addf %v0, %q_diff{fm} : f32")
         lines.append(f"          memref.store %outv, {arg_ssa[out_name2]}[%bid] : {out_memref}")
         lines.append("        }")
+        lines.append("      }")
+    elif avg_pool2d_nchw_v1 is not None:
+        kernel_kind = "avg_pool2d_nchw_v1"
+        n_dim = int(avg_pool2d_nchw_v1["N"])
+        c_dim = int(avg_pool2d_nchw_v1["C"])
+        h_dim = int(avg_pool2d_nchw_v1["H"])
+        w_dim = int(avg_pool2d_nchw_v1["W"])
+        oh_dim = int(avg_pool2d_nchw_v1["OH"])
+        ow_dim = int(avg_pool2d_nchw_v1["OW"])
+        if n_dim <= 0 or c_dim <= 0 or h_dim <= 0 or w_dim <= 0 or oh_dim <= 0 or ow_dim <= 0:
+            raise RuntimeError(
+                "avg_pool2d_nchw expects positive dims, got "
+                f"N={n_dim} C={c_dim} H={h_dim} W={w_dim} OH={oh_dim} OW={ow_dim}"
+            )
+
+        in_name = str(avg_pool2d_nchw_v1["inp"])
+        out_name2 = str(avg_pool2d_nchw_v1["out"])
+        in_memref = str(arg_specs[in_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cC = arith.constant {int(c_dim)} : index")
+        lines.append(f"        %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"        %cOH = arith.constant {int(oh_dim)} : index")
+        lines.append(f"        %cOW = arith.constant {int(ow_dim)} : index")
+        lines.append(f"        %cHW = arith.constant {int(h_dim * w_dim)} : index")
+        lines.append("        %ow = arith.remui %lin, %cOW : index")
+        lines.append("        %t1 = arith.divui %lin, %cOW : index")
+        lines.append("        %oh = arith.remui %t1, %cOH : index")
+        lines.append("        %t2 = arith.divui %t1, %cOH : index")
+        lines.append("        %cc = arith.remui %t2, %cC : index")
+        lines.append("        %nn = arith.divui %t2, %cC : index")
+        lines.append("        %c2 = arith.constant 2 : index")
+        lines.append("        %ih0 = arith.muli %oh, %c2 : index")
+        lines.append("        %iw0 = arith.muli %ow, %c2 : index")
+        lines.append("        %nc = arith.muli %nn, %cC : index")
+        lines.append("        %ncc = arith.addi %nc, %cc : index")
+        lines.append("        %base_nc = arith.muli %ncc, %cHW : index")
+        lines.append("        %ih_mul = arith.muli %ih0, %cW : index")
+        lines.append("        %base_h = arith.addi %base_nc, %ih_mul : index")
+        lines.append("        %idx0 = arith.addi %base_h, %iw0 : index")
+        lines.append(f"        %x0 = memref.load {arg_ssa[in_name]}[%idx0] : {in_memref}")
+        lines.append("        %idx1 = arith.addi %idx0, %c1 : index")
+        lines.append(f"        %x1 = memref.load {arg_ssa[in_name]}[%idx1] : {in_memref}")
+        lines.append("        %idx2 = arith.addi %idx0, %cW : index")
+        lines.append(f"        %x2 = memref.load {arg_ssa[in_name]}[%idx2] : {in_memref}")
+        lines.append("        %idx3 = arith.addi %idx2, %c1 : index")
+        lines.append(f"        %x3 = memref.load {arg_ssa[in_name]}[%idx3] : {in_memref}")
+        lines.append(f"        %s01 = arith.addf %x0, %x1{fm} : f32")
+        lines.append(f"        %s23 = arith.addf %x2, %x3{fm} : f32")
+        lines.append(f"        %sum = arith.addf %s01, %s23{fm} : f32")
+        lines.append("        %c025 = arith.constant 0.25 : f32")
+        lines.append(f"        %avg = arith.mulf %sum, %c025{fm} : f32")
+        lines.append(f"        memref.store %avg, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif max_pool2d_with_indices_nchw_v1 is not None:
+        kernel_kind = "max_pool2d_with_indices_nchw_v1"
+        n_dim = int(max_pool2d_with_indices_nchw_v1["N"])
+        c_dim = int(max_pool2d_with_indices_nchw_v1["C"])
+        h_dim = int(max_pool2d_with_indices_nchw_v1["H"])
+        w_dim = int(max_pool2d_with_indices_nchw_v1["W"])
+        oh_dim = int(max_pool2d_with_indices_nchw_v1["OH"])
+        ow_dim = int(max_pool2d_with_indices_nchw_v1["OW"])
+        if n_dim <= 0 or c_dim <= 0 or h_dim <= 0 or w_dim <= 0 or oh_dim <= 0 or ow_dim <= 0:
+            raise RuntimeError(
+                "max_pool2d_with_indices_nchw expects positive dims, got "
+                f"N={n_dim} C={c_dim} H={h_dim} W={w_dim} OH={oh_dim} OW={ow_dim}"
+            )
+
+        in_name = str(max_pool2d_with_indices_nchw_v1["inp"])
+        out_name2 = str(max_pool2d_with_indices_nchw_v1["out"])
+        indices_name = str(max_pool2d_with_indices_nchw_v1["indices"])
+        in_memref = str(arg_specs[in_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        indices_memref = str(arg_specs[indices_name]["memref"])
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cC = arith.constant {int(c_dim)} : index")
+        lines.append(f"        %cW = arith.constant {int(w_dim)} : index")
+        lines.append(f"        %cOH = arith.constant {int(oh_dim)} : index")
+        lines.append(f"        %cOW = arith.constant {int(ow_dim)} : index")
+        lines.append(f"        %cHW = arith.constant {int(h_dim * w_dim)} : index")
+        lines.append("        %ow = arith.remui %lin, %cOW : index")
+        lines.append("        %t1 = arith.divui %lin, %cOW : index")
+        lines.append("        %oh = arith.remui %t1, %cOH : index")
+        lines.append("        %t2 = arith.divui %t1, %cOH : index")
+        lines.append("        %cc = arith.remui %t2, %cC : index")
+        lines.append("        %nn = arith.divui %t2, %cC : index")
+        lines.append("        %c2 = arith.constant 2 : index")
+        lines.append("        %ih0 = arith.muli %oh, %c2 : index")
+        lines.append("        %iw0 = arith.muli %ow, %c2 : index")
+        lines.append("        %nc = arith.muli %nn, %cC : index")
+        lines.append("        %ncc = arith.addi %nc, %cc : index")
+        lines.append("        %base_nc = arith.muli %ncc, %cHW : index")
+        lines.append("        %ih_mul = arith.muli %ih0, %cW : index")
+        lines.append("        %base_h = arith.addi %base_nc, %ih_mul : index")
+        lines.append("        %idx0 = arith.addi %base_h, %iw0 : index")
+        lines.append("        %p0 = arith.addi %ih_mul, %iw0 : index")
+        lines.append(f"        %v0 = memref.load {arg_ssa[in_name]}[%idx0] : {in_memref}")
+        lines.append("        %idx1 = arith.addi %idx0, %c1 : index")
+        lines.append("        %p1 = arith.addi %p0, %c1 : index")
+        lines.append(f"        %v1 = memref.load {arg_ssa[in_name]}[%idx1] : {in_memref}")
+        lines.append("        %idx2 = arith.addi %idx0, %cW : index")
+        lines.append("        %p2 = arith.addi %p0, %cW : index")
+        lines.append(f"        %v2 = memref.load {arg_ssa[in_name]}[%idx2] : {in_memref}")
+        lines.append("        %idx3 = arith.addi %idx2, %c1 : index")
+        lines.append("        %p3 = arith.addi %p2, %c1 : index")
+        lines.append(f"        %v3 = memref.load {arg_ssa[in_name]}[%idx3] : {in_memref}")
+
+        lines.append("        %gt1 = arith.cmpf ogt, %v1, %v0 : f32")
+        lines.append("        %eq1 = arith.cmpf oeq, %v1, %v0 : f32")
+        lines.append("        %idx_lt1 = arith.cmpi ult, %p1, %p0 : index")
+        lines.append("        %eq_lt1 = arith.andi %eq1, %idx_lt1 : i1")
+        lines.append("        %better1 = arith.ori %gt1, %eq_lt1 : i1")
+        lines.append("        %best_v1 = arith.select %better1, %v1, %v0 : f32")
+        lines.append("        %best_i1 = arith.select %better1, %p1, %p0 : index")
+
+        lines.append("        %gt2 = arith.cmpf ogt, %v2, %best_v1 : f32")
+        lines.append("        %eq2 = arith.cmpf oeq, %v2, %best_v1 : f32")
+        lines.append("        %idx_lt2 = arith.cmpi ult, %p2, %best_i1 : index")
+        lines.append("        %eq_lt2 = arith.andi %eq2, %idx_lt2 : i1")
+        lines.append("        %better2 = arith.ori %gt2, %eq_lt2 : i1")
+        lines.append("        %best_v2 = arith.select %better2, %v2, %best_v1 : f32")
+        lines.append("        %best_i2 = arith.select %better2, %p2, %best_i1 : index")
+
+        lines.append("        %gt3 = arith.cmpf ogt, %v3, %best_v2 : f32")
+        lines.append("        %eq3 = arith.cmpf oeq, %v3, %best_v2 : f32")
+        lines.append("        %idx_lt3 = arith.cmpi ult, %p3, %best_i2 : index")
+        lines.append("        %eq_lt3 = arith.andi %eq3, %idx_lt3 : i1")
+        lines.append("        %better3 = arith.ori %gt3, %eq_lt3 : i1")
+        lines.append("        %best_v3 = arith.select %better3, %v3, %best_v2 : f32")
+        lines.append("        %best_i3 = arith.select %better3, %p3, %best_i2 : index")
+
+        lines.append(f"        memref.store %best_v3, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("        %best_i3_i64 = arith.index_cast %best_i3 : index to i64")
+        lines.append(f"        memref.store %best_i3_i64, {arg_ssa[indices_name]}[%lin] : {indices_memref}")
         lines.append("      }")
     elif stack2d_v1 is not None:
         kernel_kind = "stack2d_v1"
