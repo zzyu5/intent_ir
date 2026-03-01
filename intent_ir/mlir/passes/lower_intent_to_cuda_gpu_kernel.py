@@ -1667,6 +1667,8 @@ def lower_intent_to_cuda_gpu_kernel(
     count_nonzero2d_v1: dict[str, Any] | None = None
     allclose2d_v1: dict[str, Any] | None = None
     mse_loss2d_v1: dict[str, Any] | None = None
+    nll_loss_forward_v1: dict[str, Any] | None = None
+    nll_loss2d_forward_v1: dict[str, Any] | None = None
     row_std_axis1_v1: dict[str, Any] | None = None
     row_var_axis1_v1: dict[str, Any] | None = None
     weight_norm2d_v1: dict[str, Any] | None = None
@@ -2131,6 +2133,108 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "M": int(m_dim),
                                     "N": int(n_dim),
                                     "reduction": int(reduction_i),
+                                }
+
+        if nll_loss_forward_v1 is None and intent_name == "nll_loss_forward":
+            if len(ops_list) == 1 and out_rank == 0:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs = dict(getattr(op0, "attrs", {}) or {})
+                reduction = attrs.get("reduction")
+                ignore_index = attrs.get("ignore_index", -100)
+                try:
+                    reduction_i = int(reduction) if reduction is not None else None
+                except Exception:
+                    reduction_i = None
+                try:
+                    ignore_i = int(ignore_index)
+                except Exception:
+                    ignore_i = -100
+                if op0_name == "nll_loss_forward" and len(op0_inputs) == 3 and op0_out == str(out_name) and reduction_i == 1:
+                    logits_name, tgt_name, w_name = map(str, op0_inputs)
+                    required = {logits_name, tgt_name, w_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        logits_dims = list(arg_specs[logits_name].get("dims") or [])
+                        tgt_dims = list(arg_specs[tgt_name].get("dims") or [])
+                        w_dims = list(arg_specs[w_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(logits_dims) == 2 and len(tgt_dims) == 1 and len(w_dims) == 1 and len(out_dims2) == 0:
+                            n_dim, c_dim = map(int, logits_dims)
+                            ok = (
+                                n_dim > 0
+                                and c_dim > 1
+                                and tgt_dims == [n_dim]
+                                and w_dims == [c_dim]
+                                and str(arg_specs[logits_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[tgt_name].get("memref_elem_ty") or "") == "i64"
+                                and str(arg_specs[w_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                nll_loss_forward_v1 = {
+                                    "self": logits_name,
+                                    "target": tgt_name,
+                                    "weight": w_name,
+                                    "out": op0_out,
+                                    "N": int(n_dim),
+                                    "C": int(c_dim),
+                                    "reduction": int(reduction_i),
+                                    "ignore_index": int(ignore_i),
+                                }
+
+        if nll_loss2d_forward_v1 is None and intent_name == "nll_loss2d_forward":
+            if len(ops_list) == 1 and out_rank == 0:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs = dict(getattr(op0, "attrs", {}) or {})
+                reduction = attrs.get("reduction")
+                ignore_index = attrs.get("ignore_index", -100)
+                try:
+                    reduction_i = int(reduction) if reduction is not None else None
+                except Exception:
+                    reduction_i = None
+                try:
+                    ignore_i = int(ignore_index)
+                except Exception:
+                    ignore_i = -100
+                if op0_name == "nll_loss2d_forward" and len(op0_inputs) == 3 and op0_out == str(out_name) and reduction_i == 1:
+                    logits_name, tgt_name, w_name = map(str, op0_inputs)
+                    required = {logits_name, tgt_name, w_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        logits_dims = list(arg_specs[logits_name].get("dims") or [])
+                        tgt_dims = list(arg_specs[tgt_name].get("dims") or [])
+                        w_dims = list(arg_specs[w_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(logits_dims) == 4 and len(tgt_dims) == 3 and len(w_dims) == 1 and len(out_dims2) == 0:
+                            n_dim, c_dim, h_dim, w_dim = map(int, logits_dims)
+                            ok = (
+                                n_dim > 0
+                                and c_dim > 1
+                                and h_dim > 0
+                                and w_dim > 0
+                                and tgt_dims == [n_dim, h_dim, w_dim]
+                                and w_dims == [c_dim]
+                                and str(arg_specs[logits_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[tgt_name].get("memref_elem_ty") or "") == "i64"
+                                and str(arg_specs[w_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                nll_loss2d_forward_v1 = {
+                                    "self": logits_name,
+                                    "target": tgt_name,
+                                    "weight": w_name,
+                                    "out": op0_out,
+                                    "N": int(n_dim),
+                                    "C": int(c_dim),
+                                    "H": int(h_dim),
+                                    "W": int(w_dim),
+                                    "reduction": int(reduction_i),
+                                    "ignore_index": int(ignore_i),
                                 }
 
         if row_std_axis1_v1 is None and intent_name == "std2d":
@@ -10728,6 +10832,230 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        %cTotF = arith.constant {_as_f32_const(total)} : f32")
         lines.append(f"        %mean = arith.divf %sum0, %cTotF{fm} : f32")
         lines.append(f"        memref.store %mean, {arg_ssa[out_name2]}[%c0] : {out_memref}")
+        lines.append("      }")
+    elif nll_loss_forward_v1 is not None:
+        kernel_kind = "nll_loss_forward_v1"
+        n_dim = int(nll_loss_forward_v1["N"])
+        c_dim = int(nll_loss_forward_v1["C"])
+        ignore_i = int(nll_loss_forward_v1.get("ignore_index") or -100)
+        if n_dim <= 0 or c_dim <= 1:
+            raise RuntimeError(f"{kernel_kind} expects N>0 and C>1, got N={n_dim} C={c_dim}")
+
+        logits_name = str(nll_loss_forward_v1["self"])
+        tgt_name = str(nll_loss_forward_v1["target"])
+        w_name = str(nll_loss_forward_v1["weight"])
+        out_name2 = str(nll_loss_forward_v1["out"])
+        logits_memref = str(arg_specs[logits_name]["memref"])
+        tgt_memref = str(arg_specs[tgt_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [1, 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cC = arith.constant {int(c_dim)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append(
+            "      %partial_loss, %partial_w = scf.for %i = %tid to %cN step %bdim "
+            "iter_args(%acc_loss = %c0f, %acc_w = %c0f) -> (f32, f32) {"
+        )
+        lines.append(f"        %t = memref.load {arg_ssa[tgt_name]}[%i] : {tgt_memref}")
+        lines.append(f"        %cIgnore = arith.constant {int(ignore_i)} : i64")
+        lines.append("        %valid = arith.cmpi ne, %t, %cIgnore : i64")
+        lines.append("        %loss_i, %w_i = scf.if %valid -> (f32, f32) {")
+        lines.append("          %c0_i64 = arith.constant 0 : i64")
+        lines.append(f"          %cMax_i64 = arith.constant {int(c_dim - 1)} : i64")
+        lines.append("          %t0 = arith.maxsi %t, %c0_i64 : i64")
+        lines.append("          %t1 = arith.minsi %t0, %cMax_i64 : i64")
+        lines.append("          %t_idx = arith.index_cast %t1 : i64 to index")
+        lines.append(f"          %w = memref.load {arg_ssa[w_name]}[%t_idx] : {w_memref}")
+        lines.append("          %base = arith.muli %i, %cC : index")
+        lines.append("          %log_idx = arith.addi %base, %t_idx : index")
+        lines.append(f"          %log = memref.load {arg_ssa[logits_name]}[%log_idx] : {logits_memref}")
+        lines.append(f"          %neg = arith.negf %log{fm} : f32")
+        lines.append(f"          %lw = arith.mulf %neg, %w{fm} : f32")
+        lines.append("          scf.yield %lw, %w : f32, f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f, %c0f : f32, f32")
+        lines.append("        }")
+        lines.append(f"        %acc_loss_next = arith.addf %acc_loss, %loss_i{fm} : f32")
+        lines.append(f"        %acc_w_next = arith.addf %acc_w, %w_i{fm} : f32")
+        lines.append("        scf.yield %acc_loss_next, %acc_w_next : f32, f32")
+        lines.append("      }")
+
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        # Reduce loss sum.
+        lines.append("      memref.store %partial_loss, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("      gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_loss_{stride}"
+            pS = f"%pS_loss_{stride}"
+            tid2 = f"%tid_loss_{stride}"
+            a = f"%a_loss_{stride}"
+            b = f"%b_loss_{stride}"
+            s = f"%s_loss_{stride}"
+            lines.append(f"      {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"      {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"      scf.if {pS} {{")
+            lines.append(f"        {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"        {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"        {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"        {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"        memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
+
+        lines.append("      %sum_loss = memref.load %sh[%c0] : memref<256xf32, 3>")
+
+        # Reduce weight sum (reuse shared buffer).
+        lines.append("      memref.store %partial_w, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("      gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_w_{stride}"
+            pS = f"%pS_w_{stride}"
+            tid2 = f"%tid_w_{stride}"
+            a = f"%a_w_{stride}"
+            b = f"%b_w_{stride}"
+            s = f"%s_w_{stride}"
+            lines.append(f"      {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"      {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"      scf.if {pS} {{")
+            lines.append(f"        {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"        {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"        {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"        {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"        memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
+
+        lines.append("      %sum_w = memref.load %sh[%c0] : memref<256xf32, 3>")
+        lines.append("      %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      scf.if %is0 {")
+        lines.append(f"        %cEps = arith.constant {_as_f32_const(1.0e-12)} : f32")
+        lines.append(f"        %den = arith.maximumf %sum_w, %cEps{fm} : f32")
+        lines.append(f"        %outv = arith.divf %sum_loss, %den{fm} : f32")
+        lines.append(f"        memref.store %outv, {arg_ssa[out_name2]}[%c0] : {out_memref}")
+        lines.append("      }")
+    elif nll_loss2d_forward_v1 is not None:
+        kernel_kind = "nll_loss2d_forward_v1"
+        n_dim = int(nll_loss2d_forward_v1["N"])
+        c_dim = int(nll_loss2d_forward_v1["C"])
+        h_dim = int(nll_loss2d_forward_v1["H"])
+        w_dim = int(nll_loss2d_forward_v1["W"])
+        ignore_i = int(nll_loss2d_forward_v1.get("ignore_index") or -100)
+        if n_dim <= 0 or c_dim <= 1 or h_dim <= 0 or w_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects N>0 C>1 H>0 W>0, got N={n_dim} C={c_dim} H={h_dim} W={w_dim}")
+
+        logits_name = str(nll_loss2d_forward_v1["self"])
+        tgt_name = str(nll_loss2d_forward_v1["target"])
+        w_name = str(nll_loss2d_forward_v1["weight"])
+        out_name2 = str(nll_loss2d_forward_v1["out"])
+        logits_memref = str(arg_specs[logits_name]["memref"])
+        tgt_memref = str(arg_specs[tgt_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        total = int(n_dim * h_dim * w_dim)
+        launch_override = {"block": [256, 1, 1], "grid": [1, 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %c_total = arith.constant {int(total)} : index")
+        lines.append(f"      %cC = arith.constant {int(c_dim)} : index")
+        lines.append(f"      %cHW = arith.constant {int(h_dim * w_dim)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append(
+            "      %partial_loss, %partial_w = scf.for %lin = %tid to %c_total step %bdim "
+            "iter_args(%acc_loss = %c0f, %acc_w = %c0f) -> (f32, f32) {"
+        )
+        lines.append(f"        %t = memref.load {arg_ssa[tgt_name]}[%lin] : {tgt_memref}")
+        lines.append(f"        %cIgnore = arith.constant {int(ignore_i)} : i64")
+        lines.append("        %valid = arith.cmpi ne, %t, %cIgnore : i64")
+        lines.append("        %loss_i, %w_i = scf.if %valid -> (f32, f32) {")
+        lines.append("          %c0_i64 = arith.constant 0 : i64")
+        lines.append(f"          %cMax_i64 = arith.constant {int(c_dim - 1)} : i64")
+        lines.append("          %t0 = arith.maxsi %t, %c0_i64 : i64")
+        lines.append("          %t1 = arith.minsi %t0, %cMax_i64 : i64")
+        lines.append("          %t_idx = arith.index_cast %t1 : i64 to index")
+        lines.append(f"          %w = memref.load {arg_ssa[w_name]}[%t_idx] : {w_memref}")
+        lines.append("          %n = arith.divui %lin, %cHW : index")
+        lines.append("          %rem = arith.remui %lin, %cHW : index")
+        lines.append("          %nC = arith.muli %n, %cC : index")
+        lines.append("          %nc = arith.addi %nC, %t_idx : index")
+        lines.append("          %base = arith.muli %nc, %cHW : index")
+        lines.append("          %log_idx = arith.addi %base, %rem : index")
+        lines.append(f"          %log = memref.load {arg_ssa[logits_name]}[%log_idx] : {logits_memref}")
+        lines.append(f"          %neg = arith.negf %log{fm} : f32")
+        lines.append(f"          %lw = arith.mulf %neg, %w{fm} : f32")
+        lines.append("          scf.yield %lw, %w : f32, f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f, %c0f : f32, f32")
+        lines.append("        }")
+        lines.append(f"        %acc_loss_next = arith.addf %acc_loss, %loss_i{fm} : f32")
+        lines.append(f"        %acc_w_next = arith.addf %acc_w, %w_i{fm} : f32")
+        lines.append("        scf.yield %acc_loss_next, %acc_w_next : f32, f32")
+        lines.append("      }")
+
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        # Reduce loss sum.
+        lines.append("      memref.store %partial_loss, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("      gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_loss_{stride}"
+            pS = f"%pS_loss_{stride}"
+            tid2 = f"%tid_loss_{stride}"
+            a = f"%a_loss_{stride}"
+            b = f"%b_loss_{stride}"
+            s = f"%s_loss_{stride}"
+            lines.append(f"      {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"      {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"      scf.if {pS} {{")
+            lines.append(f"        {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"        {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"        {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"        {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"        memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
+
+        lines.append("      %sum_loss = memref.load %sh[%c0] : memref<256xf32, 3>")
+
+        # Reduce weight sum (reuse shared buffer).
+        lines.append("      memref.store %partial_w, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("      gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_w_{stride}"
+            pS = f"%pS_w_{stride}"
+            tid2 = f"%tid_w_{stride}"
+            a = f"%a_w_{stride}"
+            b = f"%b_w_{stride}"
+            s = f"%s_w_{stride}"
+            lines.append(f"      {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"      {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"      scf.if {pS} {{")
+            lines.append(f"        {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"        {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"        {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"        {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"        memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
+
+        lines.append("      %sum_w = memref.load %sh[%c0] : memref<256xf32, 3>")
+        lines.append("      %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      scf.if %is0 {")
+        lines.append(f"        %cEps = arith.constant {_as_f32_const(1.0e-12)} : f32")
+        lines.append(f"        %den = arith.maximumf %sum_w, %cEps{fm} : f32")
+        lines.append(f"        %outv = arith.divf %sum_loss, %den{fm} : f32")
+        lines.append(f"        memref.store %outv, {arg_ssa[out_name2]}[%c0] : {out_memref}")
         lines.append("      }")
     elif row_std_axis1_v1 is not None or row_var_axis1_v1 is not None:
         is_std = row_std_axis1_v1 is not None
