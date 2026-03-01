@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -229,6 +231,15 @@ def _polar2d_intent() -> IntentFunction:
             "outputs": ["out"],
         }
     )
+
+
+def test_cuda_real_mlir_support_report_has_no_unsupported_kernels() -> None:
+    root = Path(__file__).resolve().parents[2]
+    report_path = root / "workflow" / "flaggems" / "state" / "cuda_real_mlir_support_report.json"
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert int(payload.get("kernels_total") or 0) > 0
+    assert int(payload.get("kernels_supported") or 0) == int(payload.get("kernels_total") or 0)
+    assert int(payload.get("kernels_unsupported") or 0) == 0
 
 
 def _diag_embed2d_intent() -> IntentFunction:
