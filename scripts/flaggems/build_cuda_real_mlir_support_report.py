@@ -162,6 +162,10 @@ SUPPORTED_OPS = {
     "reduce_any",
     "argmax",
     "argmin",
+    "cumsum",
+    "cummax",
+    "cummin",
+    "kron",
 }
 
 
@@ -701,6 +705,93 @@ def _check_argmin(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     return []
 
 
+def _check_cumsum(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["cumsum_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    if axis != 1:
+        return ["cumsum_axis_not_1"]
+    x_shape = _tensor_shape(intent, ins[0])
+    if x_shape and len(x_shape) != 2:
+        return ["cumsum_requires_rank2_input"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 2:
+            return ["cumsum_requires_rank2_output"]
+    dt = _tensor_dtype(intent, ins[0])
+    if dt and dt != "f32":
+        return ["cumsum_requires_f32"]
+    return []
+
+
+def _check_cummax(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["cummax_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    if axis != 0:
+        return ["cummax_axis_not_0"]
+    x_shape = _tensor_shape(intent, ins[0])
+    if x_shape and len(x_shape) != 1:
+        return ["cummax_requires_rank1_input"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 1:
+            return ["cummax_requires_rank1_output"]
+    dt = _tensor_dtype(intent, ins[0])
+    if dt and dt != "f32":
+        return ["cummax_requires_f32"]
+    return []
+
+
+def _check_cummin(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["cummin_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    if axis != 0:
+        return ["cummin_axis_not_0"]
+    x_shape = _tensor_shape(intent, ins[0])
+    if x_shape and len(x_shape) != 1:
+        return ["cummin_requires_rank1_input"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 1:
+            return ["cummin_requires_rank1_output"]
+    dt = _tensor_dtype(intent, ins[0])
+    if dt and dt != "f32":
+        return ["cummin_requires_f32"]
+    return []
+
+
+def _check_kron(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 2:
+        return ["kron_invalid_inputs"]
+    a_shape = _tensor_shape(intent, ins[0])
+    b_shape = _tensor_shape(intent, ins[1])
+    if a_shape and len(a_shape) != 2:
+        return ["kron_requires_rank2_input_a"]
+    if b_shape and len(b_shape) != 2:
+        return ["kron_requires_rank2_input_b"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 2:
+            return ["kron_requires_rank2_output"]
+    dt = _tensor_dtype(intent, ins[0])
+    if dt and dt != "f32":
+        return ["kron_requires_f32"]
+    return []
+
+
 def _check_reduce_any(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
     if len(ins) != 1:
@@ -822,6 +913,14 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_argmax(intent, o))
         elif name == "argmin":
             reasons.extend(_check_argmin(intent, o))
+        elif name == "cumsum":
+            reasons.extend(_check_cumsum(intent, o))
+        elif name == "cummax":
+            reasons.extend(_check_cummax(intent, o))
+        elif name == "cummin":
+            reasons.extend(_check_cummin(intent, o))
+        elif name == "kron":
+            reasons.extend(_check_kron(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

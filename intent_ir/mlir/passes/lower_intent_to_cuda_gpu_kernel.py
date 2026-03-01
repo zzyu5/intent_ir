@@ -1695,6 +1695,11 @@ def lower_intent_to_cuda_gpu_kernel(
     attn2d_v1: dict[str, Any] | None = None
     attn_fwd_v1: dict[str, Any] | None = None
     upsample_bicubic2d_aa_v1: dict[str, Any] | None = None
+    kron2d_v1: dict[str, Any] | None = None
+    cumsum2d_v1: dict[str, Any] | None = None
+    normed_cumsum2d_v1: dict[str, Any] | None = None
+    cummax1d_v1: dict[str, Any] | None = None
+    cummin1d_v1: dict[str, Any] | None = None
 
     ops_list = [op for op in list(intent.ops or []) if op is not None]
     if ops_list:
@@ -2403,6 +2408,195 @@ def lower_intent_to_cuda_gpu_kernel(
                                 "N": int(n_dim),
                                 "n_rounds": 10,
                             }
+
+        # Wave16 (coverage_batches backfill): scan + kron (static outputs).
+        if kron2d_v1 is None and intent_name == "kron2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                if op0_name == "kron" and len(op0_inputs) == 2 and op0_out == str(out_name):
+                    a_name, b_name = str(op0_inputs[0]), str(op0_inputs[1])
+                    required = {a_name, b_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        a_dims = list(arg_specs[a_name].get("dims") or [])
+                        b_dims = list(arg_specs[b_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(a_dims) == 2 and len(b_dims) == 2 and len(out_dims2) == 2 and out_rank == 2:
+                            m_dim, n_dim = map(int, a_dims)
+                            p_dim, q_dim = map(int, b_dims)
+                            mp_dim, nq_dim = map(int, out_dims2)
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and p_dim > 0
+                                and q_dim > 0
+                                and mp_dim == m_dim * p_dim
+                                and nq_dim == n_dim * q_dim
+                                and str(arg_specs[a_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[b_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                kron2d_v1 = {
+                                    "A": a_name,
+                                    "B": b_name,
+                                    "out": op0_out,
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "P": int(p_dim),
+                                    "Q": int(q_dim),
+                                    "MP": int(mp_dim),
+                                    "NQ": int(nq_dim),
+                                }
+
+        if cumsum2d_v1 is None and intent_name == "cumsum2d":
+            required = {"inp", str(out_name)}
+            if required.issubset(set(arg_specs.keys())):
+                in_dims = list(arg_specs["inp"].get("dims") or [])
+                out_dims2 = list(arg_specs[str(out_name)].get("dims") or [])
+                if len(in_dims) == 2 and out_dims2 == in_dims and out_rank == 2:
+                    m_dim, n_dim = map(int, in_dims)
+                    if (
+                        m_dim > 0
+                        and n_dim > 0
+                        and str(arg_specs["inp"].get("memref_elem_ty") or "") == "f32"
+                        and str(arg_specs[str(out_name)].get("memref_elem_ty") or "") == "f32"
+                    ):
+                        axis_ok = False
+                        for op in ops_list:
+                            if str(getattr(op, "op", "")).strip() != "cumsum":
+                                continue
+                            attrs = dict(getattr(op, "attrs", {}) or {})
+                            axis = attrs.get("axis")
+                            try:
+                                axis_i = int(axis) if axis is not None else None
+                            except Exception:
+                                axis_i = None
+                            axis_ok = axis_i == 1
+                        if axis_ok:
+                            cumsum2d_v1 = {"inp": "inp", "out": str(out_name), "M": int(m_dim), "N": int(n_dim)}
+
+        if normed_cumsum2d_v1 is None and intent_name == "normed_cumsum2d":
+            required = {"inp", "EPS", str(out_name)}
+            if required.issubset(set(arg_specs.keys())):
+                in_dims = list(arg_specs["inp"].get("dims") or [])
+                out_dims2 = list(arg_specs[str(out_name)].get("dims") or [])
+                if len(in_dims) == 2 and out_dims2 == in_dims and out_rank == 2:
+                    m_dim, n_dim = map(int, in_dims)
+                    if (
+                        m_dim > 0
+                        and n_dim > 0
+                        and str(arg_specs["inp"].get("memref_elem_ty") or "") == "f32"
+                        and str(arg_specs["EPS"].get("memref_elem_ty") or "") == "f32"
+                        and bool(arg_specs["EPS"].get("scalar"))
+                        and str(arg_specs[str(out_name)].get("memref_elem_ty") or "") == "f32"
+                    ):
+                        cumsum_out = None
+                        denom_out = None
+                        add_out = None
+                        bc_out = None
+                        for op in ops_list:
+                            name = str(getattr(op, "op", "")).strip()
+                            out2 = str(getattr(op, "output", "")).strip()
+                            ins = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+                            attrs = dict(getattr(op, "attrs", {}) or {})
+                            if name == "cumsum" and len(ins) == 1 and ins[0] == "inp":
+                                axis = attrs.get("axis")
+                                try:
+                                    axis_i = int(axis) if axis is not None else None
+                                except Exception:
+                                    axis_i = None
+                                if axis_i == 1:
+                                    cumsum_out = str(out2)
+                            elif name == "reduce_sum" and len(ins) == 1 and ins[0] == "inp":
+                                dims = attrs.get("dims")
+                                dims_list = list(dims) if isinstance(dims, list) else []
+                                keepdims = bool(attrs.get("keepdims", False))
+                                if dims_list == [1] and keepdims:
+                                    denom_out = str(out2)
+                            elif name == "add" and len(ins) == 2 and "EPS" in set(ins):
+                                other = [x for x in ins if x != "EPS"]
+                                if len(other) == 1 and denom_out and other[0] == denom_out:
+                                    add_out = str(out2)
+                            elif name == "broadcast_in_dim" and len(ins) == 1:
+                                bcast_dims = attrs.get("broadcast_dims")
+                                out_shape = attrs.get("out_shape")
+                                bcast_dims_list = list(bcast_dims) if isinstance(bcast_dims, list) else []
+                                out_shape_list = list(out_shape) if isinstance(out_shape, list) else []
+                                if add_out and ins[0] == add_out and bcast_dims_list == [0, 1] and out_shape_list == ["M", "N"]:
+                                    bc_out = str(out2)
+                        if cumsum_out and bc_out:
+                            for op in ops_list:
+                                name = str(getattr(op, "op", "")).strip()
+                                out2 = str(getattr(op, "output", "")).strip()
+                                ins = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+                                if name == "div" and len(ins) == 2 and out2 == str(out_name):
+                                    if set(ins) == {str(cumsum_out), str(bc_out)}:
+                                        normed_cumsum2d_v1 = {
+                                            "inp": "inp",
+                                            "eps": "EPS",
+                                            "out": str(out_name),
+                                            "M": int(m_dim),
+                                            "N": int(n_dim),
+                                        }
+
+        if cummax1d_v1 is None and intent_name == "cummax1d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs = dict(getattr(op0, "attrs", {}) or {})
+                axis = attrs.get("axis")
+                try:
+                    axis_i = int(axis) if axis is not None else None
+                except Exception:
+                    axis_i = None
+                if op0_name == "cummax" and len(op0_inputs) == 1 and op0_out == str(out_name) and axis_i == 0:
+                    x_name = str(op0_inputs[0])
+                    required = {x_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        x_dims = list(arg_specs[x_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(x_dims) == 1 and out_dims2 == x_dims and out_rank == 1:
+                            n_dim = int(x_dims[0])
+                            ok = (
+                                n_dim > 0
+                                and str(arg_specs[x_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                cummax1d_v1 = {"x": x_name, "out": op0_out, "N": int(n_dim)}
+
+        if cummin1d_v1 is None and intent_name == "cummin1d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs = dict(getattr(op0, "attrs", {}) or {})
+                axis = attrs.get("axis")
+                try:
+                    axis_i = int(axis) if axis is not None else None
+                except Exception:
+                    axis_i = None
+                if op0_name == "cummin" and len(op0_inputs) == 1 and op0_out == str(out_name) and axis_i == 0:
+                    x_name = str(op0_inputs[0])
+                    required = {x_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        x_dims = list(arg_specs[x_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(x_dims) == 1 and out_dims2 == x_dims and out_rank == 1:
+                            n_dim = int(x_dims[0])
+                            ok = (
+                                n_dim > 0
+                                and str(arg_specs[x_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                cummin1d_v1 = {"x": x_name, "out": op0_out, "N": int(n_dim)}
 
         # Pattern: matmul family (Triton-native perf/coverage kernels).
         #
@@ -8202,6 +8396,415 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          scf.yield %c0f : f32")
         lines.append("        }")
         lines.append(f"        memref.store %v, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif kron2d_v1 is not None:
+        kernel_kind = "kron2d_v1"
+        m_dim = int(kron2d_v1["M"])
+        n_dim = int(kron2d_v1["N"])
+        p_dim = int(kron2d_v1["P"])
+        q_dim = int(kron2d_v1["Q"])
+        mp_dim = int(kron2d_v1["MP"])
+        nq_dim = int(kron2d_v1["NQ"])
+        if m_dim <= 0 or n_dim <= 0 or p_dim <= 0 or q_dim <= 0:
+            raise RuntimeError(f"kron2d expects positive dims, got M={m_dim} N={n_dim} P={p_dim} Q={q_dim}")
+        if mp_dim != m_dim * p_dim or nq_dim != n_dim * q_dim:
+            raise RuntimeError(
+                "kron2d output dims mismatch: "
+                f"M={m_dim} N={n_dim} P={p_dim} Q={q_dim} MP={mp_dim} NQ={nq_dim}"
+            )
+
+        a_name = str(kron2d_v1["A"])
+        b_name = str(kron2d_v1["B"])
+        out_name2 = str(kron2d_v1["out"])
+        a_memref = str(arg_specs[a_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        grid_x = int((int(out_total) + 255) // 256)
+        launch_override = {"block": [256, 1, 1], "grid": [int(grid_x), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+        lines.append("      %pred = arith.cmpi ult, %lin, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"        %cP = arith.constant {int(p_dim)} : index")
+        lines.append(f"        %cQ = arith.constant {int(q_dim)} : index")
+        lines.append(f"        %cNQ = arith.constant {int(nq_dim)} : index")
+        lines.append("        %out_col = arith.remui %lin, %cNQ : index")
+        lines.append("        %out_row = arith.divui %lin, %cNQ : index")
+        lines.append("        %p = arith.remui %out_row, %cP : index")
+        lines.append("        %i = arith.divui %out_row, %cP : index")
+        lines.append("        %q = arith.remui %out_col, %cQ : index")
+        lines.append("        %j = arith.divui %out_col, %cQ : index")
+        lines.append("        %iN = arith.muli %i, %cN : index")
+        lines.append("        %a_idx = arith.addi %iN, %j : index")
+        lines.append("        %pQ = arith.muli %p, %cQ : index")
+        lines.append("        %b_idx = arith.addi %pQ, %q : index")
+        lines.append(f"        %a = memref.load {arg_ssa[a_name]}[%a_idx] : {a_memref}")
+        lines.append(f"        %b = memref.load {arg_ssa[b_name]}[%b_idx] : {b_memref}")
+        lines.append(f"        %o = arith.mulf %a, %b{fm} : f32")
+        lines.append(f"        memref.store %o, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif cumsum2d_v1 is not None:
+        kernel_kind = "cumsum2d_axis1_v1"
+        m_dim = int(cumsum2d_v1["M"])
+        n_dim = int(cumsum2d_v1["N"])
+        if m_dim <= 0 or n_dim <= 0:
+            raise RuntimeError(f"cumsum2d expects positive dims, got M={m_dim} N={n_dim}")
+        if int(m_dim * n_dim) != int(out_total):
+            raise RuntimeError(f"cumsum2d expects out_total==M*N, got out_total={int(out_total)} M={m_dim} N={n_dim}")
+
+        in_name = str(cumsum2d_v1["inp"])
+        out_name2 = str(cumsum2d_v1["out"])
+        in_memref = str(arg_specs[in_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        # One row per block, warp-prefix scan per 256-column tile.
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c31 = arith.constant 31 : index")
+        lines.append("      %c255 = arith.constant 255 : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1_i32 = arith.constant 1 : i32")
+        lines.append("      %c2_i32 = arith.constant 2 : i32")
+        lines.append("      %c4_i32 = arith.constant 4 : i32")
+        lines.append("      %c8_i32 = arith.constant 8 : i32")
+        lines.append("      %c16_i32 = arith.constant 16 : i32")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("      %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("      %cWarps = arith.constant 8 : index")
+        lines.append("      %cCarry = arith.constant 16 : index")
+        lines.append("      %c256 = arith.constant 256 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN : index")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        %is_tid0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is_tid0 {")
+        lines.append("          memref.store %c0f, %sh[%cCarry] : memref<256xf32, 3>")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+
+        lines.append("        scf.for %t = %c0 to %cN step %c256 {")
+        lines.append("          %col = arith.addi %t, %tid : index")
+        lines.append("          %in_range = arith.cmpi ult, %col, %cN : index")
+        lines.append("          %idx = arith.addi %base, %col : index")
+        lines.append("          %x = scf.if %in_range -> (f32) {")
+        lines.append(f"            %xv = memref.load {arg_ssa[in_name]}[%idx] : {in_memref}")
+        lines.append("            scf.yield %xv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lines.append("          %carry0 = memref.load %sh[%cCarry] : memref<256xf32, 3>")
+
+        # Warp inclusive scan (shuffle up).
+        lines.append("          %s1, %ok1 = gpu.shuffle up %x, %c1_i32, %c32_i32 : f32")
+        lines.append(f"          %a1 = arith.addf %x, %s1{fm} : f32")
+        lines.append("          %v1 = arith.select %ok1, %a1, %x : f32")
+        lines.append("          %s2, %ok2 = gpu.shuffle up %v1, %c2_i32, %c32_i32 : f32")
+        lines.append(f"          %a2 = arith.addf %v1, %s2{fm} : f32")
+        lines.append("          %v2 = arith.select %ok2, %a2, %v1 : f32")
+        lines.append("          %s4, %ok4 = gpu.shuffle up %v2, %c4_i32, %c32_i32 : f32")
+        lines.append(f"          %a4 = arith.addf %v2, %s4{fm} : f32")
+        lines.append("          %v4 = arith.select %ok4, %a4, %v2 : f32")
+        lines.append("          %s8, %ok8 = gpu.shuffle up %v4, %c8_i32, %c32_i32 : f32")
+        lines.append(f"          %a8 = arith.addf %v4, %s8{fm} : f32")
+        lines.append("          %v8 = arith.select %ok8, %a8, %v4 : f32")
+        lines.append("          %s16, %ok16 = gpu.shuffle up %v8, %c16_i32, %c32_i32 : f32")
+        lines.append(f"          %a16 = arith.addf %v8, %s16{fm} : f32")
+        lines.append("          %v16 = arith.select %ok16, %a16, %v8 : f32")
+
+        # Store warp totals (lane 31) into shared[warp].
+        lines.append("          %is_lane31 = arith.cmpi eq, %lane, %c31 : index")
+        lines.append("          scf.if %is_lane31 {")
+        lines.append("            memref.store %v16, %sh[%warp] : memref<256xf32, 3>")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+
+        # Warp0: scan warp totals and store warp offsets into shared[cWarps + lane].
+        lines.append("          %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("          scf.if %is_warp0 {")
+        lines.append("            %lane_in = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("            %wv0 = scf.if %lane_in -> (f32) {")
+        lines.append("              %wt = memref.load %sh[%lane] : memref<256xf32, 3>")
+        lines.append("              scf.yield %wt : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append("            %ws1, %wok1 = gpu.shuffle up %wv0, %c1_i32, %c32_i32 : f32")
+        lines.append(f"            %wa1 = arith.addf %wv0, %ws1{fm} : f32")
+        lines.append("            %wv1 = arith.select %wok1, %wa1, %wv0 : f32")
+        lines.append("            %ws2, %wok2 = gpu.shuffle up %wv1, %c2_i32, %c32_i32 : f32")
+        lines.append(f"            %wa2 = arith.addf %wv1, %ws2{fm} : f32")
+        lines.append("            %wv2 = arith.select %wok2, %wa2, %wv1 : f32")
+        lines.append("            %ws4, %wok4 = gpu.shuffle up %wv2, %c4_i32, %c32_i32 : f32")
+        lines.append(f"            %wa4 = arith.addf %wv2, %ws4{fm} : f32")
+        lines.append("            %wv4 = arith.select %wok4, %wa4, %wv2 : f32")
+        lines.append("            %ws8, %wok8 = gpu.shuffle up %wv4, %c8_i32, %c32_i32 : f32")
+        lines.append(f"            %wa8 = arith.addf %wv4, %ws8{fm} : f32")
+        lines.append("            %wv8 = arith.select %wok8, %wa8, %wv4 : f32")
+        lines.append("            %ws16, %wok16 = gpu.shuffle up %wv8, %c16_i32, %c32_i32 : f32")
+        lines.append(f"            %wa16 = arith.addf %wv8, %ws16{fm} : f32")
+        lines.append("            %wv16 = arith.select %wok16, %wa16, %wv8 : f32")
+        lines.append("            %wprev, %wok_prev = gpu.shuffle up %wv16, %c1_i32, %c32_i32 : f32")
+        lines.append("            %woff = arith.select %wok_prev, %wprev, %c0f : f32")
+        lines.append("            scf.if %lane_in {")
+        lines.append("              %off_idx = arith.addi %cWarps, %lane : index")
+        lines.append("              memref.store %woff, %sh[%off_idx] : memref<256xf32, 3>")
+        lines.append("            }")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+
+        lines.append("          %off_idx2 = arith.addi %cWarps, %warp : index")
+        lines.append("          %woff2 = memref.load %sh[%off_idx2] : memref<256xf32, 3>")
+        lines.append(f"          %block_scan = arith.addf %v16, %woff2{fm} : f32")
+        lines.append(f"          %full_scan = arith.addf %block_scan, %carry0{fm} : f32")
+        lines.append("          scf.if %in_range {")
+        lines.append(f"            memref.store %full_scan, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("          }")
+        lines.append("          %is_last = arith.cmpi eq, %tid, %c255 : index")
+        lines.append("          scf.if %is_last {")
+        lines.append("            memref.store %full_scan, %sh[%cCarry] : memref<256xf32, 3>")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("        }")
+        lines.append("      }")
+    elif normed_cumsum2d_v1 is not None:
+        kernel_kind = "normed_cumsum2d_axis1_v1"
+        m_dim = int(normed_cumsum2d_v1["M"])
+        n_dim = int(normed_cumsum2d_v1["N"])
+        if m_dim <= 0 or n_dim <= 0:
+            raise RuntimeError(f"normed_cumsum2d expects positive dims, got M={m_dim} N={n_dim}")
+        if int(m_dim * n_dim) != int(out_total):
+            raise RuntimeError(
+                f"normed_cumsum2d expects out_total==M*N, got out_total={int(out_total)} M={m_dim} N={n_dim}"
+            )
+
+        in_name = str(normed_cumsum2d_v1["inp"])
+        eps_name = str(normed_cumsum2d_v1["eps"])
+        out_name2 = str(normed_cumsum2d_v1["out"])
+        in_memref = str(arg_specs[in_name]["memref"])
+        eps_memref = str(arg_specs[eps_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        # One row per block, (prefix-sum)/(row-sum+eps).
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c31 = arith.constant 31 : index")
+        lines.append("      %c255 = arith.constant 255 : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1_i32 = arith.constant 1 : i32")
+        lines.append("      %c2_i32 = arith.constant 2 : i32")
+        lines.append("      %c4_i32 = arith.constant 4 : i32")
+        lines.append("      %c8_i32 = arith.constant 8 : i32")
+        lines.append("      %c16_i32 = arith.constant 16 : i32")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("      %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("      %cWarps = arith.constant 8 : index")
+        lines.append("      %cCarry = arith.constant 16 : index")
+        lines.append("      %cDenom = arith.constant 17 : index")
+        lines.append("      %c256 = arith.constant 256 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN : index")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        %eps_v = memref.load {0}[%c0] : {1}".format(arg_ssa[eps_name], eps_memref))
+        # row sum (denom) reduction
+        lines.append("        %partial = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %idx = arith.addi %base, %j : index")
+        lines.append(f"          %x = memref.load {arg_ssa[in_name]}[%idx] : {in_memref}")
+        lines.append(f"          %acc_next = arith.addf %acc, %x{fm} : f32")
+        lines.append("          scf.yield %acc_next : f32")
+        lines.append("        }")
+        lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
+        lines.append("        gpu.barrier")
+        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+            cS = f"%cS_nc_{stride}"
+            pS = f"%pS_nc_{stride}"
+            tid2 = f"%tid_nc_{stride}"
+            a = f"%a_nc_{stride}"
+            b = f"%b_nc_{stride}"
+            s = f"%s_nc_{stride}"
+            lines.append(f"        {cS} = arith.constant {int(stride)} : index")
+            lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
+            lines.append(f"        scf.if {pS} {{")
+            lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        %sum0 = memref.load %sh[%c0] : memref<256xf32, 3>")
+        lines.append(f"        %denom0 = arith.addf %sum0, %eps_v{fm} : f32")
+        lines.append("        %is_tid0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is_tid0 {")
+        lines.append("          memref.store %denom0, %sh[%cDenom] : memref<256xf32, 3>")
+        lines.append("          memref.store %c0f, %sh[%cCarry] : memref<256xf32, 3>")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %denom = memref.load %sh[%cDenom] : memref<256xf32, 3>")
+
+        # prefix scan and store normalized output
+        lines.append("        scf.for %t = %c0 to %cN step %c256 {")
+        lines.append("          %col = arith.addi %t, %tid : index")
+        lines.append("          %in_range = arith.cmpi ult, %col, %cN : index")
+        lines.append("          %idx = arith.addi %base, %col : index")
+        lines.append("          %x = scf.if %in_range -> (f32) {")
+        lines.append(f"            %xv = memref.load {arg_ssa[in_name]}[%idx] : {in_memref}")
+        lines.append("            scf.yield %xv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lines.append("          %carry0 = memref.load %sh[%cCarry] : memref<256xf32, 3>")
+
+        lines.append("          %s1, %ok1 = gpu.shuffle up %x, %c1_i32, %c32_i32 : f32")
+        lines.append(f"          %a1 = arith.addf %x, %s1{fm} : f32")
+        lines.append("          %v1 = arith.select %ok1, %a1, %x : f32")
+        lines.append("          %s2, %ok2 = gpu.shuffle up %v1, %c2_i32, %c32_i32 : f32")
+        lines.append(f"          %a2 = arith.addf %v1, %s2{fm} : f32")
+        lines.append("          %v2 = arith.select %ok2, %a2, %v1 : f32")
+        lines.append("          %s4, %ok4 = gpu.shuffle up %v2, %c4_i32, %c32_i32 : f32")
+        lines.append(f"          %a4 = arith.addf %v2, %s4{fm} : f32")
+        lines.append("          %v4 = arith.select %ok4, %a4, %v2 : f32")
+        lines.append("          %s8, %ok8 = gpu.shuffle up %v4, %c8_i32, %c32_i32 : f32")
+        lines.append(f"          %a8 = arith.addf %v4, %s8{fm} : f32")
+        lines.append("          %v8 = arith.select %ok8, %a8, %v4 : f32")
+        lines.append("          %s16, %ok16 = gpu.shuffle up %v8, %c16_i32, %c32_i32 : f32")
+        lines.append(f"          %a16 = arith.addf %v8, %s16{fm} : f32")
+        lines.append("          %v16 = arith.select %ok16, %a16, %v8 : f32")
+
+        lines.append("          %is_lane31 = arith.cmpi eq, %lane, %c31 : index")
+        lines.append("          scf.if %is_lane31 {")
+        lines.append("            memref.store %v16, %sh[%warp] : memref<256xf32, 3>")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("          %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("          scf.if %is_warp0 {")
+        lines.append("            %lane_in = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("            %wv0 = scf.if %lane_in -> (f32) {")
+        lines.append("              %wt = memref.load %sh[%lane] : memref<256xf32, 3>")
+        lines.append("              scf.yield %wt : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append("            %ws1, %wok1 = gpu.shuffle up %wv0, %c1_i32, %c32_i32 : f32")
+        lines.append(f"            %wa1 = arith.addf %wv0, %ws1{fm} : f32")
+        lines.append("            %wv1 = arith.select %wok1, %wa1, %wv0 : f32")
+        lines.append("            %ws2, %wok2 = gpu.shuffle up %wv1, %c2_i32, %c32_i32 : f32")
+        lines.append(f"            %wa2 = arith.addf %wv1, %ws2{fm} : f32")
+        lines.append("            %wv2 = arith.select %wok2, %wa2, %wv1 : f32")
+        lines.append("            %ws4, %wok4 = gpu.shuffle up %wv2, %c4_i32, %c32_i32 : f32")
+        lines.append(f"            %wa4 = arith.addf %wv2, %ws4{fm} : f32")
+        lines.append("            %wv4 = arith.select %wok4, %wa4, %wv2 : f32")
+        lines.append("            %ws8, %wok8 = gpu.shuffle up %wv4, %c8_i32, %c32_i32 : f32")
+        lines.append(f"            %wa8 = arith.addf %wv4, %ws8{fm} : f32")
+        lines.append("            %wv8 = arith.select %wok8, %wa8, %wv4 : f32")
+        lines.append("            %ws16, %wok16 = gpu.shuffle up %wv8, %c16_i32, %c32_i32 : f32")
+        lines.append(f"            %wa16 = arith.addf %wv8, %ws16{fm} : f32")
+        lines.append("            %wv16 = arith.select %wok16, %wa16, %wv8 : f32")
+        lines.append("            %wprev, %wok_prev = gpu.shuffle up %wv16, %c1_i32, %c32_i32 : f32")
+        lines.append("            %woff = arith.select %wok_prev, %wprev, %c0f : f32")
+        lines.append("            scf.if %lane_in {")
+        lines.append("              %off_idx = arith.addi %cWarps, %lane : index")
+        lines.append("              memref.store %woff, %sh[%off_idx] : memref<256xf32, 3>")
+        lines.append("            }")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+
+        lines.append("          %off_idx2 = arith.addi %cWarps, %warp : index")
+        lines.append("          %woff2 = memref.load %sh[%off_idx2] : memref<256xf32, 3>")
+        lines.append(f"          %block_scan = arith.addf %v16, %woff2{fm} : f32")
+        lines.append(f"          %full_scan = arith.addf %block_scan, %carry0{fm} : f32")
+        lines.append(f"          %y = arith.divf %full_scan, %denom{fm} : f32")
+        lines.append("          scf.if %in_range {")
+        lines.append(f"            memref.store %y, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("          }")
+        lines.append("          %is_last = arith.cmpi eq, %tid, %c255 : index")
+        lines.append("          scf.if %is_last {")
+        lines.append("            memref.store %full_scan, %sh[%cCarry] : memref<256xf32, 3>")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("        }")
+        lines.append("      }")
+    elif cummax1d_v1 is not None:
+        kernel_kind = "cummax1d_axis0_v1"
+        n_dim = int(cummax1d_v1["N"])
+        if n_dim <= 0 or int(out_total) != int(n_dim):
+            raise RuntimeError(f"cummax1d expects out_total==N, got out_total={int(out_total)} N={n_dim}")
+
+        x_name = str(cummax1d_v1["x"])
+        out_name2 = str(cummax1d_v1["out"])
+        x_memref = str(arg_specs[x_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [1, 1, 1]}
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      scf.if %is0 {")
+        lines.append(f"        %cN = arith.constant {int(n_dim)} : index")
+        lines.append("        %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("        %final = scf.for %i = %c0 to %cN step %c1 iter_args(%acc = %neg_inf) -> (f32) {")
+        lines.append(f"          %xv = memref.load {arg_ssa[x_name]}[%i] : {x_memref}")
+        lines.append(f"          %next = arith.maximumf %acc, %xv{fm} : f32")
+        lines.append(f"          memref.store %next, {arg_ssa[out_name2]}[%i] : {out_memref}")
+        lines.append("          scf.yield %next : f32")
+        lines.append("        }")
+        lines.append("      }")
+    elif cummin1d_v1 is not None:
+        kernel_kind = "cummin1d_axis0_v1"
+        n_dim = int(cummin1d_v1["N"])
+        if n_dim <= 0 or int(out_total) != int(n_dim):
+            raise RuntimeError(f"cummin1d expects out_total==N, got out_total={int(out_total)} N={n_dim}")
+
+        x_name = str(cummin1d_v1["x"])
+        out_name2 = str(cummin1d_v1["out"])
+        x_memref = str(arg_specs[x_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [1, 1, 1]}
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      scf.if %is0 {")
+        lines.append(f"        %cN = arith.constant {int(n_dim)} : index")
+        lines.append("        %pos_inf = arith.constant 0x7F800000 : f32")
+        lines.append("        %final = scf.for %i = %c0 to %cN step %c1 iter_args(%acc = %pos_inf) -> (f32) {")
+        lines.append(f"          %xv = memref.load {arg_ssa[x_name]}[%i] : {x_memref}")
+        lines.append(f"          %next = arith.minimumf %acc, %xv{fm} : f32")
+        lines.append(f"          memref.store %next, {arg_ssa[out_name2]}[%i] : {out_memref}")
+        lines.append("          scf.yield %next : f32")
+        lines.append("        }")
         lines.append("      }")
     elif upsample_nearest1d_ncl_v1 is not None:
         kernel_kind = "upsample_nearest1d_ncl_v1"
