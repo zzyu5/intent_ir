@@ -1003,6 +1003,70 @@ def _flash_attn_varlen_func_bhsd_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(out)
 
 
+def _conv1d_ncl_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv1d_ncl",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "L"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_PER_G", "K"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OL"], "layout": "row_major"},
+            },
+            "ops": [{"op": "conv1d", "inputs": ["input", "weight", "bias"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _conv2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_PER_G", "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [{"op": "conv2d", "inputs": ["input", "weight", "bias"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _conv3d_ncdhw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv3d_ncdhw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "D", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_PER_G", "KD", "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OD", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [{"op": "conv3d", "inputs": ["input", "weight", "bias"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _conv_depthwise2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv_depthwise2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", 1, "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [{"op": "conv_depthwise2d", "inputs": ["input", "weight", "bias"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -1083,6 +1147,102 @@ def _flash_attn_varlen_func_bhsd_intent() -> IntentFunction:
             {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16, "IS_CAUSAL": 0},
             "sdpa_bhsd_v1",
             "gpu.func @flash_attn_varlen_func_bhsd",
+        ),
+        # wave24
+        (
+            _conv1d_ncl_intent,
+            {
+                "N": 1,
+                "C_IN": 4,
+                "C_OUT": 4,
+                "C_PER_G": 2,
+                "L": 8,
+                "K": 3,
+                "OL": 8,
+                "STRIDE": 1,
+                "PADDING": 1,
+                "DILATION": 1,
+                "GROUPS": 2,
+            },
+            "conv1d_ncl_v1",
+            "scf.for %ic = %c0 to %cC_PER_G",
+        ),
+        (
+            _conv2d_nchw_intent,
+            {
+                "N": 1,
+                "C_IN": 4,
+                "C_OUT": 4,
+                "C_PER_G": 2,
+                "H": 8,
+                "W": 8,
+                "KH": 3,
+                "KW": 3,
+                "OH": 8,
+                "OW": 8,
+                "SH": 1,
+                "SW": 1,
+                "PH": 1,
+                "PW": 1,
+                "DH": 1,
+                "DW": 1,
+                "GROUPS": 2,
+            },
+            "conv2d_nchw_v1",
+            "scf.for %kh_i = %c0 to %cKH",
+        ),
+        (
+            _conv3d_ncdhw_intent,
+            {
+                "N": 1,
+                "C_IN": 4,
+                "C_OUT": 4,
+                "C_PER_G": 2,
+                "D": 8,
+                "H": 8,
+                "W": 8,
+                "KD": 3,
+                "KH": 3,
+                "KW": 3,
+                "OD": 8,
+                "OH": 8,
+                "OW": 8,
+                "SD": 1,
+                "SH": 1,
+                "SW": 1,
+                "PD": 1,
+                "PH": 1,
+                "PW": 1,
+                "DD": 1,
+                "DH": 1,
+                "DW": 1,
+                "GROUPS": 2,
+            },
+            "conv3d_ncdhw_v1",
+            "scf.for %kd_i = %c0 to %cKD",
+        ),
+        (
+            _conv_depthwise2d_nchw_intent,
+            {
+                "N": 1,
+                "C_IN": 4,
+                "C_OUT": 8,
+                "H": 8,
+                "W": 8,
+                "KH": 3,
+                "KW": 3,
+                "OH": 8,
+                "OW": 8,
+                "SH": 1,
+                "SW": 1,
+                "PH": 1,
+                "PW": 1,
+                "DH": 1,
+                "DW": 1,
+                "MULT": 2,
+            },
+            "conv_depthwise2d_nchw_v1",
+            "arith.divui %oc, %cMULT",
         ),
     ],
 )
