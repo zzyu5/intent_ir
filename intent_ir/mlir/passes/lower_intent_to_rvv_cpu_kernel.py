@@ -1314,17 +1314,53 @@ def _emit_softmax_inner_kernel(
     total = int(m_dim * n_dim)
 
     ops = [op for op in list(intent.ops or []) if op is not None]
-    if len(ops) != 7:
-        raise RuntimeError(f"rvv cpu-loops v1 softmax_inner expects 7 ops, got {len(ops)}")
-    op0 = ops[0]
-    op0_name = str(getattr(op0, "op", "")).strip()
-    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
-    op0_attrs = dict(getattr(op0, "attrs", {}) or {})
-    dims = op0_attrs.get("dims")
-    dims_list = list(dims) if isinstance(dims, list) else []
-    if op0_name != "reduce_max" or dims_list != [1] or len(op0_ins) != 1:
-        raise RuntimeError(f"rvv cpu-loops v1 softmax_inner unsupported reduce_max: dims={dims_list} inputs={op0_ins}")
-    in_name = str(op0_ins[0])
+    if not ops:
+        raise RuntimeError("rvv cpu-loops v1 softmax_inner requires non-empty ops")
+
+    in_name = ""
+    softmax_ops = [op for op in ops if str(getattr(op, "op", "")).strip() == "softmax"]
+    if softmax_ops:
+        op0 = softmax_ops[0]
+        ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+        axis = dict(getattr(op0, "attrs", {}) or {}).get("axis")
+        try:
+            axis_i = int(axis)
+        except Exception:
+            axis_i = None
+        if axis_i != 1 or len(ins) != 1:
+            raise RuntimeError(f"rvv cpu-loops v1 softmax_inner unsupported softmax: axis={axis!r} inputs={ins}")
+        in_name = str(ins[0])
+    else:
+        reduce_max_ops = [op for op in ops if str(getattr(op, "op", "")).strip() == "reduce_max"]
+        if not reduce_max_ops:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 softmax_inner expects reduce_max or softmax op, got {[str(getattr(o,'op','')) for o in ops]}"
+            )
+        op0 = reduce_max_ops[0]
+        ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+        dims = dict(getattr(op0, "attrs", {}) or {}).get("dims")
+        dims_list = list(dims) if isinstance(dims, list) else []
+        if dims_list != [1] or len(ins) != 1:
+            raise RuntimeError(f"rvv cpu-loops v1 softmax_inner unsupported reduce_max: dims={dims_list} inputs={ins}")
+        in_name = str(ins[0])
+        allowed = {"reduce_max", "reduce_sum", "sub", "exp", "div", "broadcast_in_dim"}
+        op_names = [str(getattr(op, "op", "")).strip() for op in ops]
+        unexpected = sorted({n for n in op_names if n and n not in allowed})
+        if unexpected:
+            raise RuntimeError(f"rvv cpu-loops v1 softmax_inner unexpected ops: {unexpected}")
+        required = {"reduce_max", "reduce_sum", "sub", "exp", "div"}
+        missing = sorted([n for n in required if n not in set(op_names)])
+        if missing:
+            raise RuntimeError(f"rvv cpu-loops v1 softmax_inner missing ops: {missing}")
+        for op in ops:
+            op_name = str(getattr(op, "op", "")).strip()
+            if op_name not in {"reduce_max", "reduce_sum"}:
+                continue
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            dims = attrs.get("dims")
+            dims_list = list(dims) if isinstance(dims, list) else []
+            if dims_list != [1]:
+                raise RuntimeError(f"rvv cpu-loops v1 softmax_inner expects reduce dims=[1], got dims={dims_list}")
     in_tt = (intent.tensors or {}).get(in_name)
     if in_tt is None:
         raise RuntimeError(f"missing input tensor spec: {in_name}")
@@ -1409,20 +1445,58 @@ def _emit_log_softmax2d_kernel(
     total = int(m_dim * n_dim)
 
     ops = [op for op in list(intent.ops or []) if op is not None]
-    if len(ops) != 2:
-        raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d expects 2 ops (softmax+log), got {len(ops)}")
-    op0, op1 = ops
-    op0_name = str(getattr(op0, "op", "")).strip()
-    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
-    op0_attrs = dict(getattr(op0, "attrs", {}) or {})
-    axis = op0_attrs.get("axis")
-    try:
-        axis_i = int(axis)
-    except Exception:
-        axis_i = None
-    if op0_name != "softmax" or axis_i != 1 or len(op0_ins) != 1:
-        raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported softmax: axis={axis!r} inputs={op0_ins}")
-    in_name = str(op0_ins[0])
+    if not ops:
+        raise RuntimeError("rvv cpu-loops v1 log_softmax2d requires non-empty ops")
+
+    in_name = ""
+    op_names = [str(getattr(op, "op", "")).strip() for op in ops]
+    if len(ops) >= 2 and op_names[0] == "softmax":
+        op0, op1 = ops[0], ops[1]
+        op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+        op0_attrs = dict(getattr(op0, "attrs", {}) or {})
+        axis = op0_attrs.get("axis")
+        try:
+            axis_i = int(axis)
+        except Exception:
+            axis_i = None
+        if axis_i != 1 or len(op0_ins) != 1:
+            raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported softmax: axis={axis!r} inputs={op0_ins}")
+        in_name = str(op0_ins[0])
+        op1_name = str(getattr(op1, "op", "")).strip()
+        op1_ins = [str(x).strip() for x in list(getattr(op1, "inputs", []) or []) if str(x).strip()]
+        if op1_name != "log" or len(op1_ins) != 1:
+            raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported log op: inputs={op1_ins}")
+    else:
+        reduce_max_ops = [op for op in ops if str(getattr(op, "op", "")).strip() == "reduce_max"]
+        if not reduce_max_ops:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 log_softmax2d expects reduce_max or softmax op, got {op_names}"
+            )
+        op0 = reduce_max_ops[0]
+        op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+        op0_attrs = dict(getattr(op0, "attrs", {}) or {})
+        dims = op0_attrs.get("dims")
+        dims_list = list(dims) if isinstance(dims, list) else []
+        if dims_list != [1] or len(op0_ins) != 1:
+            raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported reduce_max: dims={dims_list} inputs={op0_ins}")
+        in_name = str(op0_ins[0])
+        allowed = {"reduce_max", "reduce_sum", "sub", "exp", "div", "log", "broadcast_in_dim"}
+        unexpected = sorted({n for n in op_names if n and n not in allowed})
+        if unexpected:
+            raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unexpected ops: {unexpected}")
+        required = {"reduce_max", "reduce_sum", "sub", "exp", "log"}
+        missing = sorted([n for n in required if n not in set(op_names)])
+        if missing:
+            raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d missing ops: {missing}")
+        for op in ops:
+            op_name = str(getattr(op, "op", "")).strip()
+            if op_name not in {"reduce_max", "reduce_sum"}:
+                continue
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            dims = attrs.get("dims")
+            dims_list = list(dims) if isinstance(dims, list) else []
+            if dims_list != [1]:
+                raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d expects reduce dims=[1], got dims={dims_list}")
     in_tt = (intent.tensors or {}).get(in_name)
     if in_tt is None:
         raise RuntimeError(f"missing input tensor spec: {in_name}")
@@ -1433,10 +1507,6 @@ def _emit_log_softmax2d_kernel(
         raise RuntimeError(
             f"rvv cpu-loops v1 log_softmax expects input shape [M,N] to match output; got {in_name} shape={in_shape} out_shape={out_shape}"
         )
-    op1_name = str(getattr(op1, "op", "")).strip()
-    op1_ins = [str(x).strip() for x in list(getattr(op1, "inputs", []) or []) if str(x).strip()]
-    if op1_name != "log" or len(op1_ins) != 1:
-        raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported log op: inputs={op1_ins}")
 
     in_memref_ty = f"memref<{total}xf32>"
     out_memref_ty = f"memref<{total}xf32>"
