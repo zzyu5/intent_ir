@@ -175,6 +175,8 @@ SUPPORTED_OPS = {
     "scatter",
     "select_scatter",
     "slice_scatter",
+    "masked_select",
+    "masked_scatter",
 }
 
 
@@ -1278,6 +1280,70 @@ def _check_slice_scatter(intent: dict[str, Any], op: dict[str, Any]) -> list[str
     return []
 
 
+def _check_masked_select(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 2 or not out:
+        return ["masked_select_invalid_io"]
+    inp_shape = _tensor_shape(intent, ins[0])
+    mask_shape = _tensor_shape(intent, ins[1])
+    out_shape = _tensor_shape(intent, out)
+    if inp_shape and len(inp_shape) != 2:
+        return ["masked_select_inp_rank_not_2"]
+    if mask_shape and len(mask_shape) != 2:
+        return ["masked_select_mask_rank_not_2"]
+    if out_shape and len(out_shape) != 1:
+        return ["masked_select_out_rank_not_1"]
+    if inp_shape and mask_shape and inp_shape != mask_shape:
+        return ["masked_select_mask_shape_mismatch"]
+    dt_inp = _tensor_dtype(intent, ins[0])
+    dt_mask = _tensor_dtype(intent, ins[1])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_inp and dt_inp != "f32":
+        return ["masked_select_inp_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["masked_select_out_dtype_not_f32"]
+    if dt_mask and dt_mask not in {"bool", "i1"}:
+        return ["masked_select_mask_dtype_not_bool"]
+    return []
+
+
+def _check_masked_scatter(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 3 or not out:
+        return ["masked_scatter_invalid_io"]
+    inp_shape = _tensor_shape(intent, ins[0])
+    mask_shape = _tensor_shape(intent, ins[1])
+    src_shape = _tensor_shape(intent, ins[2])
+    out_shape = _tensor_shape(intent, out)
+    if inp_shape and len(inp_shape) != 2:
+        return ["masked_scatter_inp_rank_not_2"]
+    if mask_shape and len(mask_shape) != 2:
+        return ["masked_scatter_mask_rank_not_2"]
+    if out_shape and len(out_shape) != 2:
+        return ["masked_scatter_out_rank_not_2"]
+    if src_shape and len(src_shape) != 1:
+        return ["masked_scatter_source_rank_not_1"]
+    if inp_shape and mask_shape and inp_shape != mask_shape:
+        return ["masked_scatter_mask_shape_mismatch"]
+    if inp_shape and out_shape and inp_shape != out_shape:
+        return ["masked_scatter_out_shape_mismatch"]
+    dt_inp = _tensor_dtype(intent, ins[0])
+    dt_mask = _tensor_dtype(intent, ins[1])
+    dt_src = _tensor_dtype(intent, ins[2])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_inp and dt_inp != "f32":
+        return ["masked_scatter_inp_dtype_not_f32"]
+    if dt_src and dt_src != "f32":
+        return ["masked_scatter_source_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["masked_scatter_out_dtype_not_f32"]
+    if dt_mask and dt_mask not in {"bool", "i1"}:
+        return ["masked_scatter_mask_dtype_not_bool"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     intent_name = str(intent.get("name") or "").strip()
@@ -1388,6 +1454,10 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_select_scatter(intent, o))
         elif name == "slice_scatter":
             reasons.extend(_check_slice_scatter(intent, o))
+        elif name == "masked_select":
+            reasons.extend(_check_masked_select(intent, o))
+        elif name == "masked_scatter":
+            reasons.extend(_check_masked_scatter(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

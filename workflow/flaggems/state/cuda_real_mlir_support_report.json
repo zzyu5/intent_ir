@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T12:15:58+00:00",
+  "generated_at_utc": "2026-03-01T12:37:20+00:00",
   "repo": {
-    "head_commit": "d0df9a1328a6e9f2540569e236ed609edd149133",
+    "head_commit": "05792f27a24e642c3fbd4b4dbcdccb55455e865b",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "d0df9a1-dirty"
+    "git_describe": "05792f2-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -52,6 +52,8 @@
     "le",
     "log",
     "lt",
+    "masked_scatter",
+    "masked_select",
     "matmul",
     "max",
     "max_pool2d_with_indices",
@@ -90,8 +92,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 144,
-  "kernels_unsupported": 14,
+  "kernels_supported": 146,
+  "kernels_unsupported": 12,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -219,6 +221,8 @@
     "index_add2d",
     "index_put2d",
     "index_select2d",
+    "masked_scatter2d",
+    "masked_select2d",
     "scatter2d",
     "select_scatter2d",
     "slice_scatter2d",
@@ -291,24 +295,6 @@
       "kernel": "batch_norm2d",
       "reasons": [
         "multi_output"
-      ]
-    },
-    {
-      "kernel": "masked_scatter2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "masked_scatter"
-      ]
-    },
-    {
-      "kernel": "masked_select2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "masked_select"
       ]
     },
     {
