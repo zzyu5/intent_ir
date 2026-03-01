@@ -974,6 +974,35 @@ def _batch_norm2d_intent() -> IntentFunction:
     )
 
 
+def _scaled_dot_product_attention_bhsd_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "scaled_dot_product_attention_bhsd",
+            "tensors": {
+                "query": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+                "key": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "value": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "scaled_dot_product_attention",
+                    "inputs": ["query", "key", "value"],
+                    "output": "out",
+                    "attrs": {"is_causal": False},
+                }
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _flash_attn_varlen_func_bhsd_intent() -> IntentFunction:
+    out = _scaled_dot_product_attention_bhsd_intent().to_json_dict()
+    out["name"] = "flash_attn_varlen_func_bhsd"
+    return IntentFunction.from_json_dict(out)
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -1042,6 +1071,19 @@ def _batch_norm2d_intent() -> IntentFunction:
             "memref.store %scale, %y_s[%bid]",
         ),
         (_batch_norm2d_intent, {"N": 2, "C": 4, "HW": 4}, "batch_norm2d_v1", "memref.store %inv_std_v, %inv_std[%bid]"),
+        # wave23
+        (
+            _scaled_dot_product_attention_bhsd_intent,
+            {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16, "IS_CAUSAL": 0},
+            "sdpa_bhsd_v1",
+            "gpu.func @scaled_dot_product_attention_bhsd",
+        ),
+        (
+            _flash_attn_varlen_func_bhsd_intent,
+            {"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16, "IS_CAUSAL": 0},
+            "sdpa_bhsd_v1",
+            "gpu.func @flash_attn_varlen_func_bhsd",
+        ),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
