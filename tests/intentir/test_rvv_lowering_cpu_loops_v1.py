@@ -412,6 +412,62 @@ def _allclose2d_intent() -> IntentFunction:
     )
 
 
+def _softmax_inner_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "softmax_inner",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "m_max": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "m_max_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "centered": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "exp_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sum_exp": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "sum_exp_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_max", "inputs": ["input"], "output": "m_max", "attrs": {"dims": [1]}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["m_max"],
+                    "output": "m_max_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {"op": "sub", "inputs": ["input", "m_max_bcast"], "output": "centered", "attrs": {}},
+                {"op": "exp", "inputs": ["centered"], "output": "exp_vals", "attrs": {}},
+                {"op": "reduce_sum", "inputs": ["exp_vals"], "output": "sum_exp", "attrs": {"dims": [1]}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["sum_exp"],
+                    "output": "sum_exp_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {"op": "div", "inputs": ["exp_vals", "sum_exp_bcast"], "output": "output", "attrs": {}},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _log_softmax2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "log_softmax2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "softmax_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "softmax", "inputs": ["inp"], "output": "softmax_out", "attrs": {"axis": 1}},
+                {"op": "log", "inputs": ["softmax_out"], "output": "out", "attrs": {}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -656,4 +712,30 @@ def test_rvv_cpu_loops_v1_supports_allclose2d_bool_scalar(monkeypatch: pytest.Mo
     assert "math.absf" in text
     assert "arith.cmpf ole" in text
     assert "arith.extui" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_softmax_inner(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_softmax_inner_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_softmax_inner_v1"
+    text = str(out.module_text or "")
+    assert "arith.maximumf" in text
+    assert "math.exp" in text
+    assert "arith.divf" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_log_softmax2d(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_log_softmax2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_log_softmax2d_v1"
+    text = str(out.module_text or "")
+    assert "arith.maximumf" in text
+    assert "math.exp" in text
+    assert "math.log" in text
     _verify_with_mlir_opt(text)
