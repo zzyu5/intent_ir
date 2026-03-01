@@ -152,6 +152,9 @@ SUPPORTED_OPS = {
     "upsample_nearest2d",
     "glu",
     "softmax",
+    "matmul",
+    "mse_loss",
+    "std",
     "reduce_sum",
     "reduce_max",
     "reduce_min",
@@ -251,6 +254,16 @@ def _check_pad(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
 
 def _check_gather(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    intent_name = str(intent.get("name") or "").strip()
+    if intent_name == "upsample_bicubic2d_aa":
+        # Special-case: current CUDA real-MLIR lowering matches this kernel by name
+        # and emits a dedicated kernel; the expanded seed contains 4D gathers with
+        # explicit (n,c,iy,ix) indices.
+        if len(ins) == 5:
+            in_shape = _tensor_shape(intent, ins[0])
+            if in_shape and len(in_shape) != 4:
+                return ["gather_bicubic_requires_4d_input"]
+            return []
     if len(ins) != 3:
         return ["gather_invalid_inputs"]
     # Current lowering supports 2D inp + (row_idx,col_idx) -> out (rank 1/2).
@@ -382,6 +395,109 @@ def _check_softmax(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     return []
 
 
+def _check_matmul(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 2:
+        return ["matmul_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    ta = attrs.get("transpose_a", False)
+    tb = attrs.get("transpose_b", False)
+    if bool(ta) or bool(tb):
+        return ["matmul_transpose_not_supported"]
+
+    a_shape = _tensor_shape(intent, ins[0])
+    b_shape = _tensor_shape(intent, ins[1])
+    out = str(op.get("output") or "").strip()
+    out_shape = _tensor_shape(intent, out) if out else []
+
+    if a_shape and len(a_shape) != 2:
+        return ["matmul_requires_rank2_a"]
+    if b_shape and len(b_shape) not in (1, 2):
+        return ["matmul_requires_rank1_or_2_b"]
+
+    if a_shape and b_shape:
+        if len(b_shape) == 2:
+            if a_shape[1] != b_shape[0]:
+                return ["matmul_k_mismatch"]
+            if out_shape and (len(out_shape) != 2 or out_shape != [a_shape[0], b_shape[1]]):
+                return ["matmul_output_shape_mismatch"]
+        else:
+            if a_shape[1] != b_shape[0]:
+                return ["matmul_k_mismatch"]
+            if out_shape and (len(out_shape) != 1 or out_shape != [a_shape[0]]):
+                return ["matmul_output_shape_mismatch"]
+
+    # Dtypes: current lowering is f32-focused; keep wave plan narrow.
+    dt_a = _tensor_dtype(intent, ins[0])
+    dt_b = _tensor_dtype(intent, ins[1])
+    if (dt_a and dt_a != "f32") or (dt_b and dt_b != "f32"):
+        return ["matmul_requires_f32"]
+    return []
+
+
+def _check_mse_loss(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 2:
+        return ["mse_loss_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    reduction = attrs.get("reduction", None)
+    try:
+        red_i = int(reduction) if reduction is not None else None
+    except Exception:
+        red_i = None
+    if red_i != 1:
+        return ["mse_loss_reduction_not_mean"]
+
+    s0 = _tensor_shape(intent, ins[0])
+    s1 = _tensor_shape(intent, ins[1])
+    if s0 and s1 and s0 != s1:
+        return ["mse_loss_input_shapes_mismatch"]
+
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 0:
+            return ["mse_loss_requires_scalar_output"]
+
+    dt0 = _tensor_dtype(intent, ins[0])
+    dt1 = _tensor_dtype(intent, ins[1])
+    if (dt0 and dt0 != "f32") or (dt1 and dt1 != "f32"):
+        return ["mse_loss_requires_f32"]
+    return []
+
+
+def _check_std(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["std_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dims = attrs.get("axes", attrs.get("dims", attrs.get("axis")))
+    dims_list = list(dims) if isinstance(dims, list) else []
+    if dims_list != [1]:
+        return ["std_dims_not_axis1"]
+    if bool(attrs.get("keepdims", False)):
+        return ["std_keepdims_not_supported"]
+    correction = attrs.get("correction", attrs.get("ddof", 0))
+    try:
+        ddof = int(correction)
+    except Exception:
+        ddof = 0
+    if ddof != 1:
+        return ["std_ddof_not_1"]
+    x_shape = _tensor_shape(intent, ins[0])
+    if x_shape and len(x_shape) != 2:
+        return ["std_requires_rank2_input"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 1:
+            return ["std_output_rank_not_1"]
+    dt = _tensor_dtype(intent, ins[0])
+    if dt and dt != "f32":
+        return ["std_requires_f32"]
+    return []
+
+
 def _check_reduce_sum(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
     if len(ins) != 1:
@@ -390,6 +506,20 @@ def _check_reduce_sum(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     dims = attrs.get("dims")
     dims_list = list(dims) if isinstance(dims, list) else []
     intent_name = str(intent.get("name") or "").strip()
+    if intent_name == "group_norm_kernel":
+        # Special-case: current CUDA real-MLIR lowering matches this kernel by name
+        # and emits a dedicated kernel, so per-op reduce_sum shape constraints here
+        # are too strict for wave planning.
+        return []
+    if dims_list == [0]:
+        if intent_name not in {"dot1d", "vdot1d"}:
+            return ["reduce_sum_dims_0_only_supported_for_dot_or_vdot"]
+        out = str(op.get("output") or "").strip()
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if out_shape and len(out_shape) != 0:
+                return ["reduce_sum_dims_0_requires_scalar_output"]
+        return []
     if dims_list not in ([1], [0, 1]):
         return ["reduce_sum_dims_not_axis1_or_01"]
     out = str(op.get("output") or "").strip()
@@ -612,6 +742,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "diag_embed2d",
         "upsample_nearest1d_ncl",
         "upsample_nearest2d_nchw",
+        "group_norm_kernel",
+        "upsample_bicubic2d_aa",
     }
     if out_rank > 2 and intent_name not in allowed_high_rank:
         return SupportResult(ok=False, reasons=[f"output_rank_gt2:{out_rank}"], unsupported_ops=[])
@@ -646,6 +778,12 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_glu(intent, o))
         elif name == "softmax":
             reasons.extend(_check_softmax(intent, o))
+        elif name == "matmul":
+            reasons.extend(_check_matmul(intent, o))
+        elif name == "mse_loss":
+            reasons.extend(_check_mse_loss(intent, o))
+        elif name == "std":
+            reasons.extend(_check_std(intent, o))
         elif name == "reduce_sum":
             reasons.extend(_check_reduce_sum(intent, o))
         elif name == "reduce_max":

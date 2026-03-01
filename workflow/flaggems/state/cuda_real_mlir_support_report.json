@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T05:42:51+00:00",
+  "generated_at_utc": "2026-03-01T08:14:03+00:00",
   "repo": {
-    "head_commit": "a679206d2ca67ae7f20ef41e8b974fcc18be3c68",
+    "head_commit": "9f926fc9be1e3178743ec9360978fb45cba2f6d8",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "a679206-dirty"
+    "git_describe": "9f926fc-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -45,8 +45,10 @@
     "le",
     "log",
     "lt",
+    "matmul",
     "max",
     "min",
+    "mse_loss",
     "mul",
     "ne",
     "neg",
@@ -67,6 +69,7 @@
     "softmax",
     "sqrt",
     "stack",
+    "std",
     "sub",
     "tan",
     "upsample_nearest1d",
@@ -74,8 +77,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 116,
-  "kernels_unsupported": 42,
+  "kernels_supported": 126,
+  "kernels_unsupported": 32,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -135,7 +138,9 @@
     "min2d",
     "min_dim2d",
     "minimum2d",
+    "mse_loss2d",
     "mul2d",
+    "mv2d",
     "nan_to_num2d",
     "ne2d",
     "neg2d",
@@ -175,7 +180,10 @@
     "row_mean",
     "row_sum",
     "softmax_inner",
+    "std2d",
+    "var_mean2d",
     "gelu2d",
+    "group_norm_kernel",
     "layer_norm_persistent",
     "log_sigmoid2d",
     "relu2d",
@@ -190,6 +198,11 @@
     "gather2d",
     "index_select2d",
     "where2d",
+    "addmm2d",
+    "dot1d",
+    "mm2d",
+    "vdot1d",
+    "upsample_bicubic2d_aa",
     "upsample_nearest1d_ncl",
     "upsample_nearest2d_nchw",
     "embedding2d"
@@ -202,24 +215,6 @@
       ],
       "unsupported_ops": [
         "kron"
-      ]
-    },
-    {
-      "kernel": "mse_loss2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "mse_loss"
-      ]
-    },
-    {
-      "kernel": "mv2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "matmul"
       ]
     },
     {
@@ -316,33 +311,9 @@
       ]
     },
     {
-      "kernel": "std2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "std"
-      ]
-    },
-    {
-      "kernel": "var_mean2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "std"
-      ]
-    },
-    {
       "kernel": "batch_norm2d",
       "reasons": [
         "multi_output"
-      ]
-    },
-    {
-      "kernel": "group_norm_kernel",
-      "reasons": [
-        "output_rank_gt2:3"
       ]
     },
     {
@@ -418,15 +389,6 @@
       ]
     },
     {
-      "kernel": "addmm2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "matmul"
-      ]
-    },
-    {
       "kernel": "baddbmm3d",
       "reasons": [
         "output_rank_gt2:3"
@@ -454,27 +416,6 @@
       ],
       "unsupported_ops": [
         "cummin"
-      ]
-    },
-    {
-      "kernel": "dot1d",
-      "reasons": [
-        "reduce_sum_dims_not_axis1_or_01"
-      ]
-    },
-    {
-      "kernel": "mm2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "matmul"
-      ]
-    },
-    {
-      "kernel": "vdot1d",
-      "reasons": [
-        "reduce_sum_dims_not_axis1_or_01"
       ]
     },
     {
@@ -511,12 +452,6 @@
       "kernel": "max_pool2d_with_indices_nchw",
       "reasons": [
         "multi_output"
-      ]
-    },
-    {
-      "kernel": "upsample_bicubic2d_aa",
-      "reasons": [
-        "output_rank_gt2:4"
       ]
     },
     {
