@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-02-27T18:34:49+00:00",
+  "generated_at_utc": "2026-03-01T03:50:10+00:00",
   "repo": {
-    "head_commit": "d163bf66f0fff61b45554de106b134449d0416f4",
+    "head_commit": "5c23260d1de7bdb4f1a89ba1a3e07894329dc275",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "d163bf6-dirty"
+    "git_describe": "5c23260-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -16,6 +16,8 @@
     "acos",
     "add",
     "and",
+    "argmax",
+    "argmin",
     "atan",
     "bitwise_and",
     "bitwise_left_shift",
@@ -52,6 +54,8 @@
     "pow",
     "reduce_any",
     "reduce_max",
+    "reduce_min",
+    "reduce_prod",
     "reduce_sum",
     "relu",
     "remainder",
@@ -64,8 +68,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 96,
-  "kernels_unsupported": 62,
+  "kernels_supported": 108,
+  "kernels_unsupported": 50,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -120,6 +124,8 @@
     "lt2d",
     "masked_fill2d",
     "maximum2d",
+    "min2d",
+    "min_dim2d",
     "minimum2d",
     "mul2d",
     "nan_to_num2d",
@@ -144,20 +150,30 @@
     "tan2d",
     "threshold2d",
     "tile2d",
+    "trace2d",
     "triu2d",
     "vstack2d",
+    "allclose2d",
     "any_kernel_dim",
+    "argmax2d",
+    "argmin2d",
+    "count_nonzero2d",
+    "prod_dim2d",
     "row_all",
     "row_mean",
     "row_sum",
+    "softmax_inner",
     "gelu2d",
+    "layer_norm_persistent",
     "log_sigmoid2d",
     "relu2d",
+    "rms_norm2d",
     "sigmoid2d",
     "silu2d",
     "softplus2d",
     "tanh2d",
     "vector_norm2d",
+    "weight_norm2d",
     "flip2d",
     "gather2d",
     "index_select2d",
@@ -187,21 +203,6 @@
       ],
       "unsupported_ops": [
         "kron"
-      ]
-    },
-    {
-      "kernel": "min2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_min"
-      ]
-    },
-    {
-      "kernel": "min_dim2d",
-      "reasons": [
-        "multi_output"
       ]
     },
     {
@@ -304,48 +305,12 @@
       ]
     },
     {
-      "kernel": "trace2d",
-      "reasons": [
-        "reduce_sum_dims_not_axis1"
-      ]
-    },
-    {
       "kernel": "unique2d",
       "reasons": [
         "unsupported_ops"
       ],
       "unsupported_ops": [
         "unique"
-      ]
-    },
-    {
-      "kernel": "allclose2d",
-      "reasons": [
-        "reduce_any_dims_not_axis1"
-      ]
-    },
-    {
-      "kernel": "argmax2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "argmax"
-      ]
-    },
-    {
-      "kernel": "argmin2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "argmin"
-      ]
-    },
-    {
-      "kernel": "count_nonzero2d",
-      "reasons": [
-        "reduce_sum_dims_not_axis1"
       ]
     },
     {
@@ -375,26 +340,7 @@
     {
       "kernel": "prod2d",
       "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_prod"
-      ]
-    },
-    {
-      "kernel": "prod_dim2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_prod"
-      ]
-    },
-    {
-      "kernel": "softmax_inner",
-      "reasons": [
-        "reduce_max_requires_rank1_final_output",
-        "reduce_sum_requires_rank1_final_output"
+        "reduce_prod_dims_not_axis1"
       ]
     },
     {
@@ -424,13 +370,7 @@
     {
       "kernel": "group_norm_kernel",
       "reasons": [
-        "multi_output"
-      ]
-    },
-    {
-      "kernel": "layer_norm_persistent",
-      "reasons": [
-        "multi_output"
+        "output_rank_gt2:3"
       ]
     },
     {
@@ -440,18 +380,6 @@
       ],
       "unsupported_ops": [
         "cumsum"
-      ]
-    },
-    {
-      "kernel": "rms_norm2d",
-      "reasons": [
-        "multi_output"
-      ]
-    },
-    {
-      "kernel": "weight_norm2d",
-      "reasons": [
-        "reduce_sum_requires_rank1_final_output"
       ]
     },
     {
@@ -559,7 +487,7 @@
     {
       "kernel": "dot1d",
       "reasons": [
-        "reduce_sum_dims_not_axis1"
+        "reduce_sum_dims_not_axis1_or_01"
       ]
     },
     {
@@ -574,7 +502,7 @@
     {
       "kernel": "vdot1d",
       "reasons": [
-        "reduce_sum_dims_not_axis1"
+        "reduce_sum_dims_not_axis1_or_01"
       ]
     },
     {

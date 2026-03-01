@@ -148,7 +148,11 @@ SUPPORTED_OPS = {
     "iota",
     "reduce_sum",
     "reduce_max",
+    "reduce_min",
+    "reduce_prod",
     "reduce_any",
+    "argmax",
+    "argmin",
 }
 
 
@@ -165,6 +169,13 @@ def _tensor_shape(intent: dict[str, Any], name: str) -> list[Any]:
         return []
     s = t.get("shape")
     return list(s) if isinstance(s, list) else []
+
+
+def _tensor_dtype(intent: dict[str, Any], name: str) -> str:
+    t = (intent.get("tensors") or {}).get(name) if isinstance(intent.get("tensors"), dict) else None
+    if not isinstance(t, dict):
+        return ""
+    return str(t.get("dtype") or "").strip()
 
 
 def _check_broadcast_in_dim(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
@@ -247,17 +258,31 @@ def _check_reduce_sum(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
     dims = attrs.get("dims")
     dims_list = list(dims) if isinstance(dims, list) else []
-    if dims_list != [1]:
-        return ["reduce_sum_dims_not_axis1"]
-    outs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
-    if len(outs) != 1:
-        return ["reduce_sum_requires_single_output"]
-    final_out = outs[0]
-    if len(_tensor_shape(intent, final_out)) != 1:
-        return ["reduce_sum_requires_rank1_final_output"]
+    intent_name = str(intent.get("name") or "").strip()
+    if dims_list not in ([1], [0, 1]):
+        return ["reduce_sum_dims_not_axis1_or_01"]
     out = str(op.get("output") or "").strip()
-    if out and len(_tensor_shape(intent, out)) != 1:
-        return ["reduce_sum_output_not_rank1"]
+    if dims_list == [0, 1]:
+        if intent_name not in {"trace2d", "count_nonzero2d"}:
+            return ["reduce_sum_dims_01_only_supported_for_trace_or_count_nonzero"]
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if out_shape and len(out_shape) != 0:
+                return ["reduce_sum_dims_01_requires_scalar_output"]
+        return []
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if not out_shape:
+            return []
+        if len(out_shape) == 2:
+            try:
+                d1 = int(out_shape[1])
+            except Exception:
+                return ["reduce_sum_keepdims_requires_literal_last_dim_1"]
+            if d1 != 1:
+                return ["reduce_sum_keepdims_requires_last_dim_1"]
+        elif len(out_shape) != 1:
+            return ["reduce_sum_output_rank_not_1_or_2"]
     return []
 
 
@@ -270,15 +295,116 @@ def _check_reduce_max(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     dims_list = list(dims) if isinstance(dims, list) else []
     if dims_list != [1]:
         return ["reduce_max_dims_not_axis1"]
-    outs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
-    if len(outs) != 1:
-        return ["reduce_max_requires_single_output"]
-    final_out = outs[0]
-    if len(_tensor_shape(intent, final_out)) != 1:
-        return ["reduce_max_requires_rank1_final_output"]
     out = str(op.get("output") or "").strip()
-    if out and len(_tensor_shape(intent, out)) != 1:
-        return ["reduce_max_output_not_rank1"]
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if not out_shape:
+            return []
+        if len(out_shape) == 2:
+            try:
+                d1 = int(out_shape[1])
+            except Exception:
+                return ["reduce_max_keepdims_requires_literal_last_dim_1"]
+            if d1 != 1:
+                return ["reduce_max_keepdims_requires_last_dim_1"]
+        elif len(out_shape) != 1:
+            return ["reduce_max_output_rank_not_1_or_2"]
+    return []
+
+
+def _check_reduce_min(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["reduce_min_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dims = attrs.get("dims")
+    dims_list = list(dims) if isinstance(dims, list) else []
+    out = str(op.get("output") or "").strip()
+    if dims_list == [1]:
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if not out_shape:
+                return []
+            if len(out_shape) == 2:
+                try:
+                    d1 = int(out_shape[1])
+                except Exception:
+                    return ["reduce_min_keepdims_requires_literal_last_dim_1"]
+                if d1 != 1:
+                    return ["reduce_min_keepdims_requires_last_dim_1"]
+            elif len(out_shape) != 1:
+                return ["reduce_min_output_rank_not_1_or_2"]
+        return []
+    if dims_list == [0, 1]:
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if out_shape and len(out_shape) != 0:
+                return ["reduce_min_dims_01_requires_scalar_output"]
+        return []
+    return ["reduce_min_dims_not_axis1_or_01"]
+
+
+def _check_reduce_prod(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["reduce_prod_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dims = attrs.get("dims")
+    dims_list = list(dims) if isinstance(dims, list) else []
+    if dims_list != [1]:
+        return ["reduce_prod_dims_not_axis1"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if not out_shape:
+            return []
+        if len(out_shape) == 2:
+            try:
+                d1 = int(out_shape[1])
+            except Exception:
+                return ["reduce_prod_keepdims_requires_literal_last_dim_1"]
+            if d1 != 1:
+                return ["reduce_prod_keepdims_requires_last_dim_1"]
+        elif len(out_shape) != 1:
+            return ["reduce_prod_output_rank_not_1_or_2"]
+    return []
+
+
+def _check_argmax(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["argmax_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    if axis != 1:
+        return ["argmax_axis_not_1"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 1:
+            return ["argmax_requires_rank1_output"]
+        out_dtype = _tensor_dtype(intent, out)
+        if out_dtype and out_dtype != "i32":
+            return [f"argmax_output_dtype_not_i32:{out_dtype}"]
+    return []
+
+
+def _check_argmin(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["argmin_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    if axis != 1:
+        return ["argmin_axis_not_1"]
+    out = str(op.get("output") or "").strip()
+    if out:
+        out_shape = _tensor_shape(intent, out)
+        if out_shape and len(out_shape) != 1:
+            return ["argmin_requires_rank1_output"]
+        out_dtype = _tensor_dtype(intent, out)
+        if out_dtype and out_dtype != "i32":
+            return [f"argmin_output_dtype_not_i32:{out_dtype}"]
     return []
 
 
@@ -289,8 +415,18 @@ def _check_reduce_any(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
     dims = attrs.get("dims")
     dims_list = list(dims) if isinstance(dims, list) else []
+    intent_name = str(intent.get("name") or "").strip()
+    if dims_list == [0, 1]:
+        if intent_name != "allclose2d":
+            return ["reduce_any_dims_01_only_supported_for_allclose2d"]
+        out = str(op.get("output") or "").strip()
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if out_shape and len(out_shape) != 0:
+                return ["reduce_any_dims_01_requires_scalar_output"]
+        return []
     if dims_list != [1]:
-        return ["reduce_any_dims_not_axis1"]
+        return ["reduce_any_dims_not_axis1_or_01"]
     out = str(op.get("output") or "").strip()
     if out:
         out_shape = _tensor_shape(intent, out)
@@ -314,10 +450,21 @@ def _check_reduce_any(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
 
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
-    if len(outputs) != 1:
+    intent_name = str(intent.get("name") or "").strip()
+    multi_output_ok = {
+        "group_norm_kernel",
+        "layer_norm_persistent",
+        "layer_norm_residual2d",
+        "ai_bench_layernorm",
+        "rms_norm2d",
+        "rms_norm_residual2d",
+        "min_dim2d",
+    }
+    if not outputs:
+        return SupportResult(ok=False, reasons=["missing_outputs"], unsupported_ops=[])
+    if len(outputs) != 1 and intent_name not in multi_output_ok:
         return SupportResult(ok=False, reasons=["multi_output"], unsupported_ops=[])
-    out = outputs[0]
-    out_rank = len(_tensor_shape(intent, out))
+    out_rank = max((len(_tensor_shape(intent, o)) for o in outputs), default=0)
     if out_rank > 2:
         return SupportResult(ok=False, reasons=[f"output_rank_gt2:{out_rank}"], unsupported_ops=[])
 
@@ -343,8 +490,16 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_reduce_sum(intent, o))
         elif name == "reduce_max":
             reasons.extend(_check_reduce_max(intent, o))
+        elif name == "reduce_min":
+            reasons.extend(_check_reduce_min(intent, o))
+        elif name == "reduce_prod":
+            reasons.extend(_check_reduce_prod(intent, o))
         elif name == "reduce_any":
             reasons.extend(_check_reduce_any(intent, o))
+        elif name == "argmax":
+            reasons.extend(_check_argmax(intent, o))
+        elif name == "argmin":
+            reasons.extend(_check_argmin(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])
