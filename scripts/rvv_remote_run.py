@@ -278,14 +278,13 @@ def _rvv_staging_dtype(dtype: str, *, execution_mode: str) -> str:
     """
     Normalize host-side staging dtype for strict RVV executable paths.
 
-    Current RVV C codegen lowers f16/bf16 tensor buffers through f32 host buffers.
-    For prebuilt/remote LLVM strict modes, match staging dtype to the lowered
-    runtime expectation to avoid byte-size mismatches on remote load/compare.
+    For strict RVV contract-based paths, stage buffers using the declared intent
+    dtypes to match the compiled ABI. bf16 is staged as f32 since the reference
+    baseline bundles are f32-backed.
     """
     dt = str(dtype or "f32").strip().lower()
-    if str(execution_mode).strip().lower() in {"remote_llvm", "prebuilt_elf"}:
-        if dt in {"f16", "bf16"}:
-            return "f32"
+    if dt == "bf16":
+        return "f32"
     return dt or "f32"
 
 
@@ -642,6 +641,10 @@ def _c_ident(name: str) -> str:
 
 def _intentir_dtype_enum(dtype: str) -> str:
     dt = str(dtype or "f32").strip().lower()
+    if dt in {"f16"}:
+        # Use INTENTIR_DTYPE_I16 for 2-byte buffers; dtype is not used for input loads.
+        # For f16 outputs, this falls back to exact byte-compare (same as i16).
+        return "INTENTIR_DTYPE_I16"
     if dt in {"f32"}:
         return "INTENTIR_DTYPE_F32"
     if dt in {"u8"}:
@@ -693,6 +696,8 @@ def _emit_rvv_main_c(
         elif dt == "i8":
             b = n
         elif dt == "i16":
+            b = n * 2
+        elif dt == "f16":
             b = n * 2
         elif dt in {"i32", "f32"}:
             b = n * 4
