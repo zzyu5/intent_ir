@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-03-01T18:50:47+00:00",
+  "updated_at": "2026-03-01T19:12:56+00:00",
   "branch": "compiler-cleanup-v1",
   "head_commit": "1e04b07ac6720dcb0281f0dc59a6a96092abb757",
   "mode": "maintenance",
@@ -137,8 +137,8 @@
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave25_realmlir_allowlist_v4_cumscan_opt/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave25_realmlir_allowlist_v4_cumscan_opt/status_converged.json"
+    "run_summary": "artifacts/validation_rounds/20260302/rvv_remote_wave1_realmlir_v2_relu_fix/run_summary.json",
+    "status_converged": "artifacts/validation_rounds/20260302/rvv_remote_wave1_realmlir_v2_relu_fix/status_converged.json"
   },
   "lanes": {
     "coverage": {
