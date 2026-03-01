@@ -267,6 +267,206 @@ def test_build_native_launch_fn_uses_attention_unique_adapters(
         assert any(expected_scope_token in scope for scope in scopes)
 
 
+@pytest.mark.parametrize(
+    ("kernel", "inputs_np", "bindings", "expected_launch_source", "assert_call"),
+    [
+        (
+            "min_dim2d",
+            {"inp": np.ones((4, 64), dtype=np.float32)},
+            {"M": 4, "N": 64, "AXIS": 1, "KEEPDIM": 0},
+            "kernel_adapter:min_dim2d",
+            lambda call: (call[0] == "min_dim" and call[1]["dim"] == 1 and call[1]["keepdim"] is False),
+        ),
+        (
+            "prod_dim2d",
+            {"inp": np.ones((4, 64), dtype=np.float32)},
+            {"M": 4, "N": 64, "AXIS": 1, "KEEPDIM": 0},
+            "kernel_adapter:prod_dim2d",
+            lambda call: (call[0] == "prod_dim" and call[1]["dim"] == 1 and call[1]["keepdim"] is False),
+        ),
+        (
+            "log_softmax2d",
+            {"inp": np.ones((4, 64), dtype=np.float32)},
+            {"M": 4, "N": 64, "AXIS": 1},
+            "kernel_adapter:log_softmax2d",
+            lambda call: (call[0] == "log_softmax" and call[1]["dim"] == 1),
+        ),
+        (
+            "cummax1d",
+            {"x": np.ones((64,), dtype=np.float32)},
+            {"N": 64, "AXIS": 0},
+            "kernel_adapter:cummax1d",
+            lambda call: (call[0] == "cummax" and call[1]["dim"] == 0),
+        ),
+        (
+            "cummin1d",
+            {"x": np.ones((64,), dtype=np.float32)},
+            {"N": 64, "AXIS": 0},
+            "kernel_adapter:cummin1d",
+            lambda call: (call[0] == "cummin" and call[1]["dim"] == 0),
+        ),
+        (
+            "index_add2d",
+            {
+                "base": np.ones((16, 32), dtype=np.float32),
+                "index": np.arange(8, dtype=np.int32),
+                "src": np.ones((8, 32), dtype=np.float32),
+            },
+            {"M": 16, "N": 32, "L": 8, "AXIS": 0, "ALPHA": 1},
+            "kernel_adapter:index_add2d",
+            lambda call: (call[0] == "index_add" and call[1]["dim"] == 0 and float(call[1]["alpha"]) == 1.0),
+        ),
+        (
+            "index_put2d",
+            {
+                "base": np.ones((16, 32), dtype=np.float32),
+                "row_idx": np.arange(16, dtype=np.int32),
+                "col_idx": np.arange(16, dtype=np.int32),
+                "values": np.ones((16,), dtype=np.float32),
+            },
+            {"M": 16, "N": 32, "L": 16, "ACCUMULATE": 0},
+            "kernel_adapter:index_put2d",
+            lambda call: (call[0] == "index_put" and isinstance(call[1]["indices"], tuple) and len(call[1]["indices"]) == 2 and call[1]["accumulate"] is False),
+        ),
+        (
+            "slice_scatter2d",
+            {
+                "inp": np.ones((8, 16), dtype=np.float32),
+                "src": np.ones((8, 4), dtype=np.float32),
+            },
+            {"M": 8, "N": 16, "L": 4, "DIM": 1, "START": 0, "STEP": 1},
+            "kernel_adapter:slice_scatter2d",
+            lambda call: (call[0] == "slice_scatter" and call[1]["dim"] == 1 and call[1]["start"] == 0 and call[1]["end"] == 4 and call[1]["step"] == 1),
+        ),
+        (
+            "upsample_nearest1d_ncl",
+            {"input": np.ones((2, 3, 8), dtype=np.float32)},
+            {"N": 2, "C": 3, "IL": 8, "OL": 16},
+            "kernel_adapter:upsample_nearest1d_ncl",
+            lambda call: (call[0] == "upsample_nearest1d" and call[1]["output_size"] == (16,) and call[1]["scales"] is None),
+        ),
+        (
+            "upsample_nearest2d_nchw",
+            {"input": np.ones((1, 2, 8, 8), dtype=np.float32)},
+            {"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16},
+            "kernel_adapter:upsample_nearest2d_nchw",
+            lambda call: (call[0] == "upsample_nearest2d" and call[1]["output_size"] == (16, 16)),
+        ),
+        (
+            "conv_depthwise2d_nchw",
+            {
+                "input": np.ones((1, 4, 8, 8), dtype=np.float32),
+                "weight": np.ones((4, 1, 3, 3), dtype=np.float32),
+                "bias": np.zeros((4,), dtype=np.float32),
+            },
+            {"N": 1, "C_IN": 4, "H": 8, "W": 8, "KH": 3, "KW": 3, "SH": 1, "SW": 1, "PH": 1, "PW": 1, "DH": 1, "DW": 1, "MULT": 1},
+            "kernel_adapter:conv_depthwise2d_nchw",
+            lambda call: (call[0] == "_conv_depthwise2d" and call[1]["kernel_size"] == (3, 3) and call[1]["stride"] == (1, 1) and call[1]["padding"] == (1, 1) and call[1]["dilation"] == (1, 1)),
+        ),
+    ],
+)
+def test_build_native_launch_fn_uses_kernel_adapters_for_flaggems_native_signatures(
+    monkeypatch: pytest.MonkeyPatch,
+    kernel: str,
+    inputs_np: dict,
+    bindings: dict,
+    expected_launch_source: str,
+    assert_call,
+) -> None:
+    mod = _load_module()
+    _install_fake_torch(mod, monkeypatch)
+
+    calls: list[tuple[str, dict]] = []
+
+    def _min_dim(_inp, *, dim, keepdim=False):  # noqa: ARG001
+        calls.append(("min_dim", {"dim": int(dim), "keepdim": bool(keepdim)}))
+        return _inp, None
+
+    def _prod_dim(_inp, *, dim, keepdim=False):  # noqa: ARG001
+        calls.append(("prod_dim", {"dim": int(dim), "keepdim": bool(keepdim)}))
+        return _inp
+
+    def _log_softmax(_inp, *, dim):  # noqa: ARG001
+        calls.append(("log_softmax", {"dim": int(dim)}))
+        return _inp
+
+    def _cummax(_x, *, dim):  # noqa: ARG001
+        calls.append(("cummax", {"dim": int(dim)}))
+        return _x, None
+
+    def _cummin(_x, *, dim):  # noqa: ARG001
+        calls.append(("cummin", {"dim": int(dim)}))
+        return _x, None
+
+    def _index_add(_base, *, dim, index, source, alpha=1.0):  # noqa: ARG001
+        calls.append(("index_add", {"dim": int(dim), "alpha": float(alpha)}))
+        return _base
+
+    def _index_put(_base, indices, values, *, accumulate=False):  # noqa: ARG001
+        calls.append(("index_put", {"indices": indices, "accumulate": bool(accumulate)}))
+        return _base
+
+    def _slice_scatter(_inp, _src, *, dim, start, end, step):  # noqa: ARG001
+        calls.append(("slice_scatter", {"dim": int(dim), "start": int(start), "end": int(end), "step": int(step)}))
+        return _inp
+
+    def _upsample_nearest1d(_inp, *, output_size, scales=None):  # noqa: ARG001
+        calls.append(("upsample_nearest1d", {"output_size": tuple(output_size), "scales": scales}))
+        return _inp
+
+    def _upsample_nearest2d(_inp, output_size, scales_h=None, scales_w=None):  # noqa: ARG001
+        calls.append(("upsample_nearest2d", {"output_size": tuple(output_size), "scales_h": scales_h, "scales_w": scales_w}))
+        return _inp
+
+    def _conv_depthwise2d(_inp, _w, kernel_size, _b, stride, padding, dilation):  # noqa: ARG001
+        calls.append(
+            (
+                "_conv_depthwise2d",
+                {
+                    "kernel_size": tuple(kernel_size),
+                    "stride": tuple(stride),
+                    "padding": tuple(padding),
+                    "dilation": tuple(dilation),
+                },
+            )
+        )
+        return _inp
+
+    fake_module = SimpleNamespace(
+        __name__="fake.module",
+        flag_gems_ops=SimpleNamespace(
+            min_dim=_min_dim,
+            prod_dim=_prod_dim,
+            log_softmax=_log_softmax,
+            cummax=_cummax,
+            cummin=_cummin,
+            index_add=_index_add,
+            index_put=_index_put,
+            slice_scatter=_slice_scatter,
+            upsample_nearest1d=_upsample_nearest1d,
+            upsample_nearest2d=_upsample_nearest2d,
+            _conv_depthwise2d=_conv_depthwise2d,
+        ),
+        default_flaggems_kernel_specs=lambda: {"noop": True},
+    )
+    monkeypatch.setattr(mod.importlib, "import_module", lambda _name: fake_module)
+
+    spec_map = {str(kernel): {"spec": SimpleNamespace(module="fake.module"), "source": "flaggems_native"}}
+    run_fn, module_name, meta = mod._build_native_launch_fn(
+        kernel=str(kernel),
+        inputs_np=dict(inputs_np),
+        bindings=dict(bindings),
+        spec_map=spec_map,
+        device="cuda",
+    )
+    assert module_name == "fake.module"
+    assert str(meta.get("launch_source") or "") == expected_launch_source
+
+    run_fn()
+    assert len(calls) == 1
+    assert assert_call(calls[0])
+
+
 def test_build_native_launch_fn_skips_zero_arg_helper_callable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
