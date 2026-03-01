@@ -2437,7 +2437,7 @@ def _bench_kernel(
                 )
                 return row
 
-    if graph_enabled and ratio < float(threshold):
+    if ratio < float(threshold):
         native_bench, intent_bench, ratio, stabilize_meta = _stabilize_near_threshold_ratio(
             ratio=float(ratio),
             threshold=float(threshold),
