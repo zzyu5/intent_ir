@@ -146,6 +146,12 @@ SUPPORTED_OPS = {
     "pad",
     "gather",
     "iota",
+    "stack",
+    "polar",
+    "upsample_nearest1d",
+    "upsample_nearest2d",
+    "glu",
+    "softmax",
     "reduce_sum",
     "reduce_max",
     "reduce_min",
@@ -188,18 +194,20 @@ def _check_broadcast_in_dim(intent: dict[str, Any], op: dict[str, Any]) -> list[
     attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
     out_shape = attrs.get("out_shape")
     bcast_dims = attrs.get("broadcast_dims")
-    # CUDA real-MLIR lowering treats broadcast_in_dim as shape-only and relies on
-    # IO-spec broadcast classification. Accept common 1D->2D patterns.
-    if (
-        isinstance(out_shape, list)
-        and len(out_shape) == 2
-        and len(in_shape) == 1
-        and isinstance(bcast_dims, list)
-        and len(bcast_dims) == 1
-        and int(bcast_dims[0]) in {0, 1}
-    ):
-        return []
-    return ["broadcast_in_dim_unsupported_pattern"]
+    if not (isinstance(out_shape, list) and isinstance(bcast_dims, list)):
+        return ["broadcast_in_dim_missing_attrs"]
+    if len(out_shape) < len(in_shape):
+        return ["broadcast_in_dim_out_rank_lt_in_rank"]
+    try:
+        dims = [int(x) for x in list(bcast_dims)]
+    except Exception:
+        return ["broadcast_in_dim_invalid_dims"]
+    if len(dims) != len(in_shape) or len(set(dims)) != len(dims):
+        return ["broadcast_in_dim_invalid_dims"]
+    if any((d < 0) or (d >= len(out_shape)) for d in dims):
+        return ["broadcast_in_dim_invalid_dims"]
+    if dims != sorted(dims):
+        return ["broadcast_in_dim_dims_not_sorted"]
     return []
 
 
@@ -248,6 +256,129 @@ def _check_gather(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     # Current lowering supports 2D inp + (row_idx,col_idx) -> out (rank 1/2).
     if len(_tensor_shape(intent, ins[0])) != 2:
         return ["gather_requires_2d_input"]
+    return []
+
+
+def _check_stack(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 2:
+        return ["stack_requires_two_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    try:
+        axis_i = int(axis) if axis is not None else None
+    except Exception:
+        axis_i = None
+    if axis_i != 0:
+        return ["stack_axis_not_0"]
+    out = str(op.get("output") or "").strip()
+    out_shape = _tensor_shape(intent, out)
+    if out_shape and len(out_shape) != 3:
+        return ["stack_output_rank_not_3"]
+    if out_shape:
+        try:
+            d0 = int(out_shape[0])
+        except Exception:
+            d0 = None
+        if d0 is not None and d0 != 2:
+            return ["stack_output_first_dim_not_2"]
+    if any((_tensor_dtype(intent, x) not in {"", "f32"}) for x in ins):
+        return ["stack_input_dtype_not_f32"]
+    if out and _tensor_dtype(intent, out) not in {"", "f32"}:
+        return ["stack_output_dtype_not_f32"]
+    return []
+
+
+def _check_polar(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 2:
+        return ["polar_requires_two_inputs"]
+    out = str(op.get("output") or "").strip()
+    out_shape = _tensor_shape(intent, out)
+    if out_shape and len(out_shape) != 3:
+        return ["polar_output_rank_not_3"]
+    if out_shape:
+        try:
+            d_last = int(out_shape[-1])
+        except Exception:
+            d_last = None
+        if d_last is not None and d_last != 2:
+            return ["polar_output_last_dim_not_2"]
+    if any((_tensor_dtype(intent, x) not in {"", "f32"}) for x in ins):
+        return ["polar_input_dtype_not_f32"]
+    if out and _tensor_dtype(intent, out) not in {"", "f32"}:
+        return ["polar_output_dtype_not_f32"]
+    return []
+
+
+def _check_upsample_nearest1d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["upsample_nearest1d_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if len(_tensor_shape(intent, ins[0])) != 3:
+        return ["upsample_nearest1d_requires_rank3_input"]
+    if len(_tensor_shape(intent, out)) != 3:
+        return ["upsample_nearest1d_requires_rank3_output"]
+    if _tensor_dtype(intent, ins[0]) not in {"", "f32"}:
+        return ["upsample_nearest1d_input_dtype_not_f32"]
+    if out and _tensor_dtype(intent, out) not in {"", "f32"}:
+        return ["upsample_nearest1d_output_dtype_not_f32"]
+    return []
+
+
+def _check_upsample_nearest2d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["upsample_nearest2d_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if len(_tensor_shape(intent, ins[0])) != 4:
+        return ["upsample_nearest2d_requires_rank4_input"]
+    if len(_tensor_shape(intent, out)) != 4:
+        return ["upsample_nearest2d_requires_rank4_output"]
+    if _tensor_dtype(intent, ins[0]) not in {"", "f32"}:
+        return ["upsample_nearest2d_input_dtype_not_f32"]
+    if out and _tensor_dtype(intent, out) not in {"", "f32"}:
+        return ["upsample_nearest2d_output_dtype_not_f32"]
+    return []
+
+
+def _check_glu(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["glu_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    try:
+        axis_i = int(axis) if axis is not None else None
+    except Exception:
+        axis_i = None
+    if axis_i != 1:
+        return ["glu_axis_not_1"]
+    out = str(op.get("output") or "").strip()
+    if len(_tensor_shape(intent, ins[0])) != 2:
+        return ["glu_requires_rank2_input"]
+    if len(_tensor_shape(intent, out)) != 2:
+        return ["glu_requires_rank2_output"]
+    if _tensor_dtype(intent, ins[0]) not in {"", "f32"}:
+        return ["glu_input_dtype_not_f32"]
+    if out and _tensor_dtype(intent, out) not in {"", "f32"}:
+        return ["glu_output_dtype_not_f32"]
+    return []
+
+
+def _check_softmax(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["softmax_invalid_inputs"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    try:
+        axis_i = int(axis) if axis is not None else None
+    except Exception:
+        axis_i = None
+    if axis_i != 1:
+        return ["softmax_axis_not_1"]
     return []
 
 
@@ -351,8 +482,18 @@ def _check_reduce_prod(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
     dims = attrs.get("dims")
     dims_list = list(dims) if isinstance(dims, list) else []
+    intent_name = str(intent.get("name") or "").strip()
+    if dims_list == [0, 1]:
+        if intent_name != "prod2d":
+            return ["reduce_prod_dims_01_only_supported_for_prod2d"]
+        out = str(op.get("output") or "").strip()
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if out_shape and len(out_shape) != 0:
+                return ["reduce_prod_dims_01_requires_scalar_output"]
+        return []
     if dims_list != [1]:
-        return ["reduce_prod_dims_not_axis1"]
+        return ["reduce_prod_dims_not_axis1_or_01"]
     out = str(op.get("output") or "").strip()
     if out:
         out_shape = _tensor_shape(intent, out)
@@ -465,7 +606,14 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     if len(outputs) != 1 and intent_name not in multi_output_ok:
         return SupportResult(ok=False, reasons=["multi_output"], unsupported_ops=[])
     out_rank = max((len(_tensor_shape(intent, o)) for o in outputs), default=0)
-    if out_rank > 2:
+    allowed_high_rank = {
+        "stack2d",
+        "polar2d",
+        "diag_embed2d",
+        "upsample_nearest1d_ncl",
+        "upsample_nearest2d_nchw",
+    }
+    if out_rank > 2 and intent_name not in allowed_high_rank:
         return SupportResult(ok=False, reasons=[f"output_rank_gt2:{out_rank}"], unsupported_ops=[])
 
     ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
@@ -486,6 +634,18 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_pad(intent, o))
         elif name == "gather":
             reasons.extend(_check_gather(intent, o))
+        elif name == "stack":
+            reasons.extend(_check_stack(intent, o))
+        elif name == "polar":
+            reasons.extend(_check_polar(intent, o))
+        elif name == "upsample_nearest1d":
+            reasons.extend(_check_upsample_nearest1d(intent, o))
+        elif name == "upsample_nearest2d":
+            reasons.extend(_check_upsample_nearest2d(intent, o))
+        elif name == "glu":
+            reasons.extend(_check_glu(intent, o))
+        elif name == "softmax":
+            reasons.extend(_check_softmax(intent, o))
         elif name == "reduce_sum":
             reasons.extend(_check_reduce_sum(intent, o))
         elif name == "reduce_max":

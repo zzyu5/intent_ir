@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T03:50:10+00:00",
+  "generated_at_utc": "2026-03-01T05:42:51+00:00",
   "repo": {
-    "head_commit": "5c23260d1de7bdb4f1a89ba1a3e07894329dc275",
+    "head_commit": "a679206d2ca67ae7f20ef41e8b974fcc18be3c68",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "5c23260-dirty"
+    "git_describe": "a679206-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -38,6 +38,7 @@
     "floor",
     "gather",
     "ge",
+    "glu",
     "gt",
     "identity",
     "iota",
@@ -51,6 +52,7 @@
     "neg",
     "not",
     "pad",
+    "polar",
     "pow",
     "reduce_any",
     "reduce_max",
@@ -62,14 +64,18 @@
     "reshape",
     "rsqrt",
     "sin",
+    "softmax",
     "sqrt",
+    "stack",
     "sub",
     "tan",
+    "upsample_nearest1d",
+    "upsample_nearest2d",
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 108,
-  "kernels_unsupported": 50,
+  "kernels_supported": 116,
+  "kernels_unsupported": 42,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -94,6 +100,7 @@
     "constant_pad_nd2d",
     "cos2d",
     "diag2d",
+    "diag_embed2d",
     "div2d",
     "elu2d",
     "eq2d",
@@ -104,6 +111,7 @@
     "eye_m2d",
     "full2d",
     "ge2d",
+    "glu2d",
     "gt2d",
     "hstack2d",
     "identity2d",
@@ -133,6 +141,7 @@
     "neg2d",
     "one_hot2d",
     "pad2d",
+    "polar2d",
     "pow_scalar2d",
     "pow_tensor_scalar2d",
     "pow_tensor_tensor2d",
@@ -146,6 +155,7 @@
     "rsqrt2d",
     "sin2d",
     "sqrt2d",
+    "stack2d",
     "sub2d",
     "tan2d",
     "threshold2d",
@@ -158,6 +168,8 @@
     "argmax2d",
     "argmin2d",
     "count_nonzero2d",
+    "log_softmax2d",
+    "prod2d",
     "prod_dim2d",
     "row_all",
     "row_mean",
@@ -178,24 +190,11 @@
     "gather2d",
     "index_select2d",
     "where2d",
+    "upsample_nearest1d_ncl",
+    "upsample_nearest2d_nchw",
     "embedding2d"
   ],
   "unsupported_kernels": [
-    {
-      "kernel": "diag_embed2d",
-      "reasons": [
-        "output_rank_gt2:3"
-      ]
-    },
-    {
-      "kernel": "glu2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "glu"
-      ]
-    },
     {
       "kernel": "kron2d",
       "reasons": [
@@ -257,12 +256,6 @@
       ]
     },
     {
-      "kernel": "polar2d",
-      "reasons": [
-        "output_rank_gt2:3"
-      ]
-    },
-    {
       "kernel": "quantile2d",
       "reasons": [
         "unsupported_ops"
@@ -287,12 +280,6 @@
       ],
       "unsupported_ops": [
         "sort"
-      ]
-    },
-    {
-      "kernel": "stack2d",
-      "reasons": [
-        "output_rank_gt2:3"
       ]
     },
     {
@@ -326,21 +313,6 @@
       "kernel": "flash_attn_varlen_func_bhsd",
       "reasons": [
         "output_rank_gt2:4"
-      ]
-    },
-    {
-      "kernel": "log_softmax2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "softmax"
-      ]
-    },
-    {
-      "kernel": "prod2d",
-      "reasons": [
-        "reduce_prod_dims_not_axis1"
       ]
     },
     {
@@ -543,18 +515,6 @@
     },
     {
       "kernel": "upsample_bicubic2d_aa",
-      "reasons": [
-        "output_rank_gt2:4"
-      ]
-    },
-    {
-      "kernel": "upsample_nearest1d_ncl",
-      "reasons": [
-        "output_rank_gt2:3"
-      ]
-    },
-    {
-      "kernel": "upsample_nearest2d_nchw",
       "reasons": [
         "output_rank_gt2:4"
       ]
