@@ -1067,6 +1067,34 @@ def _conv_depthwise2d_nchw_intent() -> IntentFunction:
     )
 
 
+def _unique2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "unique2d",
+            "tensors": {
+                "inp": {"dtype": "i32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "i32", "shape": ["U"], "layout": "row_major"},
+            },
+            "ops": [{"op": "unique", "inputs": ["inp"], "output": "out", "attrs": {"sorted": True}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _nonzero2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nonzero2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": ["num_nonzeros", 2], "layout": "row_major"},
+            },
+            "ops": [{"op": "nonzero", "inputs": ["inp"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -1243,6 +1271,19 @@ def _conv_depthwise2d_nchw_intent() -> IntentFunction:
             },
             "conv_depthwise2d_nchw_v1",
             "arith.divui %oc, %cMULT",
+        ),
+        # wave25
+        (
+            _unique2d_intent,
+            {"N": 16, "U": 8},
+            "unique2d_v1",
+            "arith.cmpi sgt",
+        ),
+        (
+            _nonzero2d_intent,
+            {"M": 4, "N": 64, "num_nonzeros": 128},
+            "nonzero2d_v1",
+            "arith.cmpf one",
         ),
     ],
 )
