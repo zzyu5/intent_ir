@@ -485,20 +485,13 @@ def _normed_cumsum2d_intent() -> IntentFunction:
                 "y_cumsum": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "y_denom": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
                 "y_sum_eps": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
-                "y_sum_eps_bc": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
                 {"op": "cumsum", "inputs": ["inp"], "output": "y_cumsum", "attrs": {"axis": 1}},
                 {"op": "reduce_sum", "inputs": ["inp"], "output": "y_denom", "attrs": {"dims": [1], "keepdims": True}},
                 {"op": "add", "inputs": ["y_denom", "EPS"], "output": "y_sum_eps"},
-                {
-                    "op": "broadcast_in_dim",
-                    "inputs": ["y_sum_eps"],
-                    "output": "y_sum_eps_bc",
-                    "attrs": {"broadcast_dims": [0, 1], "out_shape": ["M", "N"]},
-                },
-                {"op": "div", "inputs": ["y_cumsum", "y_sum_eps_bc"], "output": "out"},
+                {"op": "div", "inputs": ["y_cumsum", "y_sum_eps"], "output": "out"},
             ],
             "outputs": ["out"],
         }

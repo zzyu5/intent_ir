@@ -2527,13 +2527,18 @@ def lower_intent_to_cuda_gpu_kernel(
                                 out_shape_list = list(out_shape) if isinstance(out_shape, list) else []
                                 if add_out and ins[0] == add_out and bcast_dims_list == [0, 1] and out_shape_list == ["M", "N"]:
                                     bc_out = str(out2)
-                        if cumsum_out and bc_out:
+                        # backend_legalize may remove explicit broadcast_in_dim and rely on implicit
+                        # broadcasting for div([M,N],[M,1]). Accept both forms.
+                        if cumsum_out and (bc_out or add_out):
                             for op in ops_list:
                                 name = str(getattr(op, "op", "")).strip()
                                 out2 = str(getattr(op, "output", "")).strip()
                                 ins = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
                                 if name == "div" and len(ins) == 2 and out2 == str(out_name):
-                                    if set(ins) == {str(cumsum_out), str(bc_out)}:
+                                    in_set = set(map(str, ins))
+                                    ok_bc = bool(bc_out) and in_set == {str(cumsum_out), str(bc_out)}
+                                    ok_implicit = bool(add_out) and in_set == {str(cumsum_out), str(add_out)}
+                                    if ok_bc or ok_implicit:
                                         normed_cumsum2d_v1 = {
                                             "inp": "inp",
                                             "eps": "EPS",
