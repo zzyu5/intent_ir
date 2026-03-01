@@ -154,6 +154,8 @@ SUPPORTED_OPS = {
     "softmax",
     "matmul",
     "mse_loss",
+    "nll_loss_forward",
+    "nll_loss2d_forward",
     "std",
     "reduce_sum",
     "reduce_max",
@@ -1344,6 +1346,98 @@ def _check_masked_scatter(intent: dict[str, Any], op: dict[str, Any]) -> list[st
     return []
 
 
+def _check_nll_loss_forward(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 3 or not out:
+        return ["nll_loss_forward_invalid_io"]
+    logits_shape = _tensor_shape(intent, ins[0])
+    tgt_shape = _tensor_shape(intent, ins[1])
+    w_shape = _tensor_shape(intent, ins[2])
+    out_shape = _tensor_shape(intent, out)
+    if logits_shape and len(logits_shape) != 2:
+        return ["nll_loss_forward_logits_rank_not_2"]
+    if tgt_shape and len(tgt_shape) != 1:
+        return ["nll_loss_forward_target_rank_not_1"]
+    if w_shape and len(w_shape) != 1:
+        return ["nll_loss_forward_weight_rank_not_1"]
+    if out_shape and len(out_shape) != 0:
+        return ["nll_loss_forward_out_rank_not_0"]
+    if logits_shape and tgt_shape:
+        if logits_shape[0] != tgt_shape[0]:
+            return ["nll_loss_forward_n_mismatch"]
+    if logits_shape and w_shape:
+        if logits_shape[1] != w_shape[0]:
+            return ["nll_loss_forward_c_mismatch"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    reduction = attrs.get("reduction", 1)
+    try:
+        reduction_i = int(reduction)
+    except Exception:
+        reduction_i = 1
+    if reduction_i != 1:
+        return ["nll_loss_forward_reduction_not_mean"]
+    dt_logits = _tensor_dtype(intent, ins[0])
+    dt_tgt = _tensor_dtype(intent, ins[1])
+    dt_w = _tensor_dtype(intent, ins[2])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_logits and dt_logits != "f32":
+        return ["nll_loss_forward_logits_dtype_not_f32"]
+    if dt_tgt and dt_tgt != "i64":
+        return ["nll_loss_forward_target_dtype_not_i64"]
+    if dt_w and dt_w != "f32":
+        return ["nll_loss_forward_weight_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["nll_loss_forward_out_dtype_not_f32"]
+    return []
+
+
+def _check_nll_loss2d_forward(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 3 or not out:
+        return ["nll_loss2d_forward_invalid_io"]
+    logits_shape = _tensor_shape(intent, ins[0])
+    tgt_shape = _tensor_shape(intent, ins[1])
+    w_shape = _tensor_shape(intent, ins[2])
+    out_shape = _tensor_shape(intent, out)
+    if logits_shape and len(logits_shape) != 4:
+        return ["nll_loss2d_forward_logits_rank_not_4"]
+    if tgt_shape and len(tgt_shape) != 3:
+        return ["nll_loss2d_forward_target_rank_not_3"]
+    if w_shape and len(w_shape) != 1:
+        return ["nll_loss2d_forward_weight_rank_not_1"]
+    if out_shape and len(out_shape) != 0:
+        return ["nll_loss2d_forward_out_rank_not_0"]
+    if logits_shape and tgt_shape:
+        if logits_shape[0] != tgt_shape[0] or logits_shape[2] != tgt_shape[1] or logits_shape[3] != tgt_shape[2]:
+            return ["nll_loss2d_forward_nhw_mismatch"]
+    if logits_shape and w_shape:
+        if logits_shape[1] != w_shape[0]:
+            return ["nll_loss2d_forward_c_mismatch"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    reduction = attrs.get("reduction", 1)
+    try:
+        reduction_i = int(reduction)
+    except Exception:
+        reduction_i = 1
+    if reduction_i != 1:
+        return ["nll_loss2d_forward_reduction_not_mean"]
+    dt_logits = _tensor_dtype(intent, ins[0])
+    dt_tgt = _tensor_dtype(intent, ins[1])
+    dt_w = _tensor_dtype(intent, ins[2])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_logits and dt_logits != "f32":
+        return ["nll_loss2d_forward_logits_dtype_not_f32"]
+    if dt_tgt and dt_tgt != "i64":
+        return ["nll_loss2d_forward_target_dtype_not_i64"]
+    if dt_w and dt_w != "f32":
+        return ["nll_loss2d_forward_weight_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["nll_loss2d_forward_out_dtype_not_f32"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     intent_name = str(intent.get("name") or "").strip()
@@ -1412,6 +1506,10 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_matmul(intent, o))
         elif name == "mse_loss":
             reasons.extend(_check_mse_loss(intent, o))
+        elif name == "nll_loss_forward":
+            reasons.extend(_check_nll_loss_forward(intent, o))
+        elif name == "nll_loss2d_forward":
+            reasons.extend(_check_nll_loss2d_forward(intent, o))
         elif name == "std":
             reasons.extend(_check_std(intent, o))
         elif name == "reduce_sum":
