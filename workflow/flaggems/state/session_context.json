@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-03-01T15:08:49+00:00",
+  "updated_at": "2026-03-01T15:26:35+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "de95853 workflow: refresh refactor_context snapshot\n5849b2d workflow: refresh kernel_denominators snapshot\ne1d9976 workflow: refresh refactor_context for wave25 real-mlir\nf2a63e7 fix(pipeline): default MKL_THREADING_LAYER=GNU to avoid OMP SHM2 crash\nf1e0695 workflow(cuda-real-mlir): add wave25 allowlist + refresh support report\n6beacce tests(cuda-real-mlir): add wave25 unique/nonzero codegen\n051e0cc backend(cuda-real-mlir): wave25 add unique+nonzero\nc2a5c47 workflow(cuda-real-mlir): add wave24 allowlist + refresh support report\n30ae365 tests(cuda-real-mlir): add wave24 conv codegen\ne7f0afb backend(cuda-real-mlir): wave24 add conv kernels\nbb3cb73 workflow(cuda-real-mlir): add wave23 allowlist + refresh support report\n766f84d tests(cuda-real-mlir): add wave23 sdpa/flash codegen\n0163c8d backend(cuda-real-mlir): wave23 add sdpa_bhsd kernel\n6bc4b82 workflow(cuda-real-mlir): add wave22 allowlist + refresh support report\n8e9301e tests(cuda-real-mlir): add wave22 per_token+batch_norm codegen\n60fac06 backend(cuda-real-mlir): wave22 add per_token quant + batch_norm2d\nc8bc3c7 workflow(cuda-real-mlir): add wave21 allowlist + refresh support report\n9a9760d tests(cuda-real-mlir): add wave21 nll_loss codegen\n5c3d950 backend(cuda-real-mlir): wave21 add nll_loss forward kernels\n0e937b4 workflow(cuda-real-mlir): add wave20 allowlist + refresh support report",
+  "git_log_short": "86c991a fix(mkl): set MKL_THREADING_LAYER=GNU before numpy in torch-lazy modules\nc11f23e backend(rvv-real-mlir): support --shape in mlir helpers + enable opt -mattr=+v\n7ad98cd tests(cuda-real-mlir): assert support_report covers all kernels\nbf078a3 workflow: refresh current_status + session_context snapshots\nde95853 workflow: refresh refactor_context snapshot\n5849b2d workflow: refresh kernel_denominators snapshot\ne1d9976 workflow: refresh refactor_context for wave25 real-mlir\nf2a63e7 fix(pipeline): default MKL_THREADING_LAYER=GNU to avoid OMP SHM2 crash\nf1e0695 workflow(cuda-real-mlir): add wave25 allowlist + refresh support report\n6beacce tests(cuda-real-mlir): add wave25 unique/nonzero codegen\n051e0cc backend(cuda-real-mlir): wave25 add unique+nonzero\nc2a5c47 workflow(cuda-real-mlir): add wave24 allowlist + refresh support report\n30ae365 tests(cuda-real-mlir): add wave24 conv codegen\ne7f0afb backend(cuda-real-mlir): wave24 add conv kernels\nbb3cb73 workflow(cuda-real-mlir): add wave23 allowlist + refresh support report\n766f84d tests(cuda-real-mlir): add wave23 sdpa/flash codegen\n0163c8d backend(cuda-real-mlir): wave23 add sdpa_bhsd kernel\n6bc4b82 workflow(cuda-real-mlir): add wave22 allowlist + refresh support report\n8e9301e tests(cuda-real-mlir): add wave22 per_token+batch_norm codegen\n60fac06 backend(cuda-real-mlir): wave22 add per_token quant + batch_norm2d",
   "progress_tail": [
     {
       "ts": "2026-03-01T04:20:23+00:00",
