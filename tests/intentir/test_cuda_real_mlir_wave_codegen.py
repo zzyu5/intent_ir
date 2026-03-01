@@ -1164,8 +1164,8 @@ def _nonzero2d_intent() -> IntentFunction:
         (_kron2d_intent, {"M": 4, "N": 8, "P": 2, "Q": 3, "MP": 8, "NQ": 24}, "kron2d_v1", "%out_row = arith.divui %lin, %cNQ"),
         (_cumsum2d_intent, {"M": 4, "N": 64}, "cumsum2d_axis1_v1", "gpu.shuffle up"),
         (_normed_cumsum2d_intent, {"M": 4, "N": 64}, "normed_cumsum2d_axis1_v1", "arith.divf %full_scan, %denom"),
-        (_cummax1d_intent, {"N": 64}, "cummax1d_axis0_v1", "arith.maximumf %acc, %xv"),
-        (_cummin1d_intent, {"N": 64}, "cummin1d_axis0_v1", "arith.minimumf %acc, %xv"),
+        (_cummax1d_intent, {"N": 64}, "cummax1d_axis0_v1", "arith.maximumf %xv0, %s1"),
+        (_cummin1d_intent, {"N": 64}, "cummin1d_axis0_v1", "arith.minimumf %xv0, %s1"),
         # wave17
         (_sort2d_intent, {"M": 4, "N": 64}, "row_sort_axis1_bitonic_v1", "arith.xori %tid_i32"),
         (_sort_stable2d_intent, {"M": 4, "N": 64}, "row_sort_axis1_bitonic_stable_v1", "memref<512xf32, 3>"),
