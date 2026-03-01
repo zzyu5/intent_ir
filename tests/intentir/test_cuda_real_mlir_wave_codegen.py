@@ -792,6 +792,52 @@ def _masked_scatter2d_intent() -> IntentFunction:
     )
 
 
+def _nll_loss_forward_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nll_loss_forward",
+            "tensors": {
+                "self": {"dtype": "f32", "shape": ["N", "C"], "layout": "row_major"},
+                "target": {"dtype": "i64", "shape": ["N"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "nll_loss_forward",
+                    "inputs": ["self", "target", "weight"],
+                    "output": "output",
+                    "attrs": {"reduction": 1, "ignore_index": -100},
+                }
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _nll_loss2d_forward_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nll_loss2d_forward",
+            "tensors": {
+                "self": {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"},
+                "target": {"dtype": "i64", "shape": ["N", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "nll_loss2d_forward",
+                    "inputs": ["self", "target", "weight"],
+                    "output": "output",
+                    "attrs": {"reduction": 1, "ignore_index": -100},
+                }
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -849,6 +895,9 @@ def _masked_scatter2d_intent() -> IntentFunction:
         # wave20
         (_masked_select2d_intent, {"M": 4, "N": 64, "L": 128}, "masked_select2d_prefixsum_v1", "scan_i32"),
         (_masked_scatter2d_intent, {"M": 4, "N": 64, "L": 128}, "masked_scatter2d_prefixsum_v1", "scan_i32"),
+        # wave21
+        (_nll_loss_forward_intent, {"N": 16, "C": 8}, "nll_loss_forward_v1", "arith.constant -100 : i64"),
+        (_nll_loss2d_forward_intent, {"N": 2, "C": 4, "H": 4, "W": 4}, "nll_loss2d_forward_v1", "arith.constant -100 : i64"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
