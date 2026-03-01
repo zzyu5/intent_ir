@@ -537,6 +537,10 @@ def _cmd_mlir_pass(args: argparse.Namespace) -> int:
     payload = _load_intent_payload(Path(args.intent_json))
     intent = IntentFunction.from_json_dict(payload)
     module = to_mlir(intent)
+    shape_bindings = _parse_shape_bindings(getattr(args, "shape", None))
+    if shape_bindings:
+        module.meta = dict(module.meta or {})
+        module.meta["shape_bindings"] = dict(shape_bindings)
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_mlir_pass")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_module, trace = run_pipeline(
@@ -565,6 +569,25 @@ def _load_intent_payload(path: Path) -> dict:
     return payload
 
 
+def _parse_shape_bindings(raw: list[str] | None) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for item in list(raw or []):
+        s = str(item or "").strip()
+        if not s:
+            continue
+        if "=" not in s:
+            raise ValueError(f"invalid --shape {s!r} (expected KEY=INT)")
+        k, v = s.split("=", 1)
+        key = str(k).strip()
+        if not key:
+            raise ValueError(f"invalid --shape {s!r} (empty key)")
+        try:
+            out[key] = int(str(v).strip())
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"invalid --shape {s!r} (bad int): {type(e).__name__}: {e}") from e
+    return out
+
+
 def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
     from intent_ir.mlir import detect_mlir_toolchain, run_pipeline, to_mlir  # noqa: PLC0415
     from intent_ir.ir import IntentFunction  # noqa: PLC0415
@@ -580,6 +603,22 @@ def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
     else:
         pipeline = "downstream_cuda_llvm" if backend == "cuda" else "downstream_rvv_llvm"
     module = to_mlir(intent)
+    shape_bindings = _parse_shape_bindings(getattr(args, "shape", None))
+    if shape_bindings:
+        module.meta = dict(module.meta or {})
+        module.meta["shape_bindings"] = dict(shape_bindings)
+
+    def _attach_shapes(mod):  # noqa: ANN001
+        if not shape_bindings:
+            return mod
+        try:
+            mod.meta = dict(getattr(mod, "meta", None) or {})
+            mod.meta["shape_bindings"] = dict(shape_bindings)
+        except Exception:
+            pass
+        return mod
+
+    module = _attach_shapes(module)
     upstream_mod, upstream_trace = run_pipeline(
         module,
         "upstream",
@@ -587,6 +626,7 @@ def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
         out_dir=(out_dir / "upstream"),
         fail_on_error=bool(args.fail_on_error),
     )
+    upstream_mod = _attach_shapes(upstream_mod)
     midend_mod, midend_trace = run_pipeline(
         upstream_mod,
         "midend",
@@ -594,6 +634,7 @@ def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
         out_dir=(out_dir / "midend"),
         fail_on_error=bool(args.fail_on_error),
     )
+    midend_mod = _attach_shapes(midend_mod)
     downstream_mod, downstream_trace = run_pipeline(
         midend_mod,
         pipeline,
@@ -849,6 +890,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "downstream_rvv_std_llvm",
         ],
     )
+    mlir_pass.add_argument(
+        "--shape",
+        action="append",
+        default=[],
+        help="Override a shape symbol binding (repeatable), e.g. --shape M=256",
+    )
     mlir_pass.add_argument("--backend", default=None, help="Optional backend hint (cuda/rvv)")
     mlir_pass.add_argument("--out-dir", default=None, help="Output directory for module + pass trace")
     mlir_pass.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)
@@ -868,6 +915,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Downstream LLVM pipeline selector for emit-llvm. "
         "Use downstream_rvv_std_llvm for real-MLIR RVV proof runs.",
+    )
+    mlir_emit.add_argument(
+        "--shape",
+        action="append",
+        default=[],
+        help="Override a shape symbol binding (repeatable), e.g. --shape M=256",
     )
     mlir_emit.add_argument("--out-dir", default=None, help="Output directory for LLVM artifacts")
     mlir_emit.add_argument("--emit-bc", action=argparse.BooleanOptionalAction, default=True)

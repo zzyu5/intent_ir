@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from intent_ir.ir import IntentFunction
@@ -34,3 +35,27 @@ def test_downstream_rvv_std_llvm_emits_riscv_triple(tmp_path: Path) -> None:
     text = str(out.module_text or "")
     assert "target triple = \"riscv64-unknown-linux-gnu\"" in text
     assert str((out.meta or {}).get("llvm_dialect_origin") or "") == "mlir_translate"
+
+    llc = (toolchain.get("tools") or {}).get("llc") or {}
+    llc_path = str(llc.get("path") or "").strip()
+    if not (bool(llc.get("available")) and llc_path):
+        return
+    in_ll = tmp_path / "module.ll"
+    in_ll.write_text(text, encoding="utf-8")
+    out_s = tmp_path / "module.s"
+    p = subprocess.run(
+        [
+            llc_path,
+            "-mtriple=riscv64-unknown-linux-gnu",
+            "-mattr=+v",
+            "-O3",
+            "-filetype=asm",
+            str(in_ll),
+            "-o",
+            str(out_s),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr or p.stdout
+    assert "vsetvli" in out_s.read_text(encoding="utf-8")
