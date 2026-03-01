@@ -187,6 +187,25 @@ def _emit_elementwise_kernel(
             nm = ins[idx]
             return computed.get(nm) or _load(nm)
 
+        if name == "const":
+            if not out:
+                raise RuntimeError("invalid const op: missing output")
+            out_tt = (intent.tensors or {}).get(out)
+            if out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 const missing tensor spec: {out}")
+            if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+                raise RuntimeError(f"rvv cpu-loops v1 supports only f32 const, got out={out} dtype={getattr(out_tt,'dtype','')}")
+            if len(_shape(out, intent=intent, bindings=bindings)) != 0:
+                raise RuntimeError(f"rvv cpu-loops v1 const supports only scalar outputs, got out={out}")
+            try:
+                value = float(attrs.get("value"))
+            except Exception:
+                raise RuntimeError(f"rvv cpu-loops v1 const requires numeric attrs.value, got {attrs.get('value')!r}")
+            v = f"%{_mlir_ident(out)}_c"
+            lines.append(f"    {v} = arith.constant {value!r} : f32")
+            computed[out] = v
+            continue
+
         if name == "cast":
             if len(ins) != 1 or not out:
                 raise RuntimeError(f"invalid cast op: inputs={ins} output={out!r}")

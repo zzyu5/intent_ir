@@ -112,6 +112,24 @@ def _where2d_intent() -> IntentFunction:
     )
 
 
+def _neg2d_const_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "neg2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "neg_one": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "neg_one", "attrs": {"value": -1.0}},
+                {"op": "mul", "inputs": ["A", "neg_one"], "output": "out", "attrs": {}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -165,4 +183,15 @@ def test_rvv_cpu_loops_v1_supports_where2d(monkeypatch: pytest.MonkeyPatch) -> N
     assert "arith.select" in text
     assert "arith.cmpi" in text
     assert "xi8" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_const_scalar(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_neg2d_const_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    text = str(out.module_text or "")
+    assert "arith.constant -1.0" in text
+    assert "arith.mulf" in text
     _verify_with_mlir_opt(text)
