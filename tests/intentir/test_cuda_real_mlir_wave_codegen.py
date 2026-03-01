@@ -397,6 +397,47 @@ def _var_mean2d_intent() -> IntentFunction:
     )
 
 
+def _bmm3d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "bmm3d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["BATCH", "M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["BATCH", "K", "N"], "layout": "row_major"},
+                "O": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "matmul", "inputs": ["A", "B"], "output": "O"}],
+            "outputs": ["O"],
+        }
+    )
+
+
+def _baddbmm3d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "baddbmm3d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["BATCH", "M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["BATCH", "K", "N"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "matmul_out": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "scaled_matmul": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "scaled_bias": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "O": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "matmul", "inputs": ["A", "B"], "output": "matmul_out"},
+                {"op": "mul", "inputs": ["matmul_out", "alpha"], "output": "scaled_matmul"},
+                {"op": "mul", "inputs": ["bias", "beta"], "output": "scaled_bias"},
+                {"op": "add", "inputs": ["scaled_matmul", "scaled_bias"], "output": "O"},
+            ],
+            "outputs": ["O"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -423,6 +464,9 @@ def _var_mean2d_intent() -> IntentFunction:
         (_mse_loss2d_intent, {"M": 4, "N": 64}, "mse_loss2d_v1", "arith.mulf %d, %d"),
         (_std2d_intent, {"M": 4, "N": 64}, "row_std_axis1_v1", "memref.store %outv"),
         (_var_mean2d_intent, {"M": 4, "N": 64}, "row_var_axis1_v1", "memref.store %var"),
+        # wave15
+        (_bmm3d_intent, {"BATCH": 2, "M": 8, "K": 16, "N": 8}, "bmm_tile_v2", "batch_m = arith.muli %bid_b"),
+        (_baddbmm3d_intent, {"BATCH": 2, "M": 8, "K": 16, "N": 8}, "baddbmm_tile_v2", "batch_m = arith.muli %bid_b"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
@@ -440,4 +484,3 @@ def test_cuda_real_mlir_wave_codegen_and_is_parseable(
     assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == expected_kind
     assert str(needle) in out.module_text
     _verify_with_mlir_opt(out.module_text)
-
