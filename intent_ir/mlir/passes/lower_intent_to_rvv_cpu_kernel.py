@@ -298,6 +298,21 @@ def _emit_elementwise_kernel(
             computed[out] = v
             continue
 
+        if name == "identity":
+            if len(ins) != 1 or not out:
+                raise RuntimeError(f"invalid identity op: inputs={ins} output={out!r}")
+            for nm in [*ins, out]:
+                tt = (intent.tensors or {}).get(str(nm))
+                if tt is None:
+                    raise RuntimeError(f"rvv cpu-loops v1 missing tensor spec: {nm}")
+                if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+                    raise RuntimeError(
+                        f"rvv cpu-loops v1 supports only f32 for op {name}, got tensor={nm} dtype={getattr(tt, 'dtype', '')}"
+                    )
+            a = _in(0)
+            computed[out] = a
+            continue
+
         if name in {"add", "sub", "mul", "div", "max", "min"}:
             if len(ins) != 2 or not out:
                 raise RuntimeError(f"invalid binary op: {name} inputs={ins} output={out!r}")
