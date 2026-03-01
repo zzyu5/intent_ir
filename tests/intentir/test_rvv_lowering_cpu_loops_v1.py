@@ -243,6 +243,175 @@ def _unary2d_intent(op: str, *, name: str) -> IntentFunction:
     )
 
 
+def _argmax2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "argmax2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_index": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [{"op": "argmax", "inputs": ["inp"], "output": "out_index", "attrs": {"axis": 1}}],
+            "outputs": ["out_index"],
+        }
+    )
+
+
+def _argmin2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "argmin2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_index": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [{"op": "argmin", "inputs": ["inp"], "output": "out_index", "attrs": {"axis": 1}}],
+            "outputs": ["out_index"],
+        }
+    )
+
+
+def _prod_dim2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "prod_dim2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [{"op": "reduce_prod", "inputs": ["inp"], "output": "out", "attrs": {"dims": [1]}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _min2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "min2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "reduce_min",
+                    "inputs": ["inp"],
+                    "output": "out_value",
+                    "attrs": {"dims": [0, 1], "keepdims": False},
+                }
+            ],
+            "outputs": ["out_value"],
+        }
+    )
+
+
+def _min_dim2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "min_dim2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "indices": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "reduce_min",
+                    "inputs": ["inp"],
+                    "output": "out_value",
+                    "attrs": {"dims": [1], "keepdims": False},
+                },
+                {"op": "argmin", "inputs": ["inp"], "output": "indices", "attrs": {"axis": 1}},
+            ],
+            "outputs": ["out_value", "indices"],
+        }
+    )
+
+
+def _count_nonzero2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "count_nonzero2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "is_nonzero_bool": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "is_nonzero_i64": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0}},
+                {"op": "ne", "inputs": ["x", "zero_const"], "output": "is_nonzero_bool", "attrs": {}},
+                {"op": "cast", "inputs": ["is_nonzero_bool"], "output": "is_nonzero_i64", "attrs": {"to": "i64"}},
+                {"op": "reduce_sum", "inputs": ["is_nonzero_i64"], "output": "out", "attrs": {"dims": [0, 1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _trace2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "trace2d",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "diag_mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "diag_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "eq", "inputs": ["row_idx", "col_idx"], "output": "diag_mask", "attrs": {}},
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0, "dtype": "f32"}},
+                {"op": "where", "inputs": ["diag_mask", "input", "zero_const"], "output": "diag_vals", "attrs": {}},
+                {"op": "reduce_sum", "inputs": ["diag_vals"], "output": "out", "attrs": {"dims": [0, 1], "keepdims": False}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _allclose2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "allclose2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "rtol": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "atol": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "diff": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "abs_diff": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "abs_b": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "rtol_term": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "tol": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "close_mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "not_close": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "any_not_close": {"dtype": "bool", "shape": [], "layout": "row_major"},
+                "output": {"dtype": "bool", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sub", "inputs": ["A", "B"], "output": "diff", "attrs": {}},
+                {"op": "abs", "inputs": ["diff"], "output": "abs_diff", "attrs": {}},
+                {"op": "abs", "inputs": ["B"], "output": "abs_b", "attrs": {}},
+                {"op": "mul", "inputs": ["rtol", "abs_b"], "output": "rtol_term", "attrs": {}},
+                {"op": "add", "inputs": ["atol", "rtol_term"], "output": "tol", "attrs": {}},
+                {"op": "le", "inputs": ["abs_diff", "tol"], "output": "close_mask", "attrs": {}},
+                {"op": "not", "inputs": ["close_mask"], "output": "not_close", "attrs": {}},
+                {"op": "reduce_any", "inputs": ["not_close"], "output": "any_not_close", "attrs": {"dims": [0, 1]}},
+                {"op": "not", "inputs": ["any_not_close"], "output": "output", "attrs": {}},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -387,4 +556,104 @@ def test_rvv_cpu_loops_v1_supports_more_unary_ops(
     out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
     text = str(out.module_text or "")
     assert expected_mlir in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_argmax2d_i32_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_argmax2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_row_argmax_axis1_v1"
+    text = str(out.module_text or "")
+    assert "memref<4xi32>" in text
+    assert "arith.cmpf ogt" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_argmin2d_i32_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_argmin2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_row_argmin_axis1_v1"
+    text = str(out.module_text or "")
+    assert "memref<4xi32>" in text
+    assert "arith.cmpf olt" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_prod_dim2d_row_reduce(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_prod_dim2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_row_reduce_prod_axis1_v1"
+    text = str(out.module_text or "")
+    assert "arith.mulf" in text
+    assert "memref<4xf32>" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_min2d_scalar_reduce(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_min2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_reduce_min_all_v1"
+    text = str(out.module_text or "")
+    assert "memref<1xf32>" in text
+    assert "arith.minimumf" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_min_dim2d_value_and_indices(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_min_dim2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_row_reduce_min_argmin_axis1_v1"
+    text = str(out.module_text or "")
+    assert "memref<4xf32>" in text
+    assert "memref<4xi32>" in text
+    assert "arith.cmpf olt" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_count_nonzero2d_i64(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_count_nonzero2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_count_nonzero2d_v1"
+    text = str(out.module_text or "")
+    assert "memref<1xi64>" in text
+    assert "cmpf une" in text
+    assert "arith.addi" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_trace2d_scalar(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_trace2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_trace2d_v1"
+    text = str(out.module_text or "")
+    assert "memref<1xf32>" in text
+    assert "memref.load %input[%idx]" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_allclose2d_bool_scalar(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_allclose2d_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_allclose2d_v1"
+    text = str(out.module_text or "")
+    assert "memref<1xi8>" in text
+    assert "math.absf" in text
+    assert "arith.cmpf ole" in text
+    assert "arith.extui" in text
     _verify_with_mlir_opt(text)
