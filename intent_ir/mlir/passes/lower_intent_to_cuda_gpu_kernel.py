@@ -1709,6 +1709,8 @@ def lower_intent_to_cuda_gpu_kernel(
     scatter2d_dim1_v1: dict[str, Any] | None = None
     select_scatter2d_dim1_v1: dict[str, Any] | None = None
     slice_scatter2d_dim1_v1: dict[str, Any] | None = None
+    masked_select2d_v1: dict[str, Any] | None = None
+    masked_scatter2d_v1: dict[str, Any] | None = None
     avg_pool2d_nchw_v1: dict[str, Any] | None = None
     max_pool2d_with_indices_nchw_v1: dict[str, Any] | None = None
 
@@ -3176,6 +3178,97 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "end": int(end_i),
                                     "step": int(step_i),
                                     "L": int(l_src),
+                                }
+
+        # Wave20 (coverage_batches backfill): masked_select/masked_scatter (single-CTA prefix-sum).
+        if masked_select2d_v1 is None and intent_name == "masked_select2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                if op0_name == "masked_select" and len(op0_inputs) == 2 and op0_out == str(out_name):
+                    inp_name, mask_name = map(str, op0_inputs)
+                    required = {inp_name, mask_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        in_dims = list(arg_specs[inp_name].get("dims") or [])
+                        mask_dims = list(arg_specs[mask_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(in_dims) == 2 and in_dims == mask_dims and len(out_dims2) == 1 and out_rank == 1:
+                            m_dim, n_dim = map(int, in_dims)
+                            l_dim = int(out_dims2[0])
+                            t_dim = int(m_dim * n_dim)
+                            block_threads = 1 << (int(t_dim - 1).bit_length()) if t_dim > 0 else 1
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and l_dim > 0
+                                and t_dim > 0
+                                and l_dim <= t_dim
+                                and t_dim <= 1024
+                                and block_threads <= 1024
+                                and str(arg_specs[inp_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[mask_name].get("memref_elem_ty") or "") in {"i1", "i8", "i32"}
+                            )
+                            if ok:
+                                masked_select2d_v1 = {
+                                    "inp": str(inp_name),
+                                    "mask": str(mask_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "L": int(l_dim),
+                                    "T": int(t_dim),
+                                    "block_threads": int(block_threads),
+                                }
+
+        if masked_scatter2d_v1 is None and intent_name == "masked_scatter2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                if op0_name == "masked_scatter" and len(op0_inputs) == 3 and op0_out == str(out_name):
+                    inp_name, mask_name, src_name = map(str, op0_inputs)
+                    required = {inp_name, mask_name, src_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        in_dims = list(arg_specs[inp_name].get("dims") or [])
+                        mask_dims = list(arg_specs[mask_name].get("dims") or [])
+                        src_dims = list(arg_specs[src_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(in_dims) == 2 and in_dims == mask_dims and len(src_dims) == 1 and len(out_dims2) == 2 and out_rank == 2:
+                            m_dim, n_dim = map(int, in_dims)
+                            l_dim = int(src_dims[0])
+                            m_out, n_out = map(int, out_dims2)
+                            t_dim = int(m_dim * n_dim)
+                            block_threads = 1 << (int(t_dim - 1).bit_length()) if t_dim > 0 else 1
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and l_dim > 0
+                                and t_dim > 0
+                                and l_dim <= t_dim
+                                and m_out == m_dim
+                                and n_out == n_dim
+                                and t_dim <= 1024
+                                and block_threads <= 1024
+                                and str(arg_specs[inp_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[src_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[mask_name].get("memref_elem_ty") or "") in {"i1", "i8", "i32"}
+                            )
+                            if ok:
+                                masked_scatter2d_v1 = {
+                                    "inp": str(inp_name),
+                                    "mask": str(mask_name),
+                                    "src": str(src_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "L": int(l_dim),
+                                    "T": int(t_dim),
+                                    "block_threads": int(block_threads),
                                 }
 
         # Pattern: matmul family (Triton-native perf/coverage kernels).
@@ -9483,6 +9576,195 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %vv = memref.load {arg_ssa[src_name]}[%src_idx] : {src_memref}")
         lines.append(f"          memref.store %vv, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
+        lines.append("      }")
+    elif masked_select2d_v1 is not None:
+        kernel_kind = "masked_select2d_prefixsum_v1"
+        m_dim = int(masked_select2d_v1["M"])
+        n_dim = int(masked_select2d_v1["N"])
+        l_dim = int(masked_select2d_v1["L"])
+        t_dim = int(masked_select2d_v1["T"])
+        block_threads = int(masked_select2d_v1["block_threads"])
+        if m_dim <= 0 or n_dim <= 0 or l_dim <= 0 or t_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim} L={l_dim} T={t_dim}")
+        if l_dim > t_dim:
+            raise RuntimeError(f"{kernel_kind} requires L<=T, got L={l_dim} T={t_dim}")
+        if t_dim > 1024 or block_threads > 1024:
+            raise RuntimeError(f"{kernel_kind} currently requires T<=1024, got T={t_dim} block={block_threads}")
+
+        inp_name = str(masked_select2d_v1["inp"])
+        mask_name = str(masked_select2d_v1["mask"])
+        out_name2 = str(masked_select2d_v1["out"])
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        mask_memref = str(arg_specs[mask_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        mask_elem_ty = str(arg_specs[mask_name].get("memref_elem_ty") or "")
+
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [1, 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_scan_i32"
+        shared_global_memref_ty = f"memref<{int(block_threads)}xi32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cT = arith.constant {int(t_dim)} : index")
+        lines.append(f"      %cL = arith.constant {int(l_dim)} : index")
+        lines.append("      %pred = arith.cmpi ult, %tid, %cT : index")
+        lines.append("      %m = scf.if %pred -> (i1) {")
+        if mask_elem_ty == "i1":
+            lines.append(f"        %raw = memref.load {arg_ssa[mask_name]}[%tid] : {mask_memref}")
+            lines.append("        scf.yield %raw : i1")
+        elif mask_elem_ty == "i8":
+            lines.append(f"        %raw = memref.load {arg_ssa[mask_name]}[%tid] : {mask_memref}")
+            lines.append("        %c0_i8 = arith.constant 0 : i8")
+            lines.append("        %p = arith.cmpi ne, %raw, %c0_i8 : i8")
+            lines.append("        scf.yield %p : i1")
+        elif mask_elem_ty == "i32":
+            lines.append(f"        %raw = memref.load {arg_ssa[mask_name]}[%tid] : {mask_memref}")
+            lines.append("        %c0_i32 = arith.constant 0 : i32")
+            lines.append("        %p = arith.cmpi ne, %raw, %c0_i32 : i32")
+            lines.append("        scf.yield %p : i1")
+        else:
+            raise RuntimeError(f"{kernel_kind} unsupported mask memref_elem_ty: {mask_elem_ty}")
+        lines.append("      } else {")
+        lines.append("        %f = arith.constant 0 : i1")
+        lines.append("        scf.yield %f : i1")
+        lines.append("      }")
+        lines.append("      %m_i32 = arith.extui %m : i1 to i32")
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"      memref.store %m_i32, %sh[%tid] : {shared_global_memref_ty}")
+        lines.append("      gpu.barrier")
+
+        # Inclusive scan over i32 flags in shared memory.
+        for off in [2**x for x in range(0, int(block_threads).bit_length()) if 2**x < int(block_threads)]:
+            if off <= 0:
+                continue
+            lines.append(f"      %cOff_{off} = arith.constant {int(off)} : index")
+            lines.append(f"      %ge_{off} = arith.cmpi uge, %tid, %cOff_{off} : index")
+            lines.append(f"      %val_{off} = scf.if %ge_{off} -> (i32) {{")
+            lines.append(f"        %a_{off} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"        %tid_off_{off} = arith.subi %tid, %cOff_{off} : index")
+            lines.append(f"        %b_{off} = memref.load %sh[%tid_off_{off}] : {shared_global_memref_ty}")
+            lines.append(f"        %sum_{off} = arith.addi %a_{off}, %b_{off} : i32")
+            lines.append(f"        scf.yield %sum_{off} : i32")
+            lines.append("      } else {")
+            lines.append(f"        %a0_{off} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"        scf.yield %a0_{off} : i32")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
+            lines.append(f"      memref.store %val_{off}, %sh[%tid] : {shared_global_memref_ty}")
+            lines.append("      gpu.barrier")
+
+        lines.append("      scf.if %pred {")
+        lines.append("        scf.if %m {")
+        lines.append(f"          %prefix = memref.load %sh[%tid] : {shared_global_memref_ty}")
+        lines.append("          %c1_i32 = arith.constant 1 : i32")
+        lines.append("          %pos_i32 = arith.subi %prefix, %c1_i32 : i32")
+        lines.append(f"          %cL_i32 = arith.constant {int(l_dim)} : i32")
+        lines.append("          %lt = arith.cmpi slt, %pos_i32, %cL_i32 : i32")
+        lines.append("          scf.if %lt {")
+        lines.append("            %pos = arith.index_cast %pos_i32 : i32 to index")
+        lines.append(f"            %x = memref.load {arg_ssa[inp_name]}[%tid] : {inp_memref}")
+        lines.append(f"            memref.store %x, {arg_ssa[out_name2]}[%pos] : {out_memref}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("      }")
+    elif masked_scatter2d_v1 is not None:
+        kernel_kind = "masked_scatter2d_prefixsum_v1"
+        m_dim = int(masked_scatter2d_v1["M"])
+        n_dim = int(masked_scatter2d_v1["N"])
+        l_dim = int(masked_scatter2d_v1["L"])
+        t_dim = int(masked_scatter2d_v1["T"])
+        block_threads = int(masked_scatter2d_v1["block_threads"])
+        if m_dim <= 0 or n_dim <= 0 or l_dim <= 0 or t_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim} L={l_dim} T={t_dim}")
+        if l_dim > t_dim:
+            raise RuntimeError(f"{kernel_kind} requires L<=T, got L={l_dim} T={t_dim}")
+        if t_dim > 1024 or block_threads > 1024:
+            raise RuntimeError(f"{kernel_kind} currently requires T<=1024, got T={t_dim} block={block_threads}")
+
+        inp_name = str(masked_scatter2d_v1["inp"])
+        mask_name = str(masked_scatter2d_v1["mask"])
+        src_name = str(masked_scatter2d_v1["src"])
+        out_name2 = str(masked_scatter2d_v1["out"])
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        mask_memref = str(arg_specs[mask_name]["memref"])
+        src_memref = str(arg_specs[src_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        mask_elem_ty = str(arg_specs[mask_name].get("memref_elem_ty") or "")
+
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [1, 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_scan_i32"
+        shared_global_memref_ty = f"memref<{int(block_threads)}xi32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cT = arith.constant {int(t_dim)} : index")
+        lines.append("      %pred = arith.cmpi ult, %tid, %cT : index")
+        lines.append("      %m = scf.if %pred -> (i1) {")
+        if mask_elem_ty == "i1":
+            lines.append(f"        %raw = memref.load {arg_ssa[mask_name]}[%tid] : {mask_memref}")
+            lines.append("        scf.yield %raw : i1")
+        elif mask_elem_ty == "i8":
+            lines.append(f"        %raw = memref.load {arg_ssa[mask_name]}[%tid] : {mask_memref}")
+            lines.append("        %c0_i8 = arith.constant 0 : i8")
+            lines.append("        %p = arith.cmpi ne, %raw, %c0_i8 : i8")
+            lines.append("        scf.yield %p : i1")
+        elif mask_elem_ty == "i32":
+            lines.append(f"        %raw = memref.load {arg_ssa[mask_name]}[%tid] : {mask_memref}")
+            lines.append("        %c0_i32 = arith.constant 0 : i32")
+            lines.append("        %p = arith.cmpi ne, %raw, %c0_i32 : i32")
+            lines.append("        scf.yield %p : i1")
+        else:
+            raise RuntimeError(f"{kernel_kind} unsupported mask memref_elem_ty: {mask_elem_ty}")
+        lines.append("      } else {")
+        lines.append("        %f = arith.constant 0 : i1")
+        lines.append("        scf.yield %f : i1")
+        lines.append("      }")
+        lines.append("      %m_i32 = arith.extui %m : i1 to i32")
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"      memref.store %m_i32, %sh[%tid] : {shared_global_memref_ty}")
+        lines.append("      gpu.barrier")
+
+        for off in [2**x for x in range(0, int(block_threads).bit_length()) if 2**x < int(block_threads)]:
+            if off <= 0:
+                continue
+            lines.append(f"      %cOff_{off} = arith.constant {int(off)} : index")
+            lines.append(f"      %ge_{off} = arith.cmpi uge, %tid, %cOff_{off} : index")
+            lines.append(f"      %val_{off} = scf.if %ge_{off} -> (i32) {{")
+            lines.append(f"        %a_{off} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"        %tid_off_{off} = arith.subi %tid, %cOff_{off} : index")
+            lines.append(f"        %b_{off} = memref.load %sh[%tid_off_{off}] : {shared_global_memref_ty}")
+            lines.append(f"        %sum_{off} = arith.addi %a_{off}, %b_{off} : i32")
+            lines.append(f"        scf.yield %sum_{off} : i32")
+            lines.append("      } else {")
+            lines.append(f"        %a0_{off} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"        scf.yield %a0_{off} : i32")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
+            lines.append(f"      memref.store %val_{off}, %sh[%tid] : {shared_global_memref_ty}")
+            lines.append("      gpu.barrier")
+
+        lines.append("      scf.if %pred {")
+        lines.append(f"        %x = memref.load {arg_ssa[inp_name]}[%tid] : {inp_memref}")
+        lines.append("        %outv = scf.if %m -> (f32) {")
+        lines.append(f"          %prefix = memref.load %sh[%tid] : {shared_global_memref_ty}")
+        lines.append("          %c1_i32 = arith.constant 1 : i32")
+        lines.append("          %pos_i32 = arith.subi %prefix, %c1_i32 : i32")
+        lines.append(f"          %cL_i32 = arith.constant {int(l_dim)} : i32")
+        lines.append("          %lt = arith.cmpi slt, %pos_i32, %cL_i32 : i32")
+        lines.append("          %v = scf.if %lt -> (f32) {")
+        lines.append("            %pos = arith.index_cast %pos_i32 : i32 to index")
+        lines.append(f"            %sv = memref.load {arg_ssa[src_name]}[%pos] : {src_memref}")
+        lines.append("            scf.yield %sv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %x : f32")
+        lines.append("          }")
+        lines.append("          scf.yield %v : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %x : f32")
+        lines.append("        }")
+        lines.append(f"        memref.store %outv, {arg_ssa[out_name2]}[%tid] : {out_memref}")
         lines.append("      }")
     elif avg_pool2d_nchw_v1 is not None:
         kernel_kind = "avg_pool2d_nchw_v1"
