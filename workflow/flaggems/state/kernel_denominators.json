@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_kernel_denominators_v1",
-  "generated_at_utc": "2026-02-27T09:52:39+00:00",
+  "generated_at_utc": "2026-03-01T15:02:53+00:00",
   "repo": {
-    "head_commit": "b805720ce4c9babec4ed111c3caf2220aa66b90b",
+    "head_commit": "e1d99769b38b87aaf760a7c6c62b5d4c7d01c963",
     "branch": "compiler-cleanup-v1",
-    "dirty": true,
-    "git_describe": "b805720-dirty"
+    "dirty": false,
+    "git_describe": "e1d9976"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
