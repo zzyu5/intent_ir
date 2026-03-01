@@ -153,6 +153,20 @@ def _maximum2d_bf16_intent() -> IntentFunction:
     )
 
 
+def _unary2d_intent(op: str, *, name: str) -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": name,
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": str(op), "inputs": ["x"], "output": "out", "attrs": {}}],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -229,4 +243,25 @@ def test_rvv_cpu_loops_v1_normalizes_bf16_to_f32(monkeypatch: pytest.MonkeyPatch
     text = str(out.module_text or "")
     assert "bf16" not in text
     assert "arith.maximumf" in text
+    _verify_with_mlir_opt(text)
+
+
+@pytest.mark.parametrize(
+    ("op_name", "expected_mlir"),
+    [
+        ("floor", "math.floor"),
+        ("ceil", "math.ceil"),
+        ("log", "math.log"),
+        ("sin", "math.sin"),
+    ],
+)
+def test_rvv_cpu_loops_v1_supports_more_unary_ops(
+    monkeypatch: pytest.MonkeyPatch, op_name: str, expected_mlir: str
+) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_unary2d_intent(op_name, name=f"{op_name}2d"))
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    text = str(out.module_text or "")
+    assert expected_mlir in text
     _verify_with_mlir_opt(text)

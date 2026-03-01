@@ -291,7 +291,7 @@ def _emit_elementwise_kernel(
             computed[out] = v
             continue
 
-        if name in {"relu", "abs", "sqrt", "rsqrt", "exp", "exp2", "neg"}:
+        if name in {"relu", "abs", "sqrt", "rsqrt", "exp", "exp2", "neg", "floor", "ceil", "log", "sin", "cos", "tan"}:
             if len(ins) != 1 or not out:
                 raise RuntimeError(f"invalid unary op: {name} inputs={ins} output={out!r}")
             for nm in [*ins, out]:
@@ -316,6 +316,15 @@ def _emit_elementwise_kernel(
                 lines.append(f"    {v} = arith.negf {a} : f32")
             elif name == "exp2":
                 lines.append(f"    {v} = math.exp2 {a} : f32")
+            elif name == "floor":
+                lines.append(f"    {v} = math.floor {a} : f32")
+            elif name == "ceil":
+                lines.append(f"    {v} = math.ceil {a} : f32")
+            elif name == "log":
+                lines.append(f"    {v} = math.log {a} : f32")
+            elif name in {"sin", "cos", "tan"}:
+                mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[name]
+                lines.append(f"    {v} = {mop} {a} : f32")
             else:
                 base = attrs.get("base")
                 if base in (2, 2.0):
