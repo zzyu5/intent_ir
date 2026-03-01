@@ -209,10 +209,15 @@ def _real_mlir_enabled() -> bool:
 
 
 _CUDA_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
+_RVV_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
 
 
 def _cuda_real_mlir_wave_name() -> str:
     return str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+
+
+def _rvv_real_mlir_wave_name() -> str:
+    return str(os.getenv("INTENTIR_RVV_REAL_MLIR_WAVE", "")).strip().lower()
 
 
 def _load_cuda_real_mlir_wave_kernels(wave: str) -> set[str]:
@@ -237,6 +242,31 @@ def _load_cuda_real_mlir_wave_kernels(wave: str) -> set[str]:
     except Exception:
         kernels = set()
     _CUDA_REAL_MLIR_WAVE_KERNELS[wave_name] = kernels
+    return kernels
+
+
+def _load_rvv_real_mlir_wave_kernels(wave: str) -> set[str]:
+    wave_name = str(wave or "").strip().lower()
+    if not wave_name:
+        return set()
+    cached = _RVV_REAL_MLIR_WAVE_KERNELS.get(wave_name)
+    if cached is not None:
+        return cached
+
+    path = ROOT / "workflow" / "flaggems" / "state" / f"rvv_real_mlir_{wave_name}_kernels.json"
+    kernels: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            rows = payload.get("kernels")
+            if isinstance(rows, list):
+                for x in rows:
+                    name = str(x).strip()
+                    if name:
+                        kernels.add(name)
+    except Exception:
+        kernels = set()
+    _RVV_REAL_MLIR_WAVE_KERNELS[wave_name] = kernels
     return kernels
 
 
@@ -267,6 +297,12 @@ def _downstream_llvm_pipeline(
             return None, None
         return "downstream_cuda_llvm", "cuda"
     if target.startswith("rvv"):
+        wave = _rvv_real_mlir_wave_name()
+        if _real_mlir_enabled():
+            kernels = _load_rvv_real_mlir_wave_kernels(wave) if wave else set()
+            if spec_name and str(spec_name) in kernels:
+                return "downstream_rvv_std_llvm", "rvv"
+            return None, None
         return "downstream_rvv_llvm", "rvv"
     return None, None
 
@@ -356,6 +392,10 @@ def _emit_mlir_shadow_artifacts(
                 "cuda"
             ):
                 mlir_report["llvm_skip_reason"] = "cuda_real_mlir_wave_excludes_kernel"
+            elif _rvv_real_mlir_wave_name() and _real_mlir_enabled() and str(backend_target or "").strip().lower().startswith(
+                "rvv"
+            ):
+                mlir_report["llvm_skip_reason"] = "rvv_real_mlir_wave_excludes_kernel"
             else:
                 mlir_report["llvm_skip_reason"] = "llvm_pipeline_not_configured"
         else:
