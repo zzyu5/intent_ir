@@ -519,6 +519,44 @@ def _maybe_rewrite_relu2d_where_pattern(intent: IntentFunction) -> IntentFunctio
     )
 
 
+def _maybe_normalize_bf16_to_f32(intent: IntentFunction) -> tuple[IntentFunction, bool]:
+    """
+    FlagGems runners stage bf16 tensors as f32 (NumPy cannot represent bfloat16
+    natively and torch->numpy conversion fails). For RVV cpu-loops v1, normalize
+    bf16 tensors to f32 so the emitted ABI matches baseline snapshots.
+    """
+    tensors = dict(intent.tensors or {})
+    has_bf16 = any(str(getattr(t, "dtype", "")).strip().lower() == "bf16" for t in tensors.values())
+    if not has_bf16:
+        return intent, False
+
+    payload = intent.to_json_dict()
+    tensors_json = payload.get("tensors")
+    if isinstance(tensors_json, dict):
+        for spec in tensors_json.values():
+            if not isinstance(spec, dict):
+                continue
+            if str(spec.get("dtype") or "").strip().lower() == "bf16":
+                spec["dtype"] = "f32"
+
+    ops_json = payload.get("ops")
+    if isinstance(ops_json, list):
+        for op in ops_json:
+            if not isinstance(op, dict):
+                continue
+            op_name = str(op.get("op") or "").strip()
+            attrs = op.get("attrs")
+            if not isinstance(attrs, dict):
+                attrs = {}
+                op["attrs"] = attrs
+            if op_name == "cast" and str(attrs.get("to") or "").strip().lower() == "bf16":
+                attrs["to"] = "f32"
+            if op_name == "const" and str(attrs.get("dtype") or "").strip().lower() == "bf16":
+                attrs["dtype"] = "f32"
+
+    return IntentFunction.from_json_dict(payload), True
+
+
 def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | None = None, **_: object) -> IntentMLIRModule:
     b = str(backend or "").strip().lower()
     if b and not b.startswith("rvv") and b != "riscv":
@@ -532,6 +570,7 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
 
     intent = to_intent(module)
     intent = _maybe_rewrite_relu2d_where_pattern(intent)
+    intent, normalized_bf16 = _maybe_normalize_bf16_to_f32(intent)
     _ = materialize_missing_op_output_tensors(intent)
     kernel_name = str(intent.name or "intent")
 
@@ -555,6 +594,8 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     )
     out.meta["rvv_real_mlir_kernel_kind"] = str(kind)
     out.meta["rvv_real_mlir_kernel_emitted"] = True
+    if normalized_bf16:
+        out.meta["rvv_dtype_normalized_bf16_to_f32"] = True
     return out
 
 

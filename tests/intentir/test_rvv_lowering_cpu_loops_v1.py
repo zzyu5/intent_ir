@@ -130,6 +130,29 @@ def _neg2d_const_intent() -> IntentFunction:
     )
 
 
+def _maximum2d_bf16_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "maximum2d",
+            "tensors": {
+                "X": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Y": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "X_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Y_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "result_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["X"], "output": "X_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["Y"], "output": "Y_f32", "attrs": {"to": "f32"}},
+                {"op": "max", "inputs": ["X_f32", "Y_f32"], "output": "result_f32", "attrs": {}},
+                {"op": "cast", "inputs": ["result_f32"], "output": "Out", "attrs": {"to": "bf16"}},
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -194,4 +217,16 @@ def test_rvv_cpu_loops_v1_supports_const_scalar(monkeypatch: pytest.MonkeyPatch)
     text = str(out.module_text or "")
     assert "arith.constant -1.0" in text
     assert "arith.mulf" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_normalizes_bf16_to_f32(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_maximum2d_bf16_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert bool(out.meta.get("rvv_dtype_normalized_bf16_to_f32")) is True
+    text = str(out.module_text or "")
+    assert "bf16" not in text
+    assert "arith.maximumf" in text
     _verify_with_mlir_opt(text)

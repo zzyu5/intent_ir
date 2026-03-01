@@ -1,0 +1,27 @@
+{
+  "schema_version": "intentir_rvv_real_mlir_wave_v1",
+  "wave": "wave6",
+  "kernels": [
+    "add2d",
+    "mul2d",
+    "relu2d",
+    "exp2d",
+    "row_sum",
+    "row_max",
+    "clamp2d",
+    "cast2d",
+    "where2d",
+    "abs2d",
+    "div2d",
+    "sub2d",
+    "sqrt2d",
+    "rsqrt2d",
+    "addcmul2d",
+    "addcdiv2d",
+    "neg2d",
+    "exp22d",
+    "maximum2d",
+    "minimum2d"
+  ]
+}
+
