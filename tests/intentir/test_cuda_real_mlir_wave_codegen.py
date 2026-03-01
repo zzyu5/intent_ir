@@ -675,6 +675,92 @@ def _max_pool2d_with_indices_nchw_intent() -> IntentFunction:
     )
 
 
+def _index_add2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "index_add2d",
+            "tensors": {
+                "base": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "index": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["L", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "index_add", "inputs": ["base", "index", "src"], "output": "out", "attrs": {"axis": 0, "alpha": 1.0}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _index_put2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "index_put2d",
+            "tensors": {
+                "base": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "values": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "index_put", "inputs": ["base", "row_idx", "col_idx", "values"], "output": "out", "attrs": {"accumulate": False}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "index": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "scatter", "inputs": ["inp", "index", "src"], "output": "out", "attrs": {"dim": 1}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _select_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "select_scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "select_scatter", "inputs": ["inp", "src"], "output": "out", "attrs": {"dim": 1, "index": 0}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _slice_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "slice_scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "slice_scatter",
+                    "inputs": ["inp", "src"],
+                    "output": "out",
+                    "attrs": {"dim": 1, "start": 0, "end": 4, "step": 1},
+                }
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -723,6 +809,12 @@ def _max_pool2d_with_indices_nchw_intent() -> IntentFunction:
             "max_pool2d_with_indices_nchw_v1",
             "best_i3_i64",
         ),
+        # wave19
+        (_index_add2d_intent, {"M": 4, "N": 64, "L": 4}, "index_add2d_axis0_v1", "iter_args(%a = %base_v)"),
+        (_index_put2d_intent, {"M": 4, "N": 64, "L": 8}, "index_put2d_v1", "%match_row"),
+        (_scatter2d_intent, {"M": 4, "N": 64}, "scatter2d_dim1_v1", "%dst_i32 = memref.load"),
+        (_select_scatter2d_intent, {"M": 4, "N": 64}, "select_scatter2d_dim1_v1", "memref.load %src[%bid]"),
+        (_slice_scatter2d_intent, {"M": 4, "N": 64, "L": 4}, "slice_scatter2d_dim1_v1", "%dst_col = arith.addi"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
