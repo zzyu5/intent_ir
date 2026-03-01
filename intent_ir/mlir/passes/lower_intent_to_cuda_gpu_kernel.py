@@ -2752,15 +2752,19 @@ def lower_intent_to_cuda_gpu_kernel(
                                     }
 
         if weight_norm2d_v1 is None and intent_name == "weight_norm2d":
-            if len(ops_list) == 6 and out_rank == 2:
-                op0, op1, op2, op3, op4, op5 = ops_list
-                n0 = str(getattr(op0, "op", "")).strip()
-                n1 = str(getattr(op1, "op", "")).strip()
-                n2 = str(getattr(op2, "op", "")).strip()
-                n3 = str(getattr(op3, "op", "")).strip()
-                n4 = str(getattr(op4, "op", "")).strip()
-                n5 = str(getattr(op5, "op", "")).strip()
-                if (n0, n1, n2, n3, n4, n5) == ("mul", "reduce_sum", "sqrt", "div", "broadcast_in_dim", "mul"):
+            # backend_legalize may remove explicit broadcast_in_dim and rely on implicit
+            # broadcasting for mul([M,N],[M]) in the last op. Accept both forms.
+            if len(ops_list) in {5, 6} and out_rank == 2:
+                op_names = [str(getattr(op, "op", "")).strip() for op in ops_list]
+                has_bcast = len(ops_list) == 6 and op_names == ["mul", "reduce_sum", "sqrt", "div", "broadcast_in_dim", "mul"]
+                implicit_bcast = len(ops_list) == 5 and op_names == ["mul", "reduce_sum", "sqrt", "div", "mul"]
+                if has_bcast or implicit_bcast:
+                    op0 = ops_list[0]
+                    op1 = ops_list[1]
+                    op2 = ops_list[2]
+                    op3 = ops_list[3]
+                    op_last = ops_list[-1]
+
                     mul_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
                     mul_out = str(getattr(op0, "output", "")).strip()
                     red_inputs = [str(x) for x in list(getattr(op1, "inputs", []) or []) if str(x).strip()]
@@ -2773,23 +2777,36 @@ def lower_intent_to_cuda_gpu_kernel(
                     sqrt_out = str(getattr(op2, "output", "")).strip()
                     div_inputs = [str(x) for x in list(getattr(op3, "inputs", []) or []) if str(x).strip()]
                     div_out = str(getattr(op3, "output", "")).strip()
-                    bc_inputs = [str(x) for x in list(getattr(op4, "inputs", []) or []) if str(x).strip()]
-                    bc_out = str(getattr(op4, "output", "")).strip()
-                    bc_attrs = dict(getattr(op4, "attrs", {}) or {})
-                    bc_dims = bc_attrs.get("broadcast_dims")
-                    bc_dims_list = list(bc_dims) if isinstance(bc_dims, list) else []
-                    out_shape = bc_attrs.get("out_shape")
-                    out_shape_list = list(out_shape) if isinstance(out_shape, list) else []
-                    mul2_inputs = [str(x) for x in list(getattr(op5, "inputs", []) or []) if str(x).strip()]
-                    mul2_out = str(getattr(op5, "output", "")).strip()
+                    mul2_inputs = [str(x) for x in list(getattr(op_last, "inputs", []) or []) if str(x).strip()]
+                    mul2_out = str(getattr(op_last, "output", "")).strip()
                     v_name = str(mul_inputs[0]) if len(mul_inputs) == 2 and mul_inputs[0] == mul_inputs[1] else ""
+
+                    bc_out = None
+                    bc_dims_list: list[int] = []
+                    out_shape_list: list[object] = []
+                    if has_bcast:
+                        op_bcast = ops_list[4]
+                        bc_inputs = [str(x) for x in list(getattr(op_bcast, "inputs", []) or []) if str(x).strip()]
+                        bc_out = str(getattr(op_bcast, "output", "")).strip()
+                        bc_attrs = dict(getattr(op_bcast, "attrs", {}) or {})
+                        bc_dims = bc_attrs.get("broadcast_dims")
+                        bc_dims_list = list(bc_dims) if isinstance(bc_dims, list) else []
+                        out_shape = bc_attrs.get("out_shape")
+                        out_shape_list = list(out_shape) if isinstance(out_shape, list) else []
+                        bc_ok = bool(bc_out) and len(bc_inputs) == 1 and bc_inputs[0] == div_out and bc_dims_list == [0] and len(out_shape_list) == 2
+                    else:
+                        bc_ok = True
+
+                    last_in_set = set(mul2_inputs)
+                    ok_bc_mul = bool(bc_out) and len(mul2_inputs) == 2 and mul2_inputs[0] == v_name and mul2_inputs[1] == str(bc_out)
+                    ok_implicit_mul = len(mul2_inputs) == 2 and last_in_set == {v_name, div_out}
+
                     if (
                         v_name
                         and mul_out
                         and red_out
                         and sqrt_out
                         and div_out
-                        and bc_out
                         and mul2_out == str(out_name)
                         and len(red_inputs) == 1
                         and red_inputs[0] == mul_out
@@ -2797,15 +2814,10 @@ def lower_intent_to_cuda_gpu_kernel(
                         and sqrt_inputs[0] == red_out
                         and len(div_inputs) == 2
                         and div_inputs[1] == sqrt_out
-                        and len(bc_inputs) == 1
-                        and bc_inputs[0] == div_out
-                        and len(mul2_inputs) == 2
-                        and mul2_inputs[0] == v_name
-                        and mul2_inputs[1] == bc_out
                         and dims_list == [1]
                         and not keepdims
-                        and bc_dims_list == [0]
-                        and len(out_shape_list) == 2
+                        and bc_ok
+                        and (ok_bc_mul or ok_implicit_mul)
                     ):
                         g_name = str(div_inputs[0])
                         required = {v_name, g_name, str(out_name)}

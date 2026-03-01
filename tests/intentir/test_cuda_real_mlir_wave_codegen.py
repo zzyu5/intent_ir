@@ -354,6 +354,31 @@ def _weight_norm2d_intent() -> IntentFunction:
     )
 
 
+def _weight_norm2d_implicit_broadcast_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "weight_norm2d",
+            "tensors": {
+                "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "g": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "vv": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "norm_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "norm": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["v", "v"], "output": "vv"},
+                {"op": "reduce_sum", "inputs": ["vv"], "output": "norm_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "sqrt", "inputs": ["norm_sq"], "output": "norm"},
+                {"op": "div", "inputs": ["g", "norm"], "output": "scale"},
+                {"op": "mul", "inputs": ["v", "scale"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _mse_loss2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1312,4 +1337,17 @@ def test_cuda_real_mlir_wave_codegen_and_is_parseable(
     out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
     assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == expected_kind
     assert str(needle) in out.module_text
+    _verify_with_mlir_opt(out.module_text)
+
+
+def test_cuda_real_mlir_weight_norm2d_implicit_broadcast_is_lowered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    intent = _weight_norm2d_implicit_broadcast_intent()
+    mod = to_mlir(intent)
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "weight_norm2d_v1"
+    assert "math.sqrt %sumsq" in out.module_text
     _verify_with_mlir_opt(out.module_text)
