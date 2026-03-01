@@ -1251,9 +1251,16 @@ def _emit_allclose2d_kernel(
     lines.append(f'  intentir.intent_name = "{kernel_name}",')
     lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
     lines.append("} {")
-    lines.append(
-        f"  func.func @{_mlir_ident(kernel_name)}(%{_mlir_ident(a_name)}: {a_memref_ty}, %{_mlir_ident(b_name)}: {b_memref_ty}, %{_mlir_ident(rtol_name)}: {rtol_memref_ty}, %{_mlir_ident(atol_name)}: {atol_memref_ty}, %{_mlir_ident(out_name)}: {out_memref_ty}) {{"
-    )
+    arg_types = {
+        str(a_name): a_memref_ty,
+        str(b_name): b_memref_ty,
+        str(atol_name): atol_memref_ty,
+        str(rtol_name): rtol_memref_ty,
+        str(out_name): out_memref_ty,
+    }
+    arg_order = sorted({str(a_name), str(b_name), str(atol_name), str(rtol_name)}) + [str(out_name)]
+    arg_decls = [f"%{_mlir_ident(nm)}: {arg_types[nm]}" for nm in arg_order]
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
     lines.append("    %c0 = arith.constant 0 : index")
     lines.append("    %c1 = arith.constant 1 : index")
     lines.append(f"    %cT = arith.constant {total} : index")
