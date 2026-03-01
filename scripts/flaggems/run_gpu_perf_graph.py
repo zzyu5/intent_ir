@@ -1125,6 +1125,169 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:upsample_bicubic2d_aa", "arg_count": 5}
 
+    if kernel_key == "mindim2d":
+        callee = _pick_callable("min_dim")
+        if callee is not None:
+            inp = _pick_tensor("inp", "input", "x", "A")
+            axis = int(_pick_scalar("AXIS", "axis", "dim", default=1))
+            keepdim = bool(int(_pick_scalar("KEEPDIM", "keepdim", default=0)))
+
+            def _run() -> None:
+                out = callee(inp, dim=int(axis), keepdim=bool(keepdim))
+                if isinstance(out, (tuple, list)) and out:
+                    _ = out[0]
+                else:
+                    _ = out
+
+            return _run, {"launch_source": "kernel_adapter:min_dim2d", "arg_count": 3}
+
+    if kernel_key == "proddim2d":
+        callee = _pick_callable("prod_dim")
+        if callee is not None:
+            inp = _pick_tensor("inp", "input", "x", "A")
+            axis = int(_pick_scalar("AXIS", "axis", "dim", default=1))
+            keepdim = bool(int(_pick_scalar("KEEPDIM", "keepdim", default=0)))
+
+            def _run() -> None:
+                _ = callee(inp, dim=int(axis), keepdim=bool(keepdim))
+
+            return _run, {"launch_source": "kernel_adapter:prod_dim2d", "arg_count": 3}
+
+    if kernel_key == "logsoftmax2d":
+        callee = _pick_callable("log_softmax")
+        if callee is not None:
+            inp = _pick_tensor("inp", "input", "x", "A")
+            axis = int(_pick_scalar("AXIS", "axis", "dim", default=-1))
+
+            def _run() -> None:
+                try:
+                    _ = callee(inp, dim=int(axis))
+                except TypeError:
+                    _ = callee(inp, axis=int(axis))
+
+            return _run, {"launch_source": "kernel_adapter:log_softmax2d", "arg_count": 2}
+
+    if kernel_key in {"cummax1d", "cummin1d"}:
+        callee = _pick_callable("cummax" if kernel_key == "cummax1d" else "cummin")
+        if callee is not None:
+            x = _pick_tensor("x", "inp", "input")
+            axis = int(_pick_scalar("AXIS", "axis", "dim", default=0))
+
+            def _run() -> None:
+                out = callee(x, dim=int(axis))
+                if isinstance(out, (tuple, list)) and out:
+                    _ = out[0]
+                else:
+                    _ = out
+
+            return _run, {"launch_source": f"kernel_adapter:{kernel}", "arg_count": 2}
+
+    if kernel_key == "indexadd2d":
+        callee = _pick_callable("index_add")
+        if callee is not None:
+            base = _pick_tensor("base", "inp", "input", "x", "self")
+            index = _pick_tensor("index")
+            src = _pick_tensor("src", "source", "other")
+            axis = int(_pick_scalar("AXIS", "axis", "dim", default=0))
+            alpha = float(_pick_scalar("ALPHA", "alpha", default=1.0))
+
+            def _run() -> None:
+                _ = callee(base, dim=int(axis), index=index.to(torch.int64), source=src, alpha=float(alpha))
+
+            return _run, {"launch_source": "kernel_adapter:index_add2d", "arg_count": 5}
+
+    if kernel_key == "indexput2d":
+        callee = _pick_callable("index_put")
+        if callee is not None:
+            base = _pick_tensor("base", "inp", "input", "x", "self")
+            row_idx = _pick_tensor("row_idx", "row", "rowidx")
+            col_idx = _pick_tensor("col_idx", "col", "colidx")
+            values = _pick_tensor("values", "value", "src")
+            accumulate = bool(_pick_scalar("ACCUMULATE", "accumulate", default=False))
+
+            def _run() -> None:
+                _ = callee(
+                    base,
+                    (row_idx.to(torch.int64), col_idx.to(torch.int64)),
+                    values,
+                    accumulate=bool(accumulate),
+                )
+
+            return _run, {"launch_source": "kernel_adapter:index_put2d", "arg_count": 5}
+
+    if kernel_key == "slicescatter2d":
+        callee = _pick_callable("slice_scatter")
+        if callee is not None:
+            inp = _pick_tensor("inp", "input", "x", "self")
+            src = _pick_tensor("src")
+            dim = int(_pick_scalar("DIM", "dim", default=1))
+            start = int(_pick_scalar("START", "start", default=0))
+            step = int(_pick_scalar("STEP", "step", default=1))
+            if step == 0:
+                step = 1
+            l = int(getattr(src, "shape", [1])[int(dim)])
+            n_dim = int(getattr(inp, "shape", [1, 1])[int(dim)])
+            max_end = start + l * step
+            if max_end > n_dim:
+                start = max(0, n_dim - l * step)
+            end = start + l * step
+
+            def _run() -> None:
+                _ = callee(inp, src, dim=int(dim), start=int(start), end=int(end), step=int(step))
+
+            return _run, {"launch_source": "kernel_adapter:slice_scatter2d", "arg_count": 6}
+
+    if kernel_key == "upsamplenearest1dncl":
+        callee = _pick_callable("upsample_nearest1d")
+        if callee is not None:
+            inp = _pick_tensor("input", "inp", "x")
+            ol = int(_pick_scalar("OL", "output_l", "out_l", default=int(getattr(inp, "shape", [1, 1, 1])[-1]) * 2))
+
+            def _run() -> None:
+                _ = callee(inp, output_size=(int(ol),), scales=None)
+
+            return _run, {"launch_source": "kernel_adapter:upsample_nearest1d_ncl", "arg_count": 3}
+
+    if kernel_key == "upsamplenearest2dnchw":
+        callee = _pick_callable("upsample_nearest2d")
+        if callee is not None:
+            inp = _pick_tensor("input", "inp", "x")
+            oh = int(_pick_scalar("OH", "output_h", "out_h", default=int(getattr(inp, "shape", [1, 1, 1, 1])[-2]) * 2))
+            ow = int(_pick_scalar("OW", "output_w", "out_w", default=int(getattr(inp, "shape", [1, 1, 1, 1])[-1]) * 2))
+
+            def _run() -> None:
+                _ = callee(inp, (int(oh), int(ow)), scales_h=None, scales_w=None)
+
+            return _run, {"launch_source": "kernel_adapter:upsample_nearest2d_nchw", "arg_count": 4}
+
+    if kernel_key == "convdepthwise2dnchw":
+        callee = _pick_callable("_conv_depthwise2d")
+        if callee is not None:
+            inp = _pick_tensor("input", "inp", "x")
+            weight = _pick_tensor("weight", "w")
+            bias = _pick_tensor("bias", "b")
+            kh = int(_pick_scalar("KH", default=int(getattr(weight, "shape", [1, 1, 1, 1])[-2])))
+            kw = int(_pick_scalar("KW", default=int(getattr(weight, "shape", [1, 1, 1, 1])[-1])))
+            sh = int(_pick_scalar("SH", "stride_h", default=1))
+            sw = int(_pick_scalar("SW", "stride_w", default=1))
+            ph = int(_pick_scalar("PH", "pad_h", default=0))
+            pw = int(_pick_scalar("PW", "pad_w", default=0))
+            dh = int(_pick_scalar("DH", "dilate_h", default=1))
+            dw = int(_pick_scalar("DW", "dilate_w", default=1))
+
+            def _run() -> None:
+                _ = callee(
+                    inp,
+                    weight,
+                    (int(kh), int(kw)),
+                    bias,
+                    (int(sh), int(sw)),
+                    (int(ph), int(pw)),
+                    (int(dh), int(dw)),
+                )
+
+            return _run, {"launch_source": "kernel_adapter:conv_depthwise2d_nchw", "arg_count": 7}
+
     if kernel_key in {"scaleddotproductattentionbhsd", "flashattnvarlenfuncbhsd"}:
         fg_ops = getattr(module, "flag_gems_ops", None)
         callee = getattr(fg_ops, "scaled_dot_product_attention", None) if fg_ops is not None else None
