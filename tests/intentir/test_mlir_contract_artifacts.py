@@ -173,7 +173,7 @@ def test_emit_backend_contract_artifacts_reports_cuda_llvm_error_when_materializ
     assert "cuda llvm->ptx materialization failed" in err
 
 
-def test_emit_backend_contract_artifacts_materializes_rvv_executable_from_downstream_llvm(
+def test_emit_backend_contract_artifacts_emits_rvv_downstream_llvm_contract_without_materializing_executable(
     monkeypatch, tmp_path: Path
 ) -> None:
     mid_mod = to_mlir(_add_intent("rvv_contract_exec_llvm"))
@@ -189,27 +189,6 @@ def test_emit_backend_contract_artifacts_materializes_rvv_executable_from_downst
             }
         },
     )
-
-    class _Proc:
-        def __init__(self) -> None:
-            self.returncode = 0
-            self.stdout = ""
-            self.stderr = ""
-
-    def _fake_run(cmd, capture_output, text):
-        _ = capture_output, text
-        out_idx = cmd.index("-o") + 1
-        out_path = Path(str(cmd[out_idx]))
-        tool = Path(str(cmd[0])).name
-        if tool == "llc":
-            out_path.write_bytes(b"\x7fOBJfake")
-        elif tool == "clang":
-            out_path.write_bytes(b"\x7fELFfake")
-        else:  # pragma: no cover - defensive
-            raise AssertionError(f"unexpected tool: {tool}")
-        return _Proc()
-
-    monkeypatch.setattr("pipeline.mlir_contract_artifacts.subprocess.run", _fake_run)
 
     _ = emit_backend_contract_artifacts(
         spec_name="rvv_contract_exec_llvm",
@@ -227,14 +206,14 @@ def test_emit_backend_contract_artifacts_materializes_rvv_executable_from_downst
     assert str(mlir_report["downstream_contract_backend"]) == "rvv"
     payload = json.loads(llvm_contract_path.read_text(encoding="utf-8"))
     exe = dict(payload.get("executable") or {})
-    assert str(exe.get("format") or "") == "rvv_elf"
+    assert str(exe.get("format") or "") == "rvv_mlir_module"
     inv = dict(exe.get("invocation") or {})
     io_spec = dict(inv.get("io_spec") or {})
     assert [str(x) for x in list(io_spec.get("arg_names") or [])] == ["A", "B", "C"]
     assert [str(x) for x in list(inv.get("output_names") or [])] == ["C"]
-    elf_path = Path(str(exe.get("path") or ""))
-    assert elf_path.is_file()
-    assert elf_path.read_bytes().startswith(b"\x7fELF")
+    module_path = Path(str(exe.get("path") or ""))
+    assert module_path.is_file()
+    assert "; ModuleID" in module_path.read_text(encoding="utf-8")
 
 
 def test_compile_llvm_ir_to_elf_uses_host_retarget_fallback_for_rvv_triple(
@@ -326,8 +305,8 @@ def test_emit_backend_contract_artifacts_reports_rvv_llvm_error_without_primary_
     )
 
     assert "downstream_rvv_contract_path" in mlir_report
-    assert "downstream_rvv_llvm_contract_error" in mlir_report
-    assert "downstream_contract_path" not in mlir_report
+    assert "downstream_rvv_llvm_contract_error" not in mlir_report
+    assert "downstream_contract_path" in mlir_report
     payload = json.loads(Path(str(mlir_report["downstream_rvv_contract_path"])).read_text(encoding="utf-8"))
     assert str((payload.get("executable") or {}).get("format") or "") == "rvv_mlir_module"
 

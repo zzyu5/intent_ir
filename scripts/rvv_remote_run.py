@@ -26,7 +26,9 @@ import os
 import re
 import shlex
 import struct
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -52,6 +54,7 @@ from backends.common.mlir_contract import MlirBackendContract
 from intent_ir.ir import ScheduleSketch
 from intent_ir.macros import expand_macros_json
 from intent_ir.mlir.convert_to_intent import to_intent
+from intent_ir.mlir.toolchain import detect_mlir_toolchain
 from verify.gen_cases import TestCase
 
 DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
@@ -493,12 +496,13 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     if not isinstance(mlir, dict):
         return []
     preferred = [
+        "downstream_rvv_std_llvm_contract_path",
         "downstream_rvv_llvm_contract_path",
+        "downstream_llvm_contract_path",
+        "downstream_contract_path",
         "downstream_rvv_contract_path",
         "downstream_cuda_llvm_contract_path",
         "downstream_cuda_contract_path",
-        "downstream_llvm_contract_path",
-        "downstream_contract_path",
         "midend_rvv_contract_path",
         "midend_cuda_contract_path",
     ]
@@ -593,6 +597,165 @@ def _is_rvv_llvm_triple(triple: str) -> bool:
     if not t:
         return False
     return ("riscv" in t) and ("linux" in t or "unknown" in t or "elf" in t)
+
+
+def _llvm_ir_defines_main(llvm_ir_text: str) -> bool:
+    return re.search(r"^define\s+.*@main\b", str(llvm_ir_text or ""), flags=re.MULTILINE) is not None
+
+
+def _compile_llvm_ir_to_rvv_obj_bytes(*, llvm_ir_text: str, llvm_triple: str) -> tuple[bytes, str]:
+    probe = detect_mlir_toolchain()
+    tools = dict(probe.get("tools") or {}) if isinstance(probe, dict) else {}
+    llc_row = dict(tools.get("llc") or {})
+    llc_path = str(llc_row.get("path") or "").strip() or "llc"
+    llc_ver = str(llc_row.get("version") or "").strip()
+    fingerprint = f"llc:{llc_path}:{llc_ver}"
+    with tempfile.TemporaryDirectory(prefix="intentir_rvv_llc_") as td:
+        ll_path = Path(td) / "kernel.ll"
+        obj_path = Path(td) / "kernel.o"
+        ll_path.write_text(str(llvm_ir_text or ""), encoding="utf-8")
+        cmd = [
+            llc_path,
+            "-O3",
+            f"-mtriple={llvm_triple}",
+            "-mattr=+v",
+            "-filetype=obj",
+            "-o",
+            str(obj_path),
+            str(ll_path),
+        ]
+        cp = subprocess.run(cmd, capture_output=True, text=True)
+        if int(cp.returncode) != 0:
+            raise RuntimeError(f"local llc failed rc={cp.returncode}: {cp.stderr or cp.stdout}")
+        return obj_path.read_bytes(), fingerprint
+
+
+def _c_ident(name: str) -> str:
+    s = str(name or "").strip()
+    if not s:
+        return "v"
+    out = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in s)
+    if out and out[0].isdigit():
+        out = f"v_{out}"
+    return out or "v"
+
+
+def _intentir_dtype_enum(dtype: str) -> str:
+    dt = str(dtype or "f32").strip().lower()
+    if dt in {"f32"}:
+        return "INTENTIR_DTYPE_F32"
+    if dt in {"u8"}:
+        return "INTENTIR_DTYPE_U8"
+    if dt in {"i8"}:
+        return "INTENTIR_DTYPE_I8"
+    if dt in {"i16"}:
+        return "INTENTIR_DTYPE_I16"
+    if dt in {"i32"}:
+        return "INTENTIR_DTYPE_I32"
+    if dt in {"i64"}:
+        return "INTENTIR_DTYPE_I64"
+    raise RuntimeError(f"unsupported intentir dtype for rvv runner: {dtype!r}")
+
+
+def _emit_rvv_main_c(
+    *,
+    kernel_name: str,
+    arg_names: list[str],
+    input_names: list[str],
+    output_names: list[str],
+    verify_output_names: list[str],
+    tensor_specs: dict[str, dict[str, Any]],
+    bindings: dict[str, Any],
+    atol: float,
+    rtol: float,
+) -> str:
+    kernel_sym = _c_ident(kernel_name)
+    arg_order = [str(x) for x in list(arg_names or []) if str(x).strip()]
+    in_names = [str(x) for x in list(input_names or []) if str(x).strip()]
+    out_names = [str(x) for x in list(output_names or []) if str(x).strip()]
+    verify_out = [str(x) for x in list(verify_output_names or []) if str(x).strip()]
+
+    numel: dict[str, int] = {}
+    bytes_: dict[str, int] = {}
+    dtype_enum: dict[str, str] = {}
+    for name in set(in_names) | set(out_names):
+        spec = dict(tensor_specs.get(str(name), {}) or {})
+        dt = _tensor_dtype(spec)
+        shape = _resolve_tensor_shape(_tensor_shape_spec(spec), bindings) or ()
+        n = 1
+        for d in shape:
+            n *= int(d)
+        n = max(1, int(n))
+        numel[str(name)] = n
+        dtype_enum[str(name)] = _intentir_dtype_enum(dt)
+        if dt == "u8":
+            b = n
+        elif dt == "i8":
+            b = n
+        elif dt == "i16":
+            b = n * 2
+        elif dt in {"i32", "f32"}:
+            b = n * 4
+        elif dt == "i64":
+            b = n * 8
+        else:
+            raise RuntimeError(f"unsupported dtype in rvv runner main: {dt!r} name={name}")
+        bytes_[str(name)] = int(b)
+
+    ptr_vars = {name: f"t_{_c_ident(name)}" for name in (set(in_names) | set(out_names))}
+
+    def _desc_row(name: str) -> str:
+        p = ptr_vars[str(name)]
+        return f'    {{"{name}", (void**)&{p}, {bytes_[name]}, {dtype_enum[name]}}}'
+
+    proto_args: list[str] = []
+    for _ in arg_order:
+        proto_args.extend(["void*", "void*", "int64_t", "int64_t", "int64_t"])
+    proto = ", ".join(proto_args) if proto_args else "void"
+
+    call_args: list[str] = []
+    for name in arg_order:
+        p = ptr_vars[str(name)]
+        n = int(numel.get(str(name), 1))
+        call_args.extend([p, p, "0", str(n), "1"])
+    call = ", ".join(call_args)
+
+    lines: list[str] = []
+    lines.append('#include "intentir_driver.h"')
+    lines.append("")
+    lines.append(f"extern void {kernel_sym}({proto});")
+    lines.append("")
+    for name in sorted(ptr_vars.keys()):
+        lines.append(f"static void* {ptr_vars[name]} = NULL;")
+    lines.append("")
+    lines.append("int main(void) {")
+    lines.append("  setvbuf(stdout, NULL, _IONBF, 0);")
+    lines.append("  setvbuf(stderr, NULL, _IONBF, 0);")
+    lines.append("  intentir_runtime_init();")
+    if in_names:
+        lines.append(f"  IntentirBufferDesc inputs[{len(in_names)}] = {{")
+        lines.extend([_desc_row(n) + "," for n in in_names])
+        lines.append("  };")
+        lines.append(f"  if (!intentir_alloc_and_load_inputs(inputs, {len(in_names)})) return 1;")
+    if out_names:
+        lines.append(f"  IntentirBufferDesc outputs_all[{len(out_names)}] = {{")
+        lines.extend([_desc_row(n) + "," for n in out_names])
+        lines.append("  };")
+        lines.append(f"  if (!intentir_alloc(outputs_all, {len(out_names)})) return 1;")
+    lines.append(f"  {kernel_sym}({call});")
+    if verify_out:
+        lines.append(f"  IntentirBufferDesc outputs_verify[{len(verify_out)}] = {{")
+        lines.extend([_desc_row(n) + "," for n in verify_out])
+        lines.append("  };")
+        lines.append(
+            f"  int ok = intentir_compare_outputs_with_refs(outputs_verify, {len(verify_out)}, {float(atol)}f, {float(rtol)}f);"
+        )
+        lines.append("  return ok ? 0 : 2;")
+    else:
+        lines.append("  return 0;")
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _resolve_rvv_execution_plan(
@@ -1366,28 +1529,53 @@ def run_remote(
                         "remote_llvm mode requires RVV-target LLVM IR triple, "
                         f"got {llvm_triple or '<missing>'}"
                     )
-                remote_ll = f"{remote_dir}/kernel.ll"
                 remote_obj = f"{remote_dir}/kernel.o"
-                q_remote_ll = shlex.quote(remote_ll)
                 q_remote_obj = shlex.quote(remote_obj)
-                q_remote_target = shlex.quote(f"--target={llvm_triple}")
-                q_remote_mtriple = shlex.quote(f"-mtriple={llvm_triple}")
-                with sftp.file(remote_ll, "w") as f:
-                    f.write(llvm_ir_text)
+                has_main = _llvm_ir_defines_main(llvm_ir_text)
+                obj_bytes, obj_fp = _compile_llvm_ir_to_rvv_obj_bytes(
+                    llvm_ir_text=llvm_ir_text,
+                    llvm_triple=llvm_triple,
+                )
+                _sftp_write_bytes(sftp, remote_obj, obj_bytes)
+                comp_out = (comp_out + "\n" if comp_out else "") + f"local_obj_compiler={obj_fp}"
+
+                remote_main = f"{remote_dir}/intentir_main.c"
+                q_remote_main = shlex.quote(remote_main)
+                if not has_main:
+                    tol = report.get("tolerances") if isinstance(report.get("tolerances"), dict) else {}
+                    atol = float(tol.get("atol") or 1e-4)
+                    rtol = float(tol.get("rtol") or 1e-4)
+                    main_src = _emit_rvv_main_c(
+                        kernel_name=str(kernel),
+                        arg_names=[*external_inputs, *intent_outputs],
+                        input_names=list(external_inputs),
+                        output_names=list(intent_outputs),
+                        verify_output_names=list(outputs),
+                        tensor_specs=dict(tensor_specs),
+                        bindings=dict(bindings),
+                        atol=atol,
+                        rtol=rtol,
+                    )
+                    with sftp.file(remote_main, "w") as f:
+                        f.write(main_src)
+
+                link_inputs = f"{q_remote_obj} {q_runtime_c} {q_driver_c} {q_ops_c}"
+                if not has_main:
+                    link_inputs = f"{q_remote_obj} {q_remote_main} {q_runtime_c} {q_driver_c} {q_ops_c}"
                 compile_cmd = (
-                    "if command -v clang >/dev/null 2>&1; then "
-                    f"clang -O3 -x ir {q_remote_target} -march=rv64gcv -mabi=lp64d -c -o {q_remote_obj} {q_remote_ll} && "
-                    f"clang -O3 {q_remote_target} -march=rv64gcv -mabi=lp64d -fopenmp -std=c11 -D_POSIX_C_SOURCE=200809L -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
-                    f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt; "
-                    "elif command -v llc >/dev/null 2>&1; then "
-                    f"llc -O3 {q_remote_mtriple} -mattr=+v -filetype=obj -o {q_remote_obj} {q_remote_ll} && "
-                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
-                    f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt; "
-                    "else echo 'remote llvm toolchain missing: clang/llc' >&2; exit 127; fi"
+                    "if command -v gcc >/dev/null 2>&1; then "
+                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -I{q_remote_dir} -o {q_remote_bin} {link_inputs} -lm -lrt; "
+                    "elif command -v clang >/dev/null 2>&1; then "
+                    f"clang -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -I{q_remote_dir} -o {q_remote_bin} {link_inputs} -lm -lrt; "
+                    "else echo 'remote C toolchain missing: gcc/clang' >&2; exit 127; fi"
                 )
                 stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=120)
-                comp_out = stdout.read().decode()
-                comp_err = stderr.read().decode()
+                remote_out = stdout.read().decode()
+                remote_err = stderr.read().decode()
+                if remote_out:
+                    comp_out = (comp_out + "\n" if comp_out else "") + remote_out
+                if remote_err:
+                    comp_err = (comp_err + "\n" if comp_err else "") + remote_err
                 compile_rc = stdout.channel.recv_exit_status()
             else:
                 raise RuntimeError(f"unsupported rvv execution mode: {execution_mode}")
@@ -1681,6 +1869,8 @@ def run_remote(
             "memory_hint": dict(chosen_schedule.memory_hint or {}),
         },
         "compile_rc": rc,
+        "compile_stdout": str(chosen.get("compile_stdout") or ""),
+        "compile_stderr": str(chosen.get("compile_stderr") or ""),
         "compile_mode": str(chosen.get("compile_mode") or execution_mode),
         "run_rc": run_rc,
         "lower_ms": 0.0,

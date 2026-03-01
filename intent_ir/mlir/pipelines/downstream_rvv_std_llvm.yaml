@@ -6,5 +6,6 @@ passes:
   - mlir-opt:verify-each canonicalize cse
   - mlir-opt:convert-scf-to-cf convert-cf-to-llvm convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-func-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
   - mlir-translate:mlir-to-llvmir
+  - python:ensure_llvm_ir_text
   - "llvm-as:"
   - "opt:-O3"

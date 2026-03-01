@@ -1047,6 +1047,10 @@ def _emit_contract(
     module_path = out_dir / f"{spec_name}.intentir.intentdialect.{suffix}.module.mlir"
     module_path.parent.mkdir(parents=True, exist_ok=True)
     module_path.write_text(str(module.module_text or ""), encoding="utf-8")
+    recovered_intent_json = _recover_intent_json(
+        module=module,
+        fallback_intent_module=fallback_intent_module,
+    )
     executable: dict[str, Any] = {
         "format": f"{backend}_mlir_module",
         "path": str(module_path),
@@ -1077,6 +1081,15 @@ def _emit_contract(
         "toolchain_fingerprint": str(executable.get("toolchain_fingerprint") or ""),
         "invocation": dict(executable.get("invocation") or {}),
     }
+    if isinstance(recovered_intent_json, dict):
+        try:
+            inv = dict(executable.get("invocation") or {})
+            runtime_io = _runtime_io_spec_from_intent_json(recovered_intent_json)
+            inv.setdefault("io_spec", dict(runtime_io))
+            inv.setdefault("output_names", [str(x) for x in list(runtime_io.get("outputs") or [])])
+            executable["invocation"] = inv
+        except Exception:
+            pass
     contract_fallback_error = ""
     contract_fallback_used = False
 
@@ -1203,7 +1216,7 @@ def emit_backend_contract_artifacts(
         key_name = str(name or "").strip()
         if not key_name:
             return
-        should_materialize = key_name.endswith("_llvm")
+        should_materialize = bool(key_name.endswith("_llvm") and backend == "cuda")
         downstream_fallback = fallback_intent_module or midend_module
         try:
             p, exec_meta = _emit_contract(
