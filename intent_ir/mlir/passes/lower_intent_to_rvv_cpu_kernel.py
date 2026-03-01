@@ -60,7 +60,12 @@ def _dtype(dt: str) -> str:
     s = str(dt or "").strip().lower()
     if s in {"f32", "f16"}:
         return s
-    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32, got dtype={dt!r}")
+    if s in {"bool", "i1"}:
+        # Baseline bundles stage bool tensors as bytes; use i8 in the ABI.
+        return "i8"
+    if s in {"u8", "i8"}:
+        return "i8"
+    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32/bool/u8/i8, got dtype={dt!r}")
 
 
 def _shape(name: str, *, intent: IntentFunction, bindings: Mapping[str, Any]) -> list[int]:
@@ -150,6 +155,7 @@ def _emit_elementwise_kernel(
     lines.append("  %c1 = arith.constant 1 : index")
     lines.append(f"  %cN = arith.constant {total} : index")
     lines.append("  %c0f = arith.constant 0.0 : f32")
+    lines.append("  %c0i8 = arith.constant 0 : i8")
     lines.extend(scalar_loads)
     lines.append("  scf.for %i = %c0 to %cN step %c1 {")
 
@@ -203,6 +209,38 @@ def _emit_elementwise_kernel(
                 computed[out] = v
             else:
                 raise RuntimeError(f"rvv cpu-loops v1 unsupported cast: {in_ty} -> {out_ty}")
+            continue
+
+        if name == "where":
+            if len(ins) != 3 or not out:
+                raise RuntimeError(f"invalid where op: inputs={ins} output={out!r}")
+            cond, a0, a1 = [str(x).strip() for x in ins]
+            cond_tt = (intent.tensors or {}).get(cond)
+            out_tt = (intent.tensors or {}).get(out)
+            a0_tt = (intent.tensors or {}).get(a0)
+            a1_tt = (intent.tensors or {}).get(a1)
+            if cond_tt is None or out_tt is None or a0_tt is None or a1_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 where missing tensor specs: inputs={ins} output={out!r}")
+            if _dtype(getattr(cond_tt, "dtype", "bool")) != "i8":
+                raise RuntimeError(
+                    f"rvv cpu-loops v1 where expects bool/u8 mask, got tensor={cond} dtype={getattr(cond_tt, 'dtype', '')}"
+                )
+            for nm in [a0, a1, out]:
+                tt = (intent.tensors or {}).get(str(nm))
+                if tt is None:
+                    raise RuntimeError(f"rvv cpu-loops v1 missing tensor spec: {nm}")
+                if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+                    raise RuntimeError(
+                        f"rvv cpu-loops v1 supports only f32 for where values, got tensor={nm} dtype={getattr(tt, 'dtype', '')}"
+                    )
+            m = _in(0)
+            x0 = _in(1)
+            x1 = _in(2)
+            p = f"%{_mlir_ident(out)}_p"
+            lines.append(f"    {p} = arith.cmpi ne, {m}, %c0i8 : i8")
+            v = f"%{_mlir_ident(out)}_t"
+            lines.append(f"    {v} = arith.select {p}, {x0}, {x1} : f32")
+            computed[out] = v
             continue
 
         if name in {"add", "sub", "mul", "div", "max", "min"}:

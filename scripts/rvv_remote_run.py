@@ -641,6 +641,8 @@ def _c_ident(name: str) -> str:
 
 def _intentir_dtype_enum(dtype: str) -> str:
     dt = str(dtype or "f32").strip().lower()
+    if dt in {"bool", "i1"}:
+        return "INTENTIR_DTYPE_U8"
     if dt in {"f16"}:
         # Use INTENTIR_DTYPE_I16 for 2-byte buffers; dtype is not used for input loads.
         # For f16 outputs, this falls back to exact byte-compare (same as i16).
@@ -691,7 +693,7 @@ def _emit_rvv_main_c(
         n = max(1, int(n))
         numel[str(name)] = n
         dtype_enum[str(name)] = _intentir_dtype_enum(dt)
-        if dt == "u8":
+        if dt in {"bool", "i1", "u8"}:
             b = n
         elif dt == "i8":
             b = n
