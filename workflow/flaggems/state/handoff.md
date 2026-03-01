@@ -1,11 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-01T04:20:23+00:00
-- Commit: `d09cbc8354ec8faeaf39f311e33fa2b00f0ae6a2`
+- Timestamp: 2026-03-01T05:01:16+00:00
+- Commit: `cd6609c02847389667802acc00632a71ee506252`
 - Lane: `workflow`
-- Summary: wave12 allowlist perf v2: min=0.8706 strict no-fallback; wave12 coverage smoke OK (8/8)
+- Summary: rvv wave1 remote add2d: vsetvli_hits=602 compare ok
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/run_summary.json, artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/status_converged.json, artifacts/validation_rounds/20260301/flaggems_coverage_wave12_smoke
-- Next Focus: RVV wave1 real-MLIR: run remote vsetvli evidence; expand CUDA allowlist beyond wave12
+- Run Summary: `artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_run_summary.json`
+- Status Converged: `artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_status_converged.json`
+- Evidence Paths: artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/add2d.json, artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/add2d.rvv_remote.json, artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_run_summary.json, artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_status_converged.json
