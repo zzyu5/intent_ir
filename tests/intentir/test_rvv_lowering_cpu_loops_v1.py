@@ -71,6 +71,20 @@ def _transpose2d_intent() -> IntentFunction:
     )
 
 
+def _copy2d_divmod_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "copy2d_divmod",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "identity", "inputs": ["inp"], "output": "out", "attrs": {}}],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _relu2d_where_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -227,6 +241,17 @@ def test_rvv_cpu_loops_v1_supports_transpose2d(monkeypatch: pytest.MonkeyPatch) 
     text = str(out.module_text or "")
     assert "memref.load %inp[%in_idx]" in text
     assert "memref.store %v, %out[%out_idx]" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_identity_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_copy2d_divmod_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_v1"
+    text = str(out.module_text or "")
+    assert "memref.load %inp[%i]" in text
     _verify_with_mlir_opt(text)
 
 
