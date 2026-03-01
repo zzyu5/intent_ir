@@ -526,6 +526,92 @@ def _cummin1d_intent() -> IntentFunction:
     )
 
 
+def _sort2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sort2d",
+            "tensors": {
+                "in_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "sort",
+                    "inputs": ["in_ptr"],
+                    "output": "out_ptr",
+                    "attrs": {"axis": 1, "descending": False, "stable": False},
+                }
+            ],
+            "outputs": ["out_ptr"],
+        }
+    )
+
+
+def _sort_stable2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sort_stable2d",
+            "tensors": {
+                "in_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "sort",
+                    "inputs": ["in_ptr"],
+                    "output": "out_ptr",
+                    "attrs": {"axis": 1, "descending": False, "stable": True},
+                }
+            ],
+            "outputs": ["out_ptr"],
+        }
+    )
+
+
+def _topk2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "topk2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sorted_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "K"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "K"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sort", "inputs": ["inp"], "output": "sorted_vals", "attrs": {"axis": 1, "descending": True}},
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "K"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "K"], "dtype": "i32"}},
+                {"op": "gather", "inputs": ["sorted_vals", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _quantile2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "quantile2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "q": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "quantile",
+                    "inputs": ["inp", "q"],
+                    "output": "out",
+                    "attrs": {"dim": 1, "keepdim": False, "interpolation": "linear"},
+                }
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -561,6 +647,11 @@ def _cummin1d_intent() -> IntentFunction:
         (_normed_cumsum2d_intent, {"M": 4, "N": 64}, "normed_cumsum2d_axis1_v1", "arith.divf %full_scan, %denom"),
         (_cummax1d_intent, {"N": 64}, "cummax1d_axis0_v1", "arith.maximumf %acc, %xv"),
         (_cummin1d_intent, {"N": 64}, "cummin1d_axis0_v1", "arith.minimumf %acc, %xv"),
+        # wave17
+        (_sort2d_intent, {"M": 4, "N": 64}, "row_sort_axis1_bitonic_v1", "arith.xori %tid_i32"),
+        (_sort_stable2d_intent, {"M": 4, "N": 64}, "row_sort_axis1_bitonic_stable_v1", "memref<512xf32, 3>"),
+        (_topk2d_intent, {"M": 4, "N": 64, "K": 8}, "row_topk_axis1_bitonic_v1", "0xFF800000"),
+        (_quantile2d_intent, {"M": 8, "N": 32}, "row_quantile_axis1_sort_v1", "arith.maximumf"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
