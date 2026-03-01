@@ -180,6 +180,10 @@ SUPPORTED_OPS = {
     "masked_select",
     "masked_scatter",
     "scaled_dot_product_attention",
+    "conv1d",
+    "conv2d",
+    "conv3d",
+    "conv_depthwise2d",
 }
 
 
@@ -763,6 +767,144 @@ def _check_scaled_dot_product_attention(intent: dict[str, Any], op: dict[str, An
     is_causal = attrs.get("is_causal", False)
     if not isinstance(is_causal, (bool, int)):
         return ["scaled_dot_product_attention_is_causal_not_bool"]
+    return []
+
+
+def _check_conv1d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 3:
+        return ["conv1d_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["conv1d_missing_output"]
+    ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
+    if len(ops) != 1:
+        return ["conv1d_requires_single_op"]
+
+    x_shape = _tensor_shape(intent, ins[0])
+    w_shape = _tensor_shape(intent, ins[1])
+    b_shape = _tensor_shape(intent, ins[2])
+    o_shape = _tensor_shape(intent, out)
+    if len(x_shape) != 3 or len(w_shape) != 3 or len(b_shape) != 1 or len(o_shape) != 3:
+        return ["conv1d_requires_input3_weight3_bias1_out3"]
+    if x_shape[0] != o_shape[0]:
+        return ["conv1d_batch_dim_mismatch"]
+    if w_shape[0] != o_shape[1]:
+        return ["conv1d_out_channel_dim_mismatch"]
+    if b_shape[0] != o_shape[1]:
+        return ["conv1d_bias_dim_mismatch"]
+
+    dt_x = _tensor_dtype(intent, ins[0])
+    dt_w = _tensor_dtype(intent, ins[1])
+    dt_b = _tensor_dtype(intent, ins[2])
+    dt_o = _tensor_dtype(intent, out)
+    if any(dt and dt != "f32" for dt in (dt_x, dt_w, dt_b, dt_o)):
+        return ["conv1d_requires_f32"]
+    return []
+
+
+def _check_conv2d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 3:
+        return ["conv2d_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["conv2d_missing_output"]
+    ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
+    if len(ops) != 1:
+        return ["conv2d_requires_single_op"]
+
+    x_shape = _tensor_shape(intent, ins[0])
+    w_shape = _tensor_shape(intent, ins[1])
+    b_shape = _tensor_shape(intent, ins[2])
+    o_shape = _tensor_shape(intent, out)
+    if len(x_shape) != 4 or len(w_shape) != 4 or len(b_shape) != 1 or len(o_shape) != 4:
+        return ["conv2d_requires_input4_weight4_bias1_out4"]
+    if x_shape[0] != o_shape[0]:
+        return ["conv2d_batch_dim_mismatch"]
+    if w_shape[0] != o_shape[1]:
+        return ["conv2d_out_channel_dim_mismatch"]
+    if b_shape[0] != o_shape[1]:
+        return ["conv2d_bias_dim_mismatch"]
+
+    dt_x = _tensor_dtype(intent, ins[0])
+    dt_w = _tensor_dtype(intent, ins[1])
+    dt_b = _tensor_dtype(intent, ins[2])
+    dt_o = _tensor_dtype(intent, out)
+    if any(dt and dt != "f32" for dt in (dt_x, dt_w, dt_b, dt_o)):
+        return ["conv2d_requires_f32"]
+    return []
+
+
+def _check_conv3d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 3:
+        return ["conv3d_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["conv3d_missing_output"]
+    ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
+    if len(ops) != 1:
+        return ["conv3d_requires_single_op"]
+
+    x_shape = _tensor_shape(intent, ins[0])
+    w_shape = _tensor_shape(intent, ins[1])
+    b_shape = _tensor_shape(intent, ins[2])
+    o_shape = _tensor_shape(intent, out)
+    if len(x_shape) != 5 or len(w_shape) != 5 or len(b_shape) != 1 or len(o_shape) != 5:
+        return ["conv3d_requires_input5_weight5_bias1_out5"]
+    if x_shape[0] != o_shape[0]:
+        return ["conv3d_batch_dim_mismatch"]
+    if w_shape[0] != o_shape[1]:
+        return ["conv3d_out_channel_dim_mismatch"]
+    if b_shape[0] != o_shape[1]:
+        return ["conv3d_bias_dim_mismatch"]
+
+    dt_x = _tensor_dtype(intent, ins[0])
+    dt_w = _tensor_dtype(intent, ins[1])
+    dt_b = _tensor_dtype(intent, ins[2])
+    dt_o = _tensor_dtype(intent, out)
+    if any(dt and dt != "f32" for dt in (dt_x, dt_w, dt_b, dt_o)):
+        return ["conv3d_requires_f32"]
+    return []
+
+
+def _check_conv_depthwise2d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 3:
+        return ["conv_depthwise2d_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["conv_depthwise2d_missing_output"]
+    ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
+    if len(ops) != 1:
+        return ["conv_depthwise2d_requires_single_op"]
+
+    x_shape = _tensor_shape(intent, ins[0])
+    w_shape = _tensor_shape(intent, ins[1])
+    b_shape = _tensor_shape(intent, ins[2])
+    o_shape = _tensor_shape(intent, out)
+    if len(x_shape) != 4 or len(w_shape) != 4 or len(b_shape) != 1 or len(o_shape) != 4:
+        return ["conv_depthwise2d_requires_input4_weight4_bias1_out4"]
+    if x_shape[0] != o_shape[0]:
+        return ["conv_depthwise2d_batch_dim_mismatch"]
+    if w_shape[0] != o_shape[1]:
+        return ["conv_depthwise2d_out_channel_dim_mismatch"]
+    if b_shape[0] != o_shape[1]:
+        return ["conv_depthwise2d_bias_dim_mismatch"]
+    try:
+        one_dim = int(w_shape[1])
+    except Exception:
+        return ["conv_depthwise2d_weight_dim1_not_int_1"]
+    if one_dim != 1:
+        return ["conv_depthwise2d_weight_dim1_not_1"]
+
+    dt_x = _tensor_dtype(intent, ins[0])
+    dt_w = _tensor_dtype(intent, ins[1])
+    dt_b = _tensor_dtype(intent, ins[2])
+    dt_o = _tensor_dtype(intent, out)
+    if any(dt and dt != "f32" for dt in (dt_x, dt_w, dt_b, dt_o)):
+        return ["conv_depthwise2d_requires_f32"]
     return []
 
 
@@ -1521,6 +1663,10 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "upsample_bicubic2d_aa",
         "avg_pool2d_nchw",
         "max_pool2d_with_indices_nchw",
+        "conv1d_ncl",
+        "conv2d_nchw",
+        "conv3d_ncdhw",
+        "conv_depthwise2d_nchw",
     }
     if out_rank > 2 and intent_name not in allowed_high_rank:
         return SupportResult(ok=False, reasons=[f"output_rank_gt2:{out_rank}"], unsupported_ops=[])
@@ -1611,6 +1757,14 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_masked_scatter(intent, o))
         elif name == "scaled_dot_product_attention":
             reasons.extend(_check_scaled_dot_product_attention(intent, o))
+        elif name == "conv1d":
+            reasons.extend(_check_conv1d(intent, o))
+        elif name == "conv2d":
+            reasons.extend(_check_conv2d(intent, o))
+        elif name == "conv3d":
+            reasons.extend(_check_conv3d(intent, o))
+        elif name == "conv_depthwise2d":
+            reasons.extend(_check_conv_depthwise2d(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])
