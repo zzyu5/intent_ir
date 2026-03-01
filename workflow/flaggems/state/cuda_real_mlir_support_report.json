@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T09:25:01+00:00",
+  "generated_at_utc": "2026-03-01T10:00:18+00:00",
   "repo": {
-    "head_commit": "f9ff4ab1de8ec814701920698c9fe9975b82a5ba",
+    "head_commit": "68e5711f3200e66a6f4c2b9c31e7cf8ed1c07e15",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "f9ff4ab-dirty"
+    "git_describe": "68e5711-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -30,6 +30,9 @@
     "concat",
     "const",
     "cos",
+    "cummax",
+    "cummin",
+    "cumsum",
     "div",
     "eq",
     "erf",
@@ -42,6 +45,7 @@
     "gt",
     "identity",
     "iota",
+    "kron",
     "le",
     "log",
     "lt",
@@ -77,8 +81,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 128,
-  "kernels_unsupported": 30,
+  "kernels_supported": 133,
+  "kernels_unsupported": 25,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -123,6 +127,7 @@
     "isin1d",
     "isinf2d",
     "isnan2d",
+    "kron2d",
     "le2d",
     "lerp2d",
     "linspace1d",
@@ -173,6 +178,7 @@
     "argmax2d",
     "argmin2d",
     "count_nonzero2d",
+    "cumsum2d",
     "log_softmax2d",
     "prod2d",
     "prod_dim2d",
@@ -186,6 +192,7 @@
     "group_norm_kernel",
     "layer_norm_persistent",
     "log_sigmoid2d",
+    "normed_cumsum2d",
     "relu2d",
     "rms_norm2d",
     "sigmoid2d",
@@ -201,6 +208,8 @@
     "addmm2d",
     "baddbmm3d",
     "bmm3d",
+    "cummax1d",
+    "cummin1d",
     "dot1d",
     "mm2d",
     "vdot1d",
@@ -210,15 +219,6 @@
     "embedding2d"
   ],
   "unsupported_kernels": [
-    {
-      "kernel": "kron2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "kron"
-      ]
-    },
     {
       "kernel": "nll_loss2d_forward",
       "reasons": [
@@ -298,15 +298,6 @@
       ]
     },
     {
-      "kernel": "cumsum2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "cumsum"
-      ]
-    },
-    {
       "kernel": "flash_attn_varlen_func_bhsd",
       "reasons": [
         "output_rank_gt2:4"
@@ -316,15 +307,6 @@
       "kernel": "batch_norm2d",
       "reasons": [
         "multi_output"
-      ]
-    },
-    {
-      "kernel": "normed_cumsum2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "cumsum"
       ]
     },
     {
@@ -388,24 +370,6 @@
       ],
       "unsupported_ops": [
         "slice_scatter"
-      ]
-    },
-    {
-      "kernel": "cummax1d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "cummax"
-      ]
-    },
-    {
-      "kernel": "cummin1d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "cummin"
       ]
     },
     {
