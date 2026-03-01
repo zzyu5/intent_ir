@@ -612,6 +612,69 @@ def _quantile2d_intent() -> IntentFunction:
     )
 
 
+def _avg_pool2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "avg_pool2d_nchw",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "avg_pool2d",
+                    "inputs": ["inp"],
+                    "output": "out",
+                    "attrs": {"kernel_size": [2, 2], "stride": [2, 2], "padding": [0, 0], "ceil_mode": False},
+                }
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _max_pool2d_with_indices_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "max_pool2d_with_indices_nchw",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+                "indices": {"dtype": "i64", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "max_pool2d_with_indices",
+                    "inputs": ["inp"],
+                    "output": "out",
+                    "attrs": {
+                        "kernel_size": [2, 2],
+                        "stride": [2, 2],
+                        "padding": [0, 0],
+                        "dilation": [1, 1],
+                        "ceil_mode": False,
+                        "select": "values",
+                    },
+                },
+                {
+                    "op": "max_pool2d_with_indices",
+                    "inputs": ["inp"],
+                    "output": "indices",
+                    "attrs": {
+                        "kernel_size": [2, 2],
+                        "stride": [2, 2],
+                        "padding": [0, 0],
+                        "dilation": [1, 1],
+                        "ceil_mode": False,
+                        "select": "indices",
+                    },
+                },
+            ],
+            "outputs": ["out", "indices"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -652,6 +715,14 @@ def _quantile2d_intent() -> IntentFunction:
         (_sort_stable2d_intent, {"M": 4, "N": 64}, "row_sort_axis1_bitonic_stable_v1", "memref<512xf32, 3>"),
         (_topk2d_intent, {"M": 4, "N": 64, "K": 8}, "row_topk_axis1_bitonic_v1", "0xFF800000"),
         (_quantile2d_intent, {"M": 8, "N": 32}, "row_quantile_axis1_sort_v1", "arith.maximumf"),
+        # wave18
+        (_avg_pool2d_nchw_intent, {"N": 1, "C": 3, "H": 8, "W": 8, "OH": 4, "OW": 4}, "avg_pool2d_nchw_v1", "0.25 : f32"),
+        (
+            _max_pool2d_with_indices_nchw_intent,
+            {"N": 1, "C": 1, "H": 8, "W": 8, "OH": 4, "OW": 4},
+            "max_pool2d_with_indices_nchw_v1",
+            "best_i3_i64",
+        ),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
