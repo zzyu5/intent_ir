@@ -168,6 +168,8 @@ SUPPORTED_OPS = {
     "kron",
     "sort",
     "quantile",
+    "avg_pool2d",
+    "max_pool2d_with_indices",
 }
 
 
@@ -898,6 +900,108 @@ def _check_quantile(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     return []
 
 
+def _check_avg_pool2d(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 1 or not out:
+        return ["avg_pool2d_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    kernel_size = attrs.get("kernel_size")
+    stride = attrs.get("stride")
+    padding = attrs.get("padding")
+    ceil_mode = bool(attrs.get("ceil_mode")) if attrs.get("ceil_mode") is not None else False
+    kernel_size_list = list(kernel_size) if isinstance(kernel_size, list) else []
+    stride_list = list(stride) if isinstance(stride, list) else []
+    padding_list = list(padding) if isinstance(padding, list) else []
+    if kernel_size_list != [2, 2] or stride_list != [2, 2] or padding_list != [0, 0] or ceil_mode:
+        return ["avg_pool2d_noncanonical_params"]
+    in_shape = _tensor_shape(intent, ins[0])
+    out_shape = _tensor_shape(intent, out)
+    if in_shape and len(in_shape) != 4:
+        return ["avg_pool2d_input_rank_not_4"]
+    if out_shape and len(out_shape) != 4:
+        return ["avg_pool2d_output_rank_not_4"]
+    if in_shape and out_shape:
+        if out_shape[0] != in_shape[0] or out_shape[1] != in_shape[1]:
+            return ["avg_pool2d_nc_mismatch"]
+        # If we have concrete shapes, run a cheap bounds sanity check.
+        try:
+            h = int(in_shape[2])
+            w = int(in_shape[3])
+            oh = int(out_shape[2])
+            ow = int(out_shape[3])
+        except Exception:
+            h = w = oh = ow = None
+        if h is not None and w is not None and oh is not None and ow is not None:
+            if 2 * oh > h or 2 * ow > w:
+                return ["avg_pool2d_output_out_of_bounds"]
+    dt_in = _tensor_dtype(intent, ins[0])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_in and dt_in != "f32":
+        return ["avg_pool2d_input_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["avg_pool2d_output_dtype_not_f32"]
+    return []
+
+
+def _check_max_pool2d_with_indices(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 1 or not out:
+        return ["max_pool2d_with_indices_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    kernel_size = attrs.get("kernel_size")
+    stride = attrs.get("stride")
+    padding = attrs.get("padding")
+    dilation = attrs.get("dilation")
+    ceil_mode = bool(attrs.get("ceil_mode")) if attrs.get("ceil_mode") is not None else False
+    select = str(attrs.get("select") or "").strip().lower()
+    kernel_size_list = list(kernel_size) if isinstance(kernel_size, list) else []
+    stride_list = list(stride) if isinstance(stride, list) else []
+    padding_list = list(padding) if isinstance(padding, list) else []
+    dilation_list = list(dilation) if isinstance(dilation, list) else []
+    if (
+        kernel_size_list != [2, 2]
+        or stride_list != [2, 2]
+        or padding_list != [0, 0]
+        or dilation_list != [1, 1]
+        or ceil_mode
+        or select not in {"values", "indices"}
+    ):
+        return ["max_pool2d_with_indices_noncanonical_params"]
+    in_shape = _tensor_shape(intent, ins[0])
+    out_shape = _tensor_shape(intent, out)
+    if in_shape and len(in_shape) != 4:
+        return ["max_pool2d_with_indices_input_rank_not_4"]
+    if out_shape and len(out_shape) != 4:
+        return ["max_pool2d_with_indices_output_rank_not_4"]
+    if in_shape and out_shape:
+        if out_shape[0] != in_shape[0] or out_shape[1] != in_shape[1]:
+            return ["max_pool2d_with_indices_nc_mismatch"]
+        # If we have concrete shapes, run a cheap bounds sanity check.
+        try:
+            h = int(in_shape[2])
+            w = int(in_shape[3])
+            oh = int(out_shape[2])
+            ow = int(out_shape[3])
+        except Exception:
+            h = w = oh = ow = None
+        if h is not None and w is not None and oh is not None and ow is not None:
+            if 2 * oh > h or 2 * ow > w:
+                return ["max_pool2d_with_indices_output_out_of_bounds"]
+    dt_in = _tensor_dtype(intent, ins[0])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_in and dt_in != "f32":
+        return ["max_pool2d_with_indices_input_dtype_not_f32"]
+    if select == "values":
+        if dt_out and dt_out != "f32":
+            return ["max_pool2d_with_indices_values_dtype_not_f32"]
+    else:
+        if dt_out and dt_out != "i64":
+            return ["max_pool2d_with_indices_indices_dtype_not_i64"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     intent_name = str(intent.get("name") or "").strip()
@@ -909,6 +1013,7 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "rms_norm2d",
         "rms_norm_residual2d",
         "min_dim2d",
+        "max_pool2d_with_indices_nchw",
     }
     if not outputs:
         return SupportResult(ok=False, reasons=["missing_outputs"], unsupported_ops=[])
@@ -925,6 +1030,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "baddbmm3d",
         "group_norm_kernel",
         "upsample_bicubic2d_aa",
+        "avg_pool2d_nchw",
+        "max_pool2d_with_indices_nchw",
     }
     if out_rank > 2 and intent_name not in allowed_high_rank:
         return SupportResult(ok=False, reasons=[f"output_rank_gt2:{out_rank}"], unsupported_ops=[])
@@ -991,6 +1098,10 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_sort(intent, o))
         elif name == "quantile":
             reasons.extend(_check_quantile(intent, o))
+        elif name == "avg_pool2d":
+            reasons.extend(_check_avg_pool2d(intent, o))
+        elif name == "max_pool2d_with_indices":
+            reasons.extend(_check_max_pool2d_with_indices(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

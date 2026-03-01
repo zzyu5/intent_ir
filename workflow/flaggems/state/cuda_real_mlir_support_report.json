@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T10:55:21+00:00",
+  "generated_at_utc": "2026-03-01T11:15:59+00:00",
   "repo": {
-    "head_commit": "e2bc63cfb7e14f778b5ea86af58cd8bfdc9bda7d",
+    "head_commit": "79c3fc36661150d17c0f1f969016563a675e173e",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "e2bc63c-dirty"
+    "git_describe": "79c3fc3-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -19,6 +19,7 @@
     "argmax",
     "argmin",
     "atan",
+    "avg_pool2d",
     "bitwise_and",
     "bitwise_left_shift",
     "bitwise_not",
@@ -51,6 +52,7 @@
     "lt",
     "matmul",
     "max",
+    "max_pool2d_with_indices",
     "min",
     "mse_loss",
     "mul",
@@ -83,8 +85,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 137,
-  "kernels_unsupported": 21,
+  "kernels_supported": 139,
+  "kernels_unsupported": 19,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -219,6 +221,8 @@
     "dot1d",
     "mm2d",
     "vdot1d",
+    "avg_pool2d_nchw",
+    "max_pool2d_with_indices_nchw",
     "upsample_bicubic2d_aa",
     "upsample_nearest1d_ncl",
     "upsample_nearest2d_nchw",
@@ -343,12 +347,6 @@
       ]
     },
     {
-      "kernel": "avg_pool2d_nchw",
-      "reasons": [
-        "output_rank_gt2:4"
-      ]
-    },
-    {
       "kernel": "conv1d_ncl",
       "reasons": [
         "output_rank_gt2:3"
@@ -370,12 +368,6 @@
       "kernel": "conv_depthwise2d_nchw",
       "reasons": [
         "output_rank_gt2:4"
-      ]
-    },
-    {
-      "kernel": "max_pool2d_with_indices_nchw",
-      "reasons": [
-        "multi_output"
       ]
     },
     {
