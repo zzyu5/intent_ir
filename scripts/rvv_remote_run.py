@@ -1564,9 +1564,9 @@ def run_remote(
                     link_inputs = f"{q_remote_obj} {q_remote_main} {q_runtime_c} {q_driver_c} {q_ops_c}"
                 compile_cmd = (
                     "if command -v gcc >/dev/null 2>&1; then "
-                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -I{q_remote_dir} -o {q_remote_bin} {link_inputs} -lm -lrt; "
+                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -fno-pie -no-pie -I{q_remote_dir} -o {q_remote_bin} {link_inputs} -lm -lrt; "
                     "elif command -v clang >/dev/null 2>&1; then "
-                    f"clang -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -I{q_remote_dir} -o {q_remote_bin} {link_inputs} -lm -lrt; "
+                    f"clang -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -mabi=lp64d -fopenmp -fno-pie -no-pie -I{q_remote_dir} -o {q_remote_bin} {link_inputs} -lm -lrt; "
                     "else echo 'remote C toolchain missing: gcc/clang' >&2; exit 127; fi"
                 )
                 stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=120)
