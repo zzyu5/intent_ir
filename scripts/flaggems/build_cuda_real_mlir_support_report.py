@@ -179,6 +179,7 @@ SUPPORTED_OPS = {
     "slice_scatter",
     "masked_select",
     "masked_scatter",
+    "scaled_dot_product_attention",
 }
 
 
@@ -726,6 +727,42 @@ def _check_argmin(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
         out_dtype = _tensor_dtype(intent, out)
         if out_dtype and out_dtype != "i32":
             return [f"argmin_output_dtype_not_i32:{out_dtype}"]
+    return []
+
+
+def _check_scaled_dot_product_attention(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 3:
+        return ["scaled_dot_product_attention_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["scaled_dot_product_attention_missing_output"]
+
+    q_shape = _tensor_shape(intent, ins[0])
+    k_shape = _tensor_shape(intent, ins[1])
+    v_shape = _tensor_shape(intent, ins[2])
+    o_shape = _tensor_shape(intent, out)
+    if any(len(s) != 4 for s in (q_shape, k_shape, v_shape, o_shape)):
+        return ["scaled_dot_product_attention_requires_rank4"]
+    if q_shape != o_shape:
+        return ["scaled_dot_product_attention_out_shape_mismatch"]
+    if k_shape != v_shape:
+        return ["scaled_dot_product_attention_kv_shape_mismatch"]
+    # Expect (B,H,Q,D) x (B,H,K,D) -> (B,H,Q,D)
+    if q_shape[0] != k_shape[0] or q_shape[1] != k_shape[1] or q_shape[3] != k_shape[3]:
+        return ["scaled_dot_product_attention_bhd_mismatch"]
+
+    dt_q = _tensor_dtype(intent, ins[0])
+    dt_k = _tensor_dtype(intent, ins[1])
+    dt_v = _tensor_dtype(intent, ins[2])
+    dt_o = _tensor_dtype(intent, out)
+    if any(dt and dt != "f32" for dt in (dt_q, dt_k, dt_v, dt_o)):
+        return ["scaled_dot_product_attention_requires_f32"]
+
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    is_causal = attrs.get("is_causal", False)
+    if not isinstance(is_causal, (bool, int)):
+        return ["scaled_dot_product_attention_is_causal_not_bool"]
     return []
 
 
@@ -1479,6 +1516,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "baddbmm3d",
         "group_norm_kernel",
         "batch_norm2d",
+        "scaled_dot_product_attention_bhsd",
+        "flash_attn_varlen_func_bhsd",
         "upsample_bicubic2d_aa",
         "avg_pool2d_nchw",
         "max_pool2d_with_indices_nchw",
@@ -1570,6 +1609,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_masked_select(intent, o))
         elif name == "masked_scatter":
             reasons.extend(_check_masked_scatter(intent, o))
+        elif name == "scaled_dot_product_attention":
+            reasons.extend(_check_scaled_dot_product_attention(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

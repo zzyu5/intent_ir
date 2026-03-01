@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T13:37:03+00:00",
+  "generated_at_utc": "2026-03-01T13:54:04+00:00",
   "repo": {
-    "head_commit": "c8bc3c743f210ee81b3b5de2e4cea1d0cc27da91",
+    "head_commit": "6bc4b82e492ab8a4816edcd42361ce8ce2b555cf",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "c8bc3c7-dirty"
+    "git_describe": "6bc4b82-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -78,6 +78,7 @@
     "remainder",
     "reshape",
     "rsqrt",
+    "scaled_dot_product_attention",
     "scatter",
     "select_scatter",
     "sin",
@@ -94,8 +95,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 150,
-  "kernels_unsupported": 8,
+  "kernels_supported": 152,
+  "kernels_unsupported": 6,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -199,6 +200,7 @@
     "argmin2d",
     "count_nonzero2d",
     "cumsum2d",
+    "flash_attn_varlen_func_bhsd",
     "log_softmax2d",
     "prod2d",
     "prod_dim2d",
@@ -246,7 +248,8 @@
     "upsample_bicubic2d_aa",
     "upsample_nearest1d_ncl",
     "upsample_nearest2d_nchw",
-    "embedding2d"
+    "embedding2d",
+    "scaled_dot_product_attention_bhsd"
   ],
   "unsupported_kernels": [
     {
@@ -265,12 +268,6 @@
       ],
       "unsupported_ops": [
         "unique"
-      ]
-    },
-    {
-      "kernel": "flash_attn_varlen_func_bhsd",
-      "reasons": [
-        "output_rank_gt2:4"
       ]
     },
     {
@@ -293,12 +290,6 @@
     },
     {
       "kernel": "conv_depthwise2d_nchw",
-      "reasons": [
-        "output_rank_gt2:4"
-      ]
-    },
-    {
-      "kernel": "scaled_dot_product_attention_bhsd",
       "reasons": [
         "output_rank_gt2:4"
       ]
