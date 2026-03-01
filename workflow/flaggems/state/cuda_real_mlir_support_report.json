@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T11:15:59+00:00",
+  "generated_at_utc": "2026-03-01T12:15:58+00:00",
   "repo": {
-    "head_commit": "79c3fc36661150d17c0f1f969016563a675e173e",
+    "head_commit": "d0df9a1328a6e9f2540569e236ed609edd149133",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "79c3fc3-dirty"
+    "git_describe": "d0df9a1-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -45,6 +45,8 @@
     "glu",
     "gt",
     "identity",
+    "index_add",
+    "index_put",
     "iota",
     "kron",
     "le",
@@ -72,7 +74,10 @@
     "remainder",
     "reshape",
     "rsqrt",
+    "scatter",
+    "select_scatter",
     "sin",
+    "slice_scatter",
     "softmax",
     "sort",
     "sqrt",
@@ -85,8 +90,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 139,
-  "kernels_unsupported": 19,
+  "kernels_supported": 144,
+  "kernels_unsupported": 14,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -211,7 +216,12 @@
     "weight_norm2d",
     "flip2d",
     "gather2d",
+    "index_add2d",
+    "index_put2d",
     "index_select2d",
+    "scatter2d",
+    "select_scatter2d",
+    "slice_scatter2d",
     "where2d",
     "addmm2d",
     "baddbmm3d",
@@ -284,24 +294,6 @@
       ]
     },
     {
-      "kernel": "index_add2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "index_add"
-      ]
-    },
-    {
-      "kernel": "index_put2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "index_put"
-      ]
-    },
-    {
       "kernel": "masked_scatter2d",
       "reasons": [
         "unsupported_ops"
@@ -317,33 +309,6 @@
       ],
       "unsupported_ops": [
         "masked_select"
-      ]
-    },
-    {
-      "kernel": "scatter2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "scatter"
-      ]
-    },
-    {
-      "kernel": "select_scatter2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "select_scatter"
-      ]
-    },
-    {
-      "kernel": "slice_scatter2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "slice_scatter"
       ]
     },
     {

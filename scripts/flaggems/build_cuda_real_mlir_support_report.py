@@ -170,6 +170,11 @@ SUPPORTED_OPS = {
     "quantile",
     "avg_pool2d",
     "max_pool2d_with_indices",
+    "index_add",
+    "index_put",
+    "scatter",
+    "select_scatter",
+    "slice_scatter",
 }
 
 
@@ -1002,6 +1007,277 @@ def _check_max_pool2d_with_indices(intent: dict[str, Any], op: dict[str, Any]) -
     return []
 
 
+def _check_index_add(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 3 or not out:
+        return ["index_add_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    alpha = attrs.get("alpha")
+    try:
+        axis_i = int(axis) if axis is not None else None
+    except Exception:
+        axis_i = None
+    if axis_i != 0:
+        return ["index_add_axis_not_0"]
+    if alpha is not None:
+        try:
+            float(alpha)
+        except Exception:
+            return ["index_add_alpha_not_number"]
+    base_shape = _tensor_shape(intent, ins[0])
+    index_shape = _tensor_shape(intent, ins[1])
+    src_shape = _tensor_shape(intent, ins[2])
+    out_shape = _tensor_shape(intent, out)
+    if base_shape and len(base_shape) != 2:
+        return ["index_add_base_rank_not_2"]
+    if out_shape and len(out_shape) != 2:
+        return ["index_add_out_rank_not_2"]
+    if index_shape and len(index_shape) != 1:
+        return ["index_add_index_rank_not_1"]
+    if src_shape and len(src_shape) != 2:
+        return ["index_add_src_rank_not_2"]
+    if base_shape and out_shape and base_shape != out_shape:
+        return ["index_add_out_shape_mismatch"]
+    if index_shape and src_shape and index_shape[0] != src_shape[0]:
+        return ["index_add_l_mismatch"]
+    if base_shape and src_shape and base_shape and src_shape and len(base_shape) == 2 and len(src_shape) == 2:
+        if base_shape[1] != src_shape[1]:
+            return ["index_add_n_mismatch"]
+    dt_base = _tensor_dtype(intent, ins[0])
+    dt_idx = _tensor_dtype(intent, ins[1])
+    dt_src = _tensor_dtype(intent, ins[2])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_base and dt_base != "f32":
+        return ["index_add_base_dtype_not_f32"]
+    if dt_src and dt_src != "f32":
+        return ["index_add_src_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["index_add_out_dtype_not_f32"]
+    if dt_idx and dt_idx != "i32":
+        return ["index_add_index_dtype_not_i32"]
+    return []
+
+
+def _check_index_put(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 4 or not out:
+        return ["index_put_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    accumulate = bool(attrs.get("accumulate")) if attrs.get("accumulate") is not None else False
+    if accumulate:
+        return ["index_put_accumulate_true"]
+    base_shape = _tensor_shape(intent, ins[0])
+    row_shape = _tensor_shape(intent, ins[1])
+    col_shape = _tensor_shape(intent, ins[2])
+    val_shape = _tensor_shape(intent, ins[3])
+    out_shape = _tensor_shape(intent, out)
+    if base_shape and len(base_shape) != 2:
+        return ["index_put_base_rank_not_2"]
+    if out_shape and len(out_shape) != 2:
+        return ["index_put_out_rank_not_2"]
+    if row_shape and len(row_shape) != 1:
+        return ["index_put_row_rank_not_1"]
+    if col_shape and len(col_shape) != 1:
+        return ["index_put_col_rank_not_1"]
+    if val_shape and len(val_shape) != 1:
+        return ["index_put_values_rank_not_1"]
+    if base_shape and out_shape and base_shape != out_shape:
+        return ["index_put_out_shape_mismatch"]
+    if row_shape and col_shape and row_shape != col_shape:
+        return ["index_put_row_col_shape_mismatch"]
+    if row_shape and val_shape and row_shape != val_shape:
+        return ["index_put_row_values_shape_mismatch"]
+    dt_base = _tensor_dtype(intent, ins[0])
+    dt_row = _tensor_dtype(intent, ins[1])
+    dt_col = _tensor_dtype(intent, ins[2])
+    dt_val = _tensor_dtype(intent, ins[3])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_base and dt_base != "f32":
+        return ["index_put_base_dtype_not_f32"]
+    if dt_val and dt_val != "f32":
+        return ["index_put_values_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["index_put_out_dtype_not_f32"]
+    if dt_row and dt_row != "i32":
+        return ["index_put_row_dtype_not_i32"]
+    if dt_col and dt_col != "i32":
+        return ["index_put_col_dtype_not_i32"]
+    return []
+
+
+def _check_scatter(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 3 or not out:
+        return ["scatter_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dim = attrs.get("dim")
+    try:
+        dim_i = int(dim) if dim is not None else None
+    except Exception:
+        dim_i = None
+    if dim_i != 1:
+        return ["scatter_dim_not_1"]
+    inp_shape = _tensor_shape(intent, ins[0])
+    index_shape = _tensor_shape(intent, ins[1])
+    src_shape = _tensor_shape(intent, ins[2])
+    out_shape = _tensor_shape(intent, out)
+    if inp_shape and len(inp_shape) != 2:
+        return ["scatter_inp_rank_not_2"]
+    if out_shape and len(out_shape) != 2:
+        return ["scatter_out_rank_not_2"]
+    if index_shape and len(index_shape) != 2:
+        return ["scatter_index_rank_not_2"]
+    if src_shape and len(src_shape) != 2:
+        return ["scatter_src_rank_not_2"]
+    if inp_shape and out_shape and inp_shape != out_shape:
+        return ["scatter_out_shape_mismatch"]
+    if inp_shape and index_shape and inp_shape != index_shape:
+        return ["scatter_index_shape_mismatch"]
+    if inp_shape and src_shape and inp_shape != src_shape:
+        return ["scatter_src_shape_mismatch"]
+    dt_inp = _tensor_dtype(intent, ins[0])
+    dt_idx = _tensor_dtype(intent, ins[1])
+    dt_src = _tensor_dtype(intent, ins[2])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_inp and dt_inp != "f32":
+        return ["scatter_inp_dtype_not_f32"]
+    if dt_src and dt_src != "f32":
+        return ["scatter_src_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["scatter_out_dtype_not_f32"]
+    if dt_idx and dt_idx != "i32":
+        return ["scatter_index_dtype_not_i32"]
+    return []
+
+
+def _check_select_scatter(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 2 or not out:
+        return ["select_scatter_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dim = attrs.get("dim")
+    index = attrs.get("index")
+    try:
+        dim_i = int(dim) if dim is not None else None
+    except Exception:
+        dim_i = None
+    if dim_i != 1:
+        return ["select_scatter_dim_not_1"]
+    try:
+        idx_i = int(index) if index is not None else None
+    except Exception:
+        idx_i = None
+    if idx_i is None:
+        return ["select_scatter_missing_index"]
+    inp_shape = _tensor_shape(intent, ins[0])
+    src_shape = _tensor_shape(intent, ins[1])
+    out_shape = _tensor_shape(intent, out)
+    if inp_shape and len(inp_shape) != 2:
+        return ["select_scatter_inp_rank_not_2"]
+    if out_shape and len(out_shape) != 2:
+        return ["select_scatter_out_rank_not_2"]
+    if src_shape and len(src_shape) != 1:
+        return ["select_scatter_src_rank_not_1"]
+    if inp_shape and out_shape and inp_shape != out_shape:
+        return ["select_scatter_out_shape_mismatch"]
+    if inp_shape and src_shape and len(inp_shape) == 2 and len(src_shape) == 1:
+        if inp_shape[0] != src_shape[0]:
+            return ["select_scatter_m_mismatch"]
+        # If N is static, range-check the selected column.
+        try:
+            n = int(inp_shape[1])
+        except Exception:
+            n = None
+        if n is not None and (idx_i < 0 or idx_i >= n):
+            return ["select_scatter_index_oob"]
+    dt_inp = _tensor_dtype(intent, ins[0])
+    dt_src = _tensor_dtype(intent, ins[1])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_inp and dt_inp != "f32":
+        return ["select_scatter_inp_dtype_not_f32"]
+    if dt_src and dt_src != "f32":
+        return ["select_scatter_src_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["select_scatter_out_dtype_not_f32"]
+    return []
+
+
+def _check_slice_scatter(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 2 or not out:
+        return ["slice_scatter_invalid_io"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dim = attrs.get("dim")
+    start = attrs.get("start")
+    end = attrs.get("end")
+    step = attrs.get("step")
+    try:
+        dim_i = int(dim) if dim is not None else None
+    except Exception:
+        dim_i = None
+    if dim_i != 1:
+        return ["slice_scatter_dim_not_1"]
+    try:
+        start_i = int(start) if start is not None else None
+    except Exception:
+        start_i = None
+    try:
+        end_i = int(end) if end is not None else None
+    except Exception:
+        end_i = None
+    try:
+        step_i = int(step) if step is not None else 1
+    except Exception:
+        step_i = 1
+    if start_i is None or end_i is None or step_i <= 0:
+        return ["slice_scatter_invalid_slice"]
+    inp_shape = _tensor_shape(intent, ins[0])
+    src_shape = _tensor_shape(intent, ins[1])
+    out_shape = _tensor_shape(intent, out)
+    if inp_shape and len(inp_shape) != 2:
+        return ["slice_scatter_inp_rank_not_2"]
+    if out_shape and len(out_shape) != 2:
+        return ["slice_scatter_out_rank_not_2"]
+    if src_shape and len(src_shape) != 2:
+        return ["slice_scatter_src_rank_not_2"]
+    if inp_shape and out_shape and inp_shape != out_shape:
+        return ["slice_scatter_out_shape_mismatch"]
+    if inp_shape and src_shape and len(inp_shape) == 2 and len(src_shape) == 2:
+        if inp_shape[0] != src_shape[0]:
+            return ["slice_scatter_m_mismatch"]
+        # If slice length is known statically, validate src second dim.
+        try:
+            n = int(inp_shape[1])
+        except Exception:
+            n = None
+        if n is not None:
+            if not (0 <= start_i <= end_i <= n):
+                return ["slice_scatter_slice_oob"]
+            expected = len(list(range(int(start_i), int(end_i), int(step_i))))
+            try:
+                l = int(src_shape[1])
+            except Exception:
+                l = None
+            if l is not None and l != expected:
+                return ["slice_scatter_l_mismatch"]
+    dt_inp = _tensor_dtype(intent, ins[0])
+    dt_src = _tensor_dtype(intent, ins[1])
+    dt_out = _tensor_dtype(intent, out)
+    if dt_inp and dt_inp != "f32":
+        return ["slice_scatter_inp_dtype_not_f32"]
+    if dt_src and dt_src != "f32":
+        return ["slice_scatter_src_dtype_not_f32"]
+    if dt_out and dt_out != "f32":
+        return ["slice_scatter_out_dtype_not_f32"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     intent_name = str(intent.get("name") or "").strip()
@@ -1102,6 +1378,16 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_avg_pool2d(intent, o))
         elif name == "max_pool2d_with_indices":
             reasons.extend(_check_max_pool2d_with_indices(intent, o))
+        elif name == "index_add":
+            reasons.extend(_check_index_add(intent, o))
+        elif name == "index_put":
+            reasons.extend(_check_index_put(intent, o))
+        elif name == "scatter":
+            reasons.extend(_check_scatter(intent, o))
+        elif name == "select_scatter":
+            reasons.extend(_check_select_scatter(intent, o))
+        elif name == "slice_scatter":
+            reasons.extend(_check_slice_scatter(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])
