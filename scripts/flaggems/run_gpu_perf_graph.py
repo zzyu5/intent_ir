@@ -1405,7 +1405,25 @@ def _build_native_launch_fn(
         if key and key not in by_param_scalar:
             by_param_scalar[key] = (str(name), value)
 
-    if source == "flaggems_native":
+    adapter = _build_native_launch_adapter(
+        kernel=str(kernel),
+        module=module,
+        by_param_tensor=by_param_tensor,
+        by_param_scalar=by_param_scalar,
+        bindings=dict(bindings),
+    )
+    if adapter is not None:
+        fn, meta = adapter
+        launch_source = str(meta.get("launch_source") or "kernel_adapter")
+        arg_count = int(meta.get("arg_count") or 0)
+        return fn, str(getattr(module, "__name__", "")), {
+            "arg_count": int(arg_count),
+            "spec_source": source,
+            "launch_source": launch_source,
+        }
+
+    flaggems_ops = getattr(module, "flag_gems_ops", None)
+    if source == "flaggems_native" and flaggems_ops is not None:
         kernel_name = str(kernel)
         semantic = str(getattr(spec, "source_op", "") or kernel).strip()
         # Some registry entries map identity2d to alias ops like `contiguous`, which can
@@ -1423,9 +1441,6 @@ def _build_native_launch_fn(
             semantic = "bitwise_or_tensor"
         if str(kernel) == "pow_scalar2d":
             semantic = "pow_tensor_scalar"
-        flaggems_ops = getattr(module, "flag_gems_ops", None)
-        if flaggems_ops is None:
-            raise RuntimeError("flaggems_native baseline requires pipeline.triton.providers.flaggems.specs.flag_gems_ops")
 
         ctx = getattr(module, "_flaggems_use_gems", None)
         if not callable(ctx):
@@ -1873,23 +1888,6 @@ def _build_native_launch_fn(
             "arg_count": len(kwargs),
             "spec_source": source,
             "launch_source": callee_tag,
-        }
-
-    adapter = _build_native_launch_adapter(
-        kernel=str(kernel),
-        module=module,
-        by_param_tensor=by_param_tensor,
-        by_param_scalar=by_param_scalar,
-        bindings=dict(bindings),
-    )
-    if adapter is not None:
-        fn, meta = adapter
-        launch_source = str(meta.get("launch_source") or "kernel_adapter")
-        arg_count = int(meta.get("arg_count") or 0)
-        return fn, str(getattr(module, "__name__", "")), {
-            "arg_count": int(arg_count),
-            "spec_source": source,
-            "launch_source": launch_source,
         }
 
     callee = _select_native_callable(

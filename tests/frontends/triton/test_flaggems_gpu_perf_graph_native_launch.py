@@ -482,32 +482,38 @@ def test_stabilize_near_threshold_ratio_skips_for_large_latency() -> None:
 
 def test_apply_intentir_perf_binding_overrides_adds_kernel_specific_defaults() -> None:
     mod = _load_module()
-    merged, applied = mod._apply_intentir_perf_binding_overrides(
+    merged, applied, source = mod._apply_intentir_perf_binding_overrides(
         kernel="conv3d_ncdhw",
         bindings={"M": 16, "N": 32},
+        arch="sm89",
     )
     assert int(merged.get("tile_n")) == 192
     assert int(applied.get("tile_n")) == 192
+    assert source in {"tuning_db", "hardcoded"}
 
 
 def test_apply_intentir_perf_binding_overrides_respects_existing_and_disable_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mod = _load_module()
-    merged, applied = mod._apply_intentir_perf_binding_overrides(
+    merged, applied, source = mod._apply_intentir_perf_binding_overrides(
         kernel="sort_stable2d",
         bindings={"tile_n": 256},
+        arch="sm89",
     )
     assert int(merged.get("tile_n")) == 256
     assert applied == {}
+    assert source == "none"
 
     monkeypatch.setenv("INTENTIR_GPU_PERF_DISABLE_KERNEL_TUNING", "1")
-    merged2, applied2 = mod._apply_intentir_perf_binding_overrides(
+    merged2, applied2, source2 = mod._apply_intentir_perf_binding_overrides(
         kernel="sort_stable2d",
         bindings={"M": 4, "N": 64},
+        arch="sm89",
     )
     assert "tile_n" not in merged2
     assert applied2 == {}
+    assert source2 == "none"
 
 
 def test_perf_rebuild_kernel_set_is_removed_under_hard_cut(
