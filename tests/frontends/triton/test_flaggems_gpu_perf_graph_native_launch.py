@@ -398,7 +398,7 @@ def test_build_native_launch_fn_uses_kernel_adapters_for_flaggems_native_signatu
         calls.append(("cummin", {"dim": int(dim)}))
         return _x, None
 
-    def _index_add(_base, *, dim, index, source, alpha=1.0):  # noqa: ARG001
+    def _index_add(_base, *, dim, index, src, alpha=1.0):  # noqa: ARG001
         calls.append(("index_add", {"dim": int(dim), "alpha": float(alpha)}))
         return _base
 

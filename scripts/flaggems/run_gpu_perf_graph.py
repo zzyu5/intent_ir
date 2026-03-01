@@ -1192,7 +1192,10 @@ def _build_native_launch_adapter(
             alpha = float(_pick_scalar("ALPHA", "alpha", default=1.0))
 
             def _run() -> None:
-                _ = callee(base, dim=int(axis), index=index.to(torch.int64), source=src, alpha=float(alpha))
+                try:
+                    _ = callee(base, dim=int(axis), index=index.to(torch.int64), src=src, alpha=float(alpha))
+                except TypeError:
+                    _ = callee(base, int(axis), index.to(torch.int64), src, float(alpha))
 
             return _run, {"launch_source": "kernel_adapter:index_add2d", "arg_count": 5}
 
