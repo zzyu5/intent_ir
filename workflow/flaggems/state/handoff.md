@@ -1,10 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-01T21:02:04+00:00
-- Commit: `4e3704ae792bd45e47999127bcaf97470ec962ca`
+- Timestamp: 2026-03-01T21:53:08+00:00
+- Commit: `1c4af389d7c414eadd39f356081f2a86dea2d188`
 - Lane: `backend_compiler`
-- Summary: CUDA triton-native perf (38) wave25 real-MLIR strict: min=0.85 p50=1.00 fallback=0 ptx=llvm_llc
+- Summary: RVV wave12 real-MLIR: reductions/arg remote4 ok (vsetvli>=602); coverage8 diff ok
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a, artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/run_summary.json, artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/status_converged.json, artifacts/validation_rounds/20260302/triton_native_coverage_full_wave25_realmlir_v1_head_4e3704a
+- Run Summary: `artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/run_summary.json`
+- Status Converged: `artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/status_converged.json`
+- Evidence Paths: artifacts/validation_rounds/20260302/flaggems_coverage_rvv_wave12_realmlir_v2_reductions4_head_1c4af38, artifacts/validation_rounds/20260302/flaggems_coverage_rvv_wave12_realmlir_v2_reductions8_head_1c4af38, artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38, artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/run_summary.json, artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/status_converged.json
