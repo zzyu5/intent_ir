@@ -761,6 +761,37 @@ def _slice_scatter2d_intent() -> IntentFunction:
     )
 
 
+def _masked_select2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "masked_select2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+            },
+            "ops": [{"op": "masked_select", "inputs": ["inp", "mask"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _masked_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "masked_scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "source": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "masked_scatter", "inputs": ["inp", "mask", "source"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -815,6 +846,9 @@ def _slice_scatter2d_intent() -> IntentFunction:
         (_scatter2d_intent, {"M": 4, "N": 64}, "scatter2d_dim1_v1", "%dst_i32 = memref.load"),
         (_select_scatter2d_intent, {"M": 4, "N": 64}, "select_scatter2d_dim1_v1", "memref.load %src[%bid]"),
         (_slice_scatter2d_intent, {"M": 4, "N": 64, "L": 4}, "slice_scatter2d_dim1_v1", "%dst_col = arith.addi"),
+        # wave20
+        (_masked_select2d_intent, {"M": 4, "N": 64, "L": 128}, "masked_select2d_prefixsum_v1", "scan_i32"),
+        (_masked_scatter2d_intent, {"M": 4, "N": 64, "L": 128}, "masked_scatter2d_prefixsum_v1", "scan_i32"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
