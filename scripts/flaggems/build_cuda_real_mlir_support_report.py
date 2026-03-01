@@ -550,6 +550,17 @@ def _check_reduce_sum(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
         # and emits a dedicated kernel, so per-op reduce_sum shape constraints here
         # are too strict for wave planning.
         return []
+    if intent_name == "batch_norm2d" and dims_list == [0, 2]:
+        # Channel-wise reduction: input[N,C,HW] -> out[C]
+        out = str(op.get("output") or "").strip()
+        if out:
+            out_shape = _tensor_shape(intent, out)
+            if out_shape and len(out_shape) != 1:
+                return ["reduce_sum_batch_norm2d_dims_02_requires_rank1_output"]
+        x_shape = _tensor_shape(intent, ins[0])
+        if x_shape and len(x_shape) != 3:
+            return ["reduce_sum_batch_norm2d_dims_02_requires_rank3_input"]
+        return []
     if dims_list == [0]:
         if intent_name not in {"dot1d", "vdot1d"}:
             return ["reduce_sum_dims_0_only_supported_for_dot_or_vdot"]
@@ -1450,6 +1461,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "rms_norm_residual2d",
         "min_dim2d",
         "max_pool2d_with_indices_nchw",
+        "per_token_group_quant_fp8_2d",
+        "batch_norm2d",
     }
     if not outputs:
         return SupportResult(ok=False, reasons=["missing_outputs"], unsupported_ops=[])
@@ -1465,6 +1478,7 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "bmm3d",
         "baddbmm3d",
         "group_norm_kernel",
+        "batch_norm2d",
         "upsample_bicubic2d_aa",
         "avg_pool2d_nchw",
         "max_pool2d_with_indices_nchw",

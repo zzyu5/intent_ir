@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T13:01:32+00:00",
+  "generated_at_utc": "2026-03-01T13:37:03+00:00",
   "repo": {
-    "head_commit": "9a9760d734c9880c335bf9a97b62baa8d7963d47",
+    "head_commit": "c8bc3c743f210ee81b3b5de2e4cea1d0cc27da91",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "9a9760d-dirty"
+    "git_describe": "c8bc3c7-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -94,8 +94,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 148,
-  "kernels_unsupported": 10,
+  "kernels_supported": 150,
+  "kernels_unsupported": 8,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -166,6 +166,7 @@
     "nll_loss_forward",
     "one_hot2d",
     "pad2d",
+    "per_token_group_quant_fp8_2d",
     "polar2d",
     "pow_scalar2d",
     "pow_tensor_scalar2d",
@@ -207,6 +208,7 @@
     "softmax_inner",
     "std2d",
     "var_mean2d",
+    "batch_norm2d",
     "gelu2d",
     "group_norm_kernel",
     "layer_norm_persistent",
@@ -257,12 +259,6 @@
       ]
     },
     {
-      "kernel": "per_token_group_quant_fp8_2d",
-      "reasons": [
-        "multi_output"
-      ]
-    },
-    {
       "kernel": "unique2d",
       "reasons": [
         "unsupported_ops"
@@ -275,12 +271,6 @@
       "kernel": "flash_attn_varlen_func_bhsd",
       "reasons": [
         "output_rank_gt2:4"
-      ]
-    },
-    {
-      "kernel": "batch_norm2d",
-      "reasons": [
-        "multi_output"
       ]
     },
     {
