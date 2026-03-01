@@ -118,6 +118,7 @@ def _emit_elementwise_kernel(
     arg_ssa: dict[str, str] = {}
     scalar_ssa: dict[str, str] = {}
     memref_ty_by_name: dict[str, str] = {}
+    shape_by_name: dict[str, list[int]] = {}
     for name in arg_order:
         tt = (intent.tensors or {}).get(name)
         if tt is None:
@@ -126,12 +127,28 @@ def _emit_elementwise_kernel(
         if name == out_name and elem_ty != "f32":
             raise RuntimeError(f"rvv cpu-loops v1 supports only f32 outputs, got output dtype={elem_ty!r}")
         sh = _shape(name, intent=intent, bindings=bindings)
+        shape_by_name[name] = list(sh)
         if len(sh) == 2:
+            if name != out_name and list(sh) != list(out_shape):
+                raise RuntimeError(
+                    f"rvv cpu-loops v1 elementwise expects rank-2 inputs to match output shape={out_shape}, got {name} shape={sh}"
+                )
             numel = int(sh[0] * sh[1])
+        elif len(sh) == 1:
+            dim0 = int(sh[0])
+            if name == out_name:
+                raise RuntimeError(f"rvv cpu-loops v1 output must be rank-2, got {out_name} shape={sh}")
+            if dim0 not in {m_dim, n_dim}:
+                raise RuntimeError(
+                    f"rvv cpu-loops v1 supports only rank-1 broadcast along M/N (len==M or len==N), got {name} shape={sh} output_shape={out_shape}"
+                )
+            numel = dim0
         elif len(sh) == 0:
             numel = 1
         else:
-            raise RuntimeError(f"rvv cpu-loops v1 elementwise supports only rank-2 or scalar tensors, got {name} shape={sh}")
+            raise RuntimeError(
+                f"rvv cpu-loops v1 elementwise supports only rank-2/rank-1/scalar tensors, got {name} shape={sh}"
+            )
         memref_ty = f"memref<{numel}x{elem_ty}>"
         ssa = f"%{_mlir_ident(name)}"
         arg_ssa[name] = ssa
@@ -153,26 +170,45 @@ def _emit_elementwise_kernel(
     lines.append("  ) {")
     lines.append("  %c0 = arith.constant 0 : index")
     lines.append("  %c1 = arith.constant 1 : index")
-    lines.append(f"  %cN = arith.constant {total} : index")
+    lines.append(f"  %cM = arith.constant {m_dim} : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
     lines.append("  %c0f = arith.constant 0.0 : f32")
     lines.append("  %c0i8 = arith.constant 0 : i8")
     lines.extend(scalar_loads)
-    lines.append("  scf.for %i = %c0 to %cN step %c1 {")
+    lines.append("  scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("    %mN = arith.muli %m, %cN : index")
+    lines.append("    scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("      %i = arith.addi %mN, %n : index")
 
     def _load(name: str) -> str:
         tt = (intent.tensors or {}).get(name)
         if tt is None:
             raise RuntimeError(f"unknown tensor referenced: {name}")
-        sh = _shape(name, intent=intent, bindings=bindings)
+        sh = list(shape_by_name.get(name) or [])
         if len(sh) == 0:
             return scalar_ssa.get(name) or f"%{_mlir_ident(name)}_s"
+        if len(sh) == 1:
+            dim0 = int(sh[0])
+            if dim0 == n_dim:
+                idx = "%n"
+            elif dim0 == m_dim:
+                idx = "%m"
+            else:
+                raise RuntimeError(
+                    f"rvv cpu-loops v1 rank-1 broadcast requires len==M or len==N, got {name} shape={sh} output_shape={out_shape}"
+                )
+            numel = dim0
+        elif len(sh) == 2:
+            idx = "%i"
+            numel = int(sh[0] * sh[1])
+        else:
+            raise RuntimeError(f"rvv cpu-loops v1 unsupported tensor rank for {name}: shape={sh}")
         memref_ty = memref_ty_by_name.get(name)
         if not memref_ty:
             elem_ty = _dtype(getattr(tt, "dtype", "f32"))
-            numel = int(sh[0] * sh[1])
-            memref_ty = f"memref<{numel}x{elem_ty}>"
+            memref_ty = f"memref<{int(numel)}x{elem_ty}>"
         ssa = f"%{_mlir_ident(name)}_v"
-        lines.append(f"    {ssa} = memref.load {arg_ssa[name]}[%i] : {memref_ty}")
+        lines.append(f"    {ssa} = memref.load {arg_ssa[name]}[{idx}] : {memref_ty}")
         return ssa
 
     computed: dict[str, str] = {}
@@ -339,6 +375,7 @@ def _emit_elementwise_kernel(
     final = computed.get(out_name) or _load(out_name)
     out_memref_ty = f"memref<{total}xf32>"
     lines.append(f"    memref.store {final}, {arg_ssa[out_name]}[%i] : {out_memref_ty}")
+    lines.append("    }")
     lines.append("  }")
     lines.append("  return")
     lines.append("  }")
