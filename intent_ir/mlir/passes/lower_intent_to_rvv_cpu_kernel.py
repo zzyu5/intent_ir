@@ -65,7 +65,9 @@ def _dtype(dt: str) -> str:
         return "i8"
     if s in {"u8", "i8"}:
         return "i8"
-    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32/bool/u8/i8, got dtype={dt!r}")
+    if s in {"i32"}:
+        return "i32"
+    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32/bool/u8/i8/i32, got dtype={dt!r}")
 
 
 def _shape(name: str, *, intent: IntentFunction, bindings: Mapping[str, Any]) -> list[int]:
@@ -174,6 +176,7 @@ def _emit_elementwise_kernel(
     lines.append(f"  %cN = arith.constant {n_dim} : index")
     lines.append("  %c0f = arith.constant 0.0 : f32")
     lines.append("  %c0i8 = arith.constant 0 : i8")
+    lines.append("  %c0i32 = arith.constant 0 : i32")
     lines.extend(scalar_loads)
     lines.append("  scf.for %m = %c0 to %cM step %c1 {")
     lines.append("    %mN = arith.muli %m, %cN : index")
@@ -266,6 +269,43 @@ def _emit_elementwise_kernel(
                 raise RuntimeError(f"rvv cpu-loops v1 unsupported cast: {in_ty} -> {out_ty}")
             continue
 
+        if name == "broadcast_in_dim":
+            if len(ins) != 1 or not out:
+                raise RuntimeError(f"invalid broadcast_in_dim op: inputs={ins} output={out!r}")
+            in_name = str(ins[0]).strip()
+            in_tt = (intent.tensors or {}).get(in_name)
+            out_tt = (intent.tensors or {}).get(out)
+            if in_tt is None or out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 broadcast_in_dim missing tensor specs: in={in_name!r} out={out!r}")
+            in_ty = _dtype(getattr(in_tt, "dtype", "f32"))
+            out_ty = _dtype(getattr(out_tt, "dtype", "f32"))
+            if in_ty != out_ty:
+                raise RuntimeError(f"rvv cpu-loops v1 broadcast_in_dim requires same dtype, got {in_ty}->{out_ty}")
+            in_sh = _shape(in_name, intent=intent, bindings=bindings)
+            out_sh = _shape(out, intent=intent, bindings=bindings)
+            if list(out_sh) != [m_dim, n_dim]:
+                raise RuntimeError(
+                    f"rvv cpu-loops v1 broadcast_in_dim currently requires out_shape=[M,N], got out={out} shape={out_sh} kernel_out_shape={out_shape}"
+                )
+            b_dims = list(attrs.get("broadcast_dims") or []) if isinstance(attrs.get("broadcast_dims"), list) else []
+            if len(in_sh) == 0:
+                if b_dims:
+                    raise RuntimeError(f"rvv cpu-loops v1 broadcast_in_dim scalar expects broadcast_dims=[], got {b_dims}")
+                computed[out] = _in(0)
+            elif len(in_sh) == 1:
+                if b_dims not in ([0], [1]):
+                    raise RuntimeError(f"rvv cpu-loops v1 broadcast_in_dim rank1 expects broadcast_dims [0] or [1], got {b_dims}")
+                dim0 = int(in_sh[0])
+                expected = int(m_dim if b_dims == [0] else n_dim)
+                if dim0 != expected:
+                    raise RuntimeError(
+                        f"rvv cpu-loops v1 broadcast_in_dim rank1 dim mismatch: in_shape={in_sh} broadcast_dims={b_dims} expected={expected}"
+                    )
+                computed[out] = _in(0)
+            else:
+                raise RuntimeError(f"rvv cpu-loops v1 broadcast_in_dim supports only scalar or rank1 inputs, got in_shape={in_sh}")
+            continue
+
         if name == "where":
             if len(ins) != 3 or not out:
                 raise RuntimeError(f"invalid where op: inputs={ins} output={out!r}")
@@ -276,9 +316,10 @@ def _emit_elementwise_kernel(
             a1_tt = (intent.tensors or {}).get(a1)
             if cond_tt is None or out_tt is None or a0_tt is None or a1_tt is None:
                 raise RuntimeError(f"rvv cpu-loops v1 where missing tensor specs: inputs={ins} output={out!r}")
-            if _dtype(getattr(cond_tt, "dtype", "bool")) != "i8":
+            cond_ty = _dtype(getattr(cond_tt, "dtype", "bool"))
+            if cond_ty not in {"i8", "i32"}:
                 raise RuntimeError(
-                    f"rvv cpu-loops v1 where expects bool/u8 mask, got tensor={cond} dtype={getattr(cond_tt, 'dtype', '')}"
+                    f"rvv cpu-loops v1 where expects bool/u8/i32 mask, got tensor={cond} dtype={getattr(cond_tt, 'dtype', '')}"
                 )
             for nm in [a0, a1, out]:
                 tt = (intent.tensors or {}).get(str(nm))
@@ -292,7 +333,10 @@ def _emit_elementwise_kernel(
             x0 = _in(1)
             x1 = _in(2)
             p = f"%{_mlir_ident(out)}_p"
-            lines.append(f"    {p} = arith.cmpi ne, {m}, %c0i8 : i8")
+            if cond_ty == "i8":
+                lines.append(f"    {p} = arith.cmpi ne, {m}, %c0i8 : i8")
+            else:
+                lines.append(f"    {p} = arith.cmpi ne, {m}, %c0i32 : i32")
             v = f"%{_mlir_ident(out)}_t"
             lines.append(f"    {v} = arith.select {p}, {x0}, {x1} : f32")
             computed[out] = v
