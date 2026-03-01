@@ -184,6 +184,8 @@ SUPPORTED_OPS = {
     "conv2d",
     "conv3d",
     "conv_depthwise2d",
+    "unique",
+    "nonzero",
 }
 
 
@@ -905,6 +907,67 @@ def _check_conv_depthwise2d(intent: dict[str, Any], op: dict[str, Any]) -> list[
     dt_o = _tensor_dtype(intent, out)
     if any(dt and dt != "f32" for dt in (dt_x, dt_w, dt_b, dt_o)):
         return ["conv_depthwise2d_requires_f32"]
+    return []
+
+
+def _check_unique(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["unique_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["unique_missing_output"]
+    ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
+    if len(ops) != 1:
+        return ["unique_requires_single_op"]
+
+    x_shape = _tensor_shape(intent, ins[0])
+    o_shape = _tensor_shape(intent, out)
+    if len(x_shape) != 1 or len(o_shape) != 1:
+        return ["unique_requires_rank1_in_out"]
+
+    dt_x = _tensor_dtype(intent, ins[0])
+    dt_o = _tensor_dtype(intent, out)
+    if dt_x and dt_x != "i32":
+        return ["unique_in_dtype_not_i32"]
+    if dt_o and dt_o != "i32":
+        return ["unique_out_dtype_not_i32"]
+
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    sorted_attr = attrs.get("sorted", True)
+    if not isinstance(sorted_attr, (bool, int)):
+        return ["unique_sorted_not_bool"]
+    return []
+
+
+def _check_nonzero(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    if len(ins) != 1:
+        return ["nonzero_invalid_inputs"]
+    out = str(op.get("output") or "").strip()
+    if not out:
+        return ["nonzero_missing_output"]
+    ops = [o for o in list(intent.get("ops") or []) if isinstance(o, dict)]
+    if len(ops) != 1:
+        return ["nonzero_requires_single_op"]
+
+    x_shape = _tensor_shape(intent, ins[0])
+    o_shape = _tensor_shape(intent, out)
+    if len(x_shape) != 2 or len(o_shape) != 2:
+        return ["nonzero_requires_rank2_in_out"]
+    try:
+        last = int(o_shape[1])
+    except Exception:
+        return ["nonzero_out_last_dim_not_int_2"]
+    if last != 2:
+        return ["nonzero_out_last_dim_not_2"]
+
+    dt_x = _tensor_dtype(intent, ins[0])
+    dt_o = _tensor_dtype(intent, out)
+    if dt_x and dt_x != "f32":
+        return ["nonzero_in_dtype_not_f32"]
+    if dt_o and dt_o != "i64":
+        return ["nonzero_out_dtype_not_i64"]
     return []
 
 
@@ -1765,6 +1828,10 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_conv3d(intent, o))
         elif name == "conv_depthwise2d":
             reasons.extend(_check_conv_depthwise2d(intent, o))
+        elif name == "unique":
+            reasons.extend(_check_unique(intent, o))
+        elif name == "nonzero":
+            reasons.extend(_check_nonzero(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

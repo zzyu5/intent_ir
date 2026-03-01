@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T14:23:27+00:00",
+  "generated_at_utc": "2026-03-01T14:40:39+00:00",
   "repo": {
-    "head_commit": "bb3cb733f81198fc1c0a6d2f9af82c7299d0a867",
+    "head_commit": "c2a5c473a6905cb852383589cb4e6a621fc7e233",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "bb3cb73-dirty"
+    "git_describe": "c2a5c47-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -68,6 +68,7 @@
     "neg",
     "nll_loss2d_forward",
     "nll_loss_forward",
+    "nonzero",
     "not",
     "pad",
     "polar",
@@ -94,13 +95,14 @@
     "std",
     "sub",
     "tan",
+    "unique",
     "upsample_nearest1d",
     "upsample_nearest2d",
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 156,
-  "kernels_unsupported": 2,
+  "kernels_supported": 158,
+  "kernels_unsupported": 0,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -169,6 +171,7 @@
     "neg2d",
     "nll_loss2d_forward",
     "nll_loss_forward",
+    "nonzero2d",
     "one_hot2d",
     "pad2d",
     "per_token_group_quant_fp8_2d",
@@ -197,6 +200,7 @@
     "topk2d",
     "trace2d",
     "triu2d",
+    "unique2d",
     "vstack2d",
     "allclose2d",
     "any_kernel_dim",
@@ -259,26 +263,7 @@
     "embedding2d",
     "scaled_dot_product_attention_bhsd"
   ],
-  "unsupported_kernels": [
-    {
-      "kernel": "nonzero2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "nonzero"
-      ]
-    },
-    {
-      "kernel": "unique2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "unique"
-      ]
-    }
-  ],
+  "unsupported_kernels": [],
   "op_freq": {
     "const": 185,
     "add": 167,
