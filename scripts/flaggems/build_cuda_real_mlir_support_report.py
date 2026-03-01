@@ -396,6 +396,7 @@ def _check_softmax(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
 
 
 def _check_matmul(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    intent_name = str(intent.get("name") or "").strip()
     ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
     if len(ins) != 2:
         return ["matmul_invalid_inputs"]
@@ -409,6 +410,27 @@ def _check_matmul(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     b_shape = _tensor_shape(intent, ins[1])
     out = str(op.get("output") or "").strip()
     out_shape = _tensor_shape(intent, out) if out else []
+
+    # Batched matmul: [B,M,K] x [B,K,N] -> [B,M,N].
+    if intent_name in {"bmm3d", "baddbmm3d"}:
+        if a_shape and len(a_shape) != 3:
+            return ["matmul_requires_rank3_a_for_bmm"]
+        if b_shape and len(b_shape) != 3:
+            return ["matmul_requires_rank3_b_for_bmm"]
+        if out_shape and len(out_shape) != 3:
+            return ["matmul_requires_rank3_output_for_bmm"]
+        if a_shape and b_shape and out_shape:
+            if a_shape[0] != b_shape[0] or a_shape[0] != out_shape[0]:
+                return ["matmul_batch_mismatch"]
+            if a_shape[2] != b_shape[1]:
+                return ["matmul_k_mismatch"]
+            if out_shape[1] != a_shape[1] or out_shape[2] != b_shape[2]:
+                return ["matmul_output_shape_mismatch"]
+        dt_a = _tensor_dtype(intent, ins[0])
+        dt_b = _tensor_dtype(intent, ins[1])
+        if (dt_a and dt_a != "f32") or (dt_b and dt_b != "f32"):
+            return ["matmul_requires_f32"]
+        return []
 
     if a_shape and len(a_shape) != 2:
         return ["matmul_requires_rank2_a"]
@@ -742,6 +764,8 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
         "diag_embed2d",
         "upsample_nearest1d_ncl",
         "upsample_nearest2d_nchw",
+        "bmm3d",
+        "baddbmm3d",
         "group_norm_kernel",
         "upsample_bicubic2d_aa",
     }

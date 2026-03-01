@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T08:14:03+00:00",
+  "generated_at_utc": "2026-03-01T09:25:01+00:00",
   "repo": {
-    "head_commit": "9f926fc9be1e3178743ec9360978fb45cba2f6d8",
+    "head_commit": "f9ff4ab1de8ec814701920698c9fe9975b82a5ba",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "9f926fc-dirty"
+    "git_describe": "f9ff4ab-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -77,8 +77,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 126,
-  "kernels_unsupported": 32,
+  "kernels_supported": 128,
+  "kernels_unsupported": 30,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -199,6 +199,8 @@
     "index_select2d",
     "where2d",
     "addmm2d",
+    "baddbmm3d",
+    "bmm3d",
     "dot1d",
     "mm2d",
     "vdot1d",
@@ -386,18 +388,6 @@
       ],
       "unsupported_ops": [
         "slice_scatter"
-      ]
-    },
-    {
-      "kernel": "baddbmm3d",
-      "reasons": [
-        "output_rank_gt2:3"
-      ]
-    },
-    {
-      "kernel": "bmm3d",
-      "reasons": [
-        "output_rank_gt2:3"
       ]
     },
     {
