@@ -166,6 +166,8 @@ SUPPORTED_OPS = {
     "cummax",
     "cummin",
     "kron",
+    "sort",
+    "quantile",
 }
 
 
@@ -832,6 +834,70 @@ def _check_reduce_any(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
     return []
 
 
+def _check_sort(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 1:
+        return ["sort_invalid_inputs"]
+    if not out:
+        return ["sort_missing_output"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    axis = attrs.get("axis")
+    try:
+        axis_i = int(axis) if axis is not None else None
+    except Exception:
+        axis_i = None
+    if axis_i != 1:
+        return ["sort_axis_not_1"]
+    for flag in ("descending", "stable"):
+        if flag in attrs and not isinstance(attrs.get(flag), (bool, int)):
+            return [f"sort_{flag}_not_bool"]
+    in_shape = _tensor_shape(intent, ins[0])
+    out_shape = _tensor_shape(intent, out)
+    if in_shape and len(in_shape) != 2:
+        return ["sort_requires_rank2_input"]
+    if out_shape and len(out_shape) != 2:
+        return ["sort_requires_rank2_output"]
+    if in_shape and out_shape and in_shape != out_shape:
+        return ["sort_shape_mismatch"]
+    return []
+
+
+def _check_quantile(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
+    ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
+    out = str(op.get("output") or "").strip()
+    if len(ins) != 2:
+        return ["quantile_invalid_inputs"]
+    if not out:
+        return ["quantile_missing_output"]
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    dim = attrs.get("dim")
+    keepdim = attrs.get("keepdim")
+    interp = str(attrs.get("interpolation") or "").strip().lower()
+    try:
+        dim_i = int(dim) if dim is not None else None
+    except Exception:
+        dim_i = None
+    if dim_i != 1:
+        return ["quantile_dim_not_1"]
+    if bool(keepdim):
+        return ["quantile_keepdim_true"]
+    if interp and interp not in {"linear"}:
+        return ["quantile_interpolation_not_linear"]
+    in_shape = _tensor_shape(intent, ins[0])
+    q_shape = _tensor_shape(intent, ins[1])
+    out_shape = _tensor_shape(intent, out)
+    if in_shape and len(in_shape) != 2:
+        return ["quantile_input_rank_not_2"]
+    if q_shape and len(q_shape) != 0:
+        return ["quantile_q_not_scalar"]
+    if out_shape and len(out_shape) != 1:
+        return ["quantile_output_rank_not_1"]
+    if in_shape and out_shape and out_shape[0] != in_shape[0]:
+        return ["quantile_output_mismatch"]
+    return []
+
+
 def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
     outputs = [str(x) for x in list(intent.get("outputs") or []) if str(x).strip()]
     intent_name = str(intent.get("name") or "").strip()
@@ -921,6 +987,10 @@ def _supported_by_cuda_real_mlir(intent: dict[str, Any]) -> SupportResult:
             reasons.extend(_check_cummin(intent, o))
         elif name == "kron":
             reasons.extend(_check_kron(intent, o))
+        elif name == "sort":
+            reasons.extend(_check_sort(intent, o))
+        elif name == "quantile":
+            reasons.extend(_check_quantile(intent, o))
     if reasons:
         return SupportResult(ok=False, reasons=sorted(set(reasons)), unsupported_ops=[])
     return SupportResult(ok=True, reasons=[], unsupported_ops=[])

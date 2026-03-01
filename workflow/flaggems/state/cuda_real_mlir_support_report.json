@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-03-01T10:00:18+00:00",
+  "generated_at_utc": "2026-03-01T10:55:21+00:00",
   "repo": {
-    "head_commit": "68e5711f3200e66a6f4c2b9c31e7cf8ed1c07e15",
+    "head_commit": "e2bc63cfb7e14f778b5ea86af58cd8bfdc9bda7d",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "68e5711-dirty"
+    "git_describe": "e2bc63c-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -60,6 +60,7 @@
     "pad",
     "polar",
     "pow",
+    "quantile",
     "reduce_any",
     "reduce_max",
     "reduce_min",
@@ -71,6 +72,7 @@
     "rsqrt",
     "sin",
     "softmax",
+    "sort",
     "sqrt",
     "stack",
     "std",
@@ -81,8 +83,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 133,
-  "kernels_unsupported": 25,
+  "kernels_supported": 137,
+  "kernels_unsupported": 21,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -155,6 +157,7 @@
     "pow_scalar2d",
     "pow_tensor_scalar2d",
     "pow_tensor_tensor2d",
+    "quantile2d",
     "reciprocal2d",
     "remainder2d",
     "repeat2d",
@@ -164,12 +167,15 @@
     "row_max",
     "rsqrt2d",
     "sin2d",
+    "sort2d",
+    "sort_stable2d",
     "sqrt2d",
     "stack2d",
     "sub2d",
     "tan2d",
     "threshold2d",
     "tile2d",
+    "topk2d",
     "trace2d",
     "triu2d",
     "vstack2d",
@@ -250,42 +256,6 @@
       "kernel": "per_token_group_quant_fp8_2d",
       "reasons": [
         "multi_output"
-      ]
-    },
-    {
-      "kernel": "quantile2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "quantile"
-      ]
-    },
-    {
-      "kernel": "sort2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "sort"
-      ]
-    },
-    {
-      "kernel": "sort_stable2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "sort"
-      ]
-    },
-    {
-      "kernel": "topk2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "sort"
       ]
     },
     {
