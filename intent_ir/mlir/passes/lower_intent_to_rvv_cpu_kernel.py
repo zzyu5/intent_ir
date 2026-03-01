@@ -1290,6 +1290,203 @@ def _emit_allclose2d_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _emit_softmax_inner_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 softmax expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 softmax supports only f32 outputs")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 softmax expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+    total = int(m_dim * n_dim)
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 7:
+        raise RuntimeError(f"rvv cpu-loops v1 softmax_inner expects 7 ops, got {len(ops)}")
+    op0 = ops[0]
+    op0_name = str(getattr(op0, "op", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    op0_attrs = dict(getattr(op0, "attrs", {}) or {})
+    dims = op0_attrs.get("dims")
+    dims_list = list(dims) if isinstance(dims, list) else []
+    if op0_name != "reduce_max" or dims_list != [1] or len(op0_ins) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 softmax_inner unsupported reduce_max: dims={dims_list} inputs={op0_ins}")
+    in_name = str(op0_ins[0])
+    in_tt = (intent.tensors or {}).get(in_name)
+    if in_tt is None:
+        raise RuntimeError(f"missing input tensor spec: {in_name}")
+    if _dtype(getattr(in_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 softmax supports only f32 inputs")
+    in_shape = _shape(in_name, intent=intent, bindings=bindings)
+    if list(in_shape) != [m_dim, n_dim]:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 softmax expects input shape [M,N] to match output; got {in_name} shape={in_shape} out_shape={out_shape}"
+        )
+
+    in_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = f"memref<{total}xf32>"
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(
+        f"  func.func @{_mlir_ident(kernel_name)}(%{_mlir_ident(in_name)}: {in_memref_ty}, %{_mlir_ident(out_name)}: {out_memref_ty}) {{"
+    )
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %init_max = arith.constant 0xFF800000 : f32")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %base = arith.muli %m, %cN : index")
+    lines.append("      %row_max = scf.for %n = %c0 to %cN step %c1 iter_args(%mx = %init_max) -> (f32) {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %mx2 = arith.maximumf %mx, %x : f32")
+    lines.append("        scf.yield %mx2 : f32")
+    lines.append("      }")
+    lines.append("      %sum = scf.for %n = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %centered = arith.subf %x, %row_max : f32")
+    lines.append("        %e = math.exp %centered : f32")
+    lines.append("        %acc2 = arith.addf %acc, %e : f32")
+    lines.append("        scf.yield %acc2 : f32")
+    lines.append("      }")
+    lines.append("      scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %centered = arith.subf %x, %row_max : f32")
+    lines.append("        %e = math.exp %centered : f32")
+    lines.append("        %y = arith.divf %e, %sum : f32")
+    lines.append(f"        memref.store %y, %{_mlir_ident(out_name)}[%idx] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_log_softmax2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 log_softmax expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 log_softmax supports only f32 outputs")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 log_softmax expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+    total = int(m_dim * n_dim)
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d expects 2 ops (softmax+log), got {len(ops)}")
+    op0, op1 = ops
+    op0_name = str(getattr(op0, "op", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    op0_attrs = dict(getattr(op0, "attrs", {}) or {})
+    axis = op0_attrs.get("axis")
+    try:
+        axis_i = int(axis)
+    except Exception:
+        axis_i = None
+    if op0_name != "softmax" or axis_i != 1 or len(op0_ins) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported softmax: axis={axis!r} inputs={op0_ins}")
+    in_name = str(op0_ins[0])
+    in_tt = (intent.tensors or {}).get(in_name)
+    if in_tt is None:
+        raise RuntimeError(f"missing input tensor spec: {in_name}")
+    if _dtype(getattr(in_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 log_softmax supports only f32 inputs")
+    in_shape = _shape(in_name, intent=intent, bindings=bindings)
+    if list(in_shape) != [m_dim, n_dim]:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 log_softmax expects input shape [M,N] to match output; got {in_name} shape={in_shape} out_shape={out_shape}"
+        )
+    op1_name = str(getattr(op1, "op", "")).strip()
+    op1_ins = [str(x).strip() for x in list(getattr(op1, "inputs", []) or []) if str(x).strip()]
+    if op1_name != "log" or len(op1_ins) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 log_softmax2d unsupported log op: inputs={op1_ins}")
+
+    in_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = f"memref<{total}xf32>"
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(
+        f"  func.func @{_mlir_ident(kernel_name)}(%{_mlir_ident(in_name)}: {in_memref_ty}, %{_mlir_ident(out_name)}: {out_memref_ty}) {{"
+    )
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %init_max = arith.constant 0xFF800000 : f32")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %base = arith.muli %m, %cN : index")
+    lines.append("      %row_max = scf.for %n = %c0 to %cN step %c1 iter_args(%mx = %init_max) -> (f32) {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %mx2 = arith.maximumf %mx, %x : f32")
+    lines.append("        scf.yield %mx2 : f32")
+    lines.append("      }")
+    lines.append("      %sum = scf.for %n = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %centered = arith.subf %x, %row_max : f32")
+    lines.append("        %e = math.exp %centered : f32")
+    lines.append("        %acc2 = arith.addf %acc, %e : f32")
+    lines.append("        scf.yield %acc2 : f32")
+    lines.append("      }")
+    lines.append("      %log_sum = math.log %sum : f32")
+    lines.append("      scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %centered = arith.subf %x, %row_max : f32")
+    lines.append("        %y = arith.subf %centered, %log_sum : f32")
+    lines.append(f"        memref.store %y, %{_mlir_ident(out_name)}[%idx] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def _maybe_rewrite_relu2d_where_pattern(intent: IntentFunction) -> IntentFunction:
     """
     Canonicalize a common relu2d lowering pattern in expanded intents:
@@ -1456,7 +1653,13 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     out_tt = (intent.tensors or {}).get(out_name) if out_name else None
     out_rank = len(list(getattr(out_tt, "shape", []) or [])) if out_tt is not None else 0
     ops = [op for op in list(intent.ops or []) if op is not None]
-    if kernel_name == "count_nonzero2d":
+    if kernel_name == "softmax_inner":
+        module_text = _emit_softmax_inner_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_softmax_inner_v1"
+    elif kernel_name == "log_softmax2d":
+        module_text = _emit_log_softmax2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_log_softmax2d_v1"
+    elif kernel_name == "count_nonzero2d":
         module_text = _emit_count_nonzero2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_count_nonzero2d_v1"
     elif kernel_name == "trace2d":
