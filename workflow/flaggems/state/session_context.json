@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-28T05:16:38+00:00",
+  "updated_at": "2026-03-01T15:08:49+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,168 +13,169 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "35b4b5f workflow: rebuild state after attn warp reduction\n2213387 perf(cuda-real-mlir): warp-sized attention dot reductions\n1bbd154 workflow: rebuild state after cuda perf adapter fixes\n76a0ff5 fix(cuda-perf): native launch adapters + deterministic ai_bench_correlation\n73dd6ab workflow: rebuild state after cuda real-mlir wave9\nb1ba508 backend(cuda-real-mlir): wave9 attention+upsample + robust iota/where/gather\n8e5ba40 workflow: rebuild state after cuda real-mlir wave8 fixes\n49ee59a backend(cuda-real-mlir): add mlp2d + fix matmul fused epilogue std_llvm\ne5e36f8 workflow: rebuild state after matmul real-mlir wave8\n8fbb812 triton: disable TF32 in ai_bench_matmul baseline for comparability\n874fd3f backend(cuda-real-mlir): add matmul tile_v1 lowering (ai_bench_matmul + fused epilogues)\n959567c workflow: rebuild state after ai_bench_dropout real-mlir\nca0586a backend(cuda-real-mlir): add ai_bench_dropout philox lowering + perf adapter\n97a9167 workflow: rebuild state after ai_bench_correlation real-mlir\nf92ff60 backend(cuda-real-mlir): add ai_bench_correlation lowering + perf adapter\nab76e7a workflow: rebuild state after ai_bench_resize real-mlir\n2fe4479 backend(cuda-real-mlir): add ai_bench_resize lowering + perf adapter\nb766bff workflow: rebuild state after rope/warp real-mlir expansion\n1106cea backend(cuda-real-mlir): add ai_bench_rope/warp lowering + perf native adapters\ne8419ef workflow: rebuild state after softmax real-mlir perf fix",
+  "git_log_short": "de95853 workflow: refresh refactor_context snapshot\n5849b2d workflow: refresh kernel_denominators snapshot\ne1d9976 workflow: refresh refactor_context for wave25 real-mlir\nf2a63e7 fix(pipeline): default MKL_THREADING_LAYER=GNU to avoid OMP SHM2 crash\nf1e0695 workflow(cuda-real-mlir): add wave25 allowlist + refresh support report\n6beacce tests(cuda-real-mlir): add wave25 unique/nonzero codegen\n051e0cc backend(cuda-real-mlir): wave25 add unique+nonzero\nc2a5c47 workflow(cuda-real-mlir): add wave24 allowlist + refresh support report\n30ae365 tests(cuda-real-mlir): add wave24 conv codegen\ne7f0afb backend(cuda-real-mlir): wave24 add conv kernels\nbb3cb73 workflow(cuda-real-mlir): add wave23 allowlist + refresh support report\n766f84d tests(cuda-real-mlir): add wave23 sdpa/flash codegen\n0163c8d backend(cuda-real-mlir): wave23 add sdpa_bhsd kernel\n6bc4b82 workflow(cuda-real-mlir): add wave22 allowlist + refresh support report\n8e9301e tests(cuda-real-mlir): add wave22 per_token+batch_norm codegen\n60fac06 backend(cuda-real-mlir): wave22 add per_token quant + batch_norm2d\nc8bc3c7 workflow(cuda-real-mlir): add wave21 allowlist + refresh support report\n9a9760d tests(cuda-real-mlir): add wave21 nll_loss codegen\n5c3d950 backend(cuda-real-mlir): wave21 add nll_loss forward kernels\n0e937b4 workflow(cuda-real-mlir): add wave20 allowlist + refresh support report",
   "progress_tail": [
     {
-      "ts": "2026-02-26T16:26:31+00:00",
-      "commit": "f0ea3ed5766c5ed1254cd8a6d0aa571738b79d1b",
-      "lane": "coverage",
-      "summary": "full196 v30 strict refreshed on HEAD f0ea3ed (196/196, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
-      "next_focus": "Continue denominator expansion planning with strict defaults.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-27T02:02:47+00:00",
-      "commit": "d84b1ca905ddbdcfef666e51c5c6edfc608fc4df",
-      "lane": "coverage",
-      "summary": "full196 v30 strict refreshed on HEAD d84b1ca (196/196, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
-      "next_focus": "Keep gpu_perf strict evidence aligned and continue denominator expansion.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-27T02:02:47+00:00",
-      "commit": "d84b1ca905ddbdcfef666e51c5c6edfc608fc4df",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf v18 strict refreshed on HEAD d84b1ca (159/159, min=0.817, p50=0.905, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json",
-      "next_focus": "Produce wave plan for 212 expansion and keep strict gate green.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-27T02:03:56+00:00",
-      "commit": "d84b1ca905ddbdcfef666e51c5c6edfc608fc4df",
-      "lane": "coverage",
-      "summary": "full196 v30 strict refreshed on HEAD d84b1ca (196/196, fallback=0) [tail sync]",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
-      "next_focus": "Run ci_gate coverage/gpu_perf after catalog sync and continue expansion planning.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-27T02:05:27+00:00",
-      "commit": "84a0aca4ed94968713480a740955f891b1000ac8",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf v18 strict refreshed on HEAD 84a0aca (159/159, min=0.817, p50=0.905, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json",
-      "next_focus": "Coverage tail sync then continue expansion plan.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-27T02:05:27+00:00",
-      "commit": "84a0aca4ed94968713480a740955f891b1000ac8",
-      "lane": "coverage",
-      "summary": "full196 v30 strict refreshed on HEAD 84a0aca (196/196, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
-      "next_focus": "Use registry gap report to plan 212 wave while keeping strict gates green.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-27T04:02:59+00:00",
-      "commit": "73ab97ab3f7c9c917e6a22cdad423e98d09734b0",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf v19 local compare on HEAD (159/159, min=0.828, p50=0.911, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json",
-      "next_focus": "Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-28T05:16:29+00:00",
-      "commit": "35b4b5f974049ac29dafe51f9478c29a4da117da",
+      "ts": "2026-03-01T04:20:23+00:00",
+      "commit": "d09cbc8354ec8faeaf39f311e33fa2b00f0ae6a2",
       "lane": "workflow",
-      "summary": "triton-native real-MLIR perf smoke (38 kernels): min=0.2866 p50=0.998 (slow: _attn_fwd, flash_attention2d, ai_bench_matmul)",
+      "summary": "wave12 allowlist perf v2: min=0.8706 strict no-fallback; wave12 coverage smoke OK (8/8)",
       "batch_ops": [],
       "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v7_attn_warp32/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v7_attn_warp32/status_converged.json",
-      "next_focus": "Perf: optimize attention/matmul real-MLIR kernels to >=0.8; add shape telemetry; then expand wave beyond triton-native 38.",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/status_converged.json",
+      "next_focus": "RVV wave1 real-MLIR: run remote vsetvli evidence; expand CUDA allowlist beyond wave12",
       "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v7_attn_warp32/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v7_attn_warp32/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260228/gpu_perf_triton_native_wave9_realmlir_smoke_v7_attn_warp32/status_converged.json",
-        "artifacts/validation_rounds/20260228/triton_native_coverage_full_wave9_realmlir_v4_attn_warp32",
-        "intent_ir/mlir/pipelines/downstream_cuda_std_llvm.yaml",
-        "workflow/flaggems/state/cuda_real_mlir_wave9_kernels.json"
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave12_smoke"
       ],
-      "run_ok": false,
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T05:01:16+00:00",
+      "commit": "cd6609c02847389667802acc00632a71ee506252",
+      "lane": "workflow",
+      "summary": "rvv wave1 remote add2d: vsetvli_hits=602 compare ok",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_run_summary.json",
+      "status_converged_path": "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_status_converged.json",
+      "next_focus": "",
+      "evidence_paths": [
+        "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/add2d.json",
+        "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/add2d.rvv_remote.json",
+        "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_run_summary.json",
+        "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke/rvv_remote_status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/validation_rounds/20260301/rvv_wave1_realmlir_pipeline_smoke",
+      "counts_by_status": {
+        "ok": 1,
+        "failed": 0
+      }
+    },
+    {
+      "ts": "2026-03-01T05:49:24+00:00",
+      "commit": "92454af0379921a10f9c2a3a9b3071f423bba955",
+      "lane": "workflow",
+      "summary": "wave13 allowlist perf: min=0.8706 strict no-fallback; wave13 coverage smoke OK (8/8)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/status_converged.json",
+      "next_focus": "CUDA wave14: tackle remaining 44->36 missing kernels (pool/conv/sort/topk/index*)",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave13_realmlir_allowlist_monitor_v1/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave13_smoke"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T09:09:48+00:00",
+      "commit": "9a7868c9a849ec0db87a189ebd4d980096a31e3b",
+      "lane": "workflow",
+      "summary": "wave14 allowlist perf v2 (fresh coverage artifacts)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/status_converged.json",
+      "next_focus": "",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave14_realmlir_allowlist_monitor_v2_freshcov/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave14_realmlir_allowlist_cb101_full_v1"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T09:44:48+00:00",
+      "commit": "a12bdb6c25a991d74e28e00e653a4a4cbae71e66",
+      "lane": "workflow",
+      "summary": "wave15 allowlist perf monitor (coverage_batches) + bmm/baddbmm coverage smoke",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave15_realmlir_allowlist_monitor_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave15_realmlir_allowlist_monitor_v1/status_converged.json",
+      "next_focus": "CUDA wave16: backfill unsupported scan/kron kernels; keep tests consolidated + refresh support_report/wave JSON",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave15_realmlir_allowlist_monitor_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave15_realmlir_allowlist_monitor_v1/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave15_bmm_smoke"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T10:20:04+00:00",
+      "commit": "2cfe88522c69cd8af679205345b751ebaab543b9",
+      "lane": "workflow",
+      "summary": "wave16 allowlist perf monitor + coverage refresh (scan/kron backfill)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave16_realmlir_allowlist_monitor_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave16_realmlir_allowlist_monitor_v1/status_converged.json",
+      "next_focus": "CUDA wave17: tackle sort/topk/quantile and index/scatter; revisit dynamic output kernels (unique/nonzero) ABI",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave16_realmlir_allowlist_monitor_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave16_realmlir_allowlist_monitor_v1/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave16_realmlir_allowlist_cb101_full_v1"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T10:59:09+00:00",
+      "commit": "d59ee43026feb464aaae9f5ba5f5a99b0b1ce5c0",
+      "lane": "workflow",
+      "summary": "wave17: bitonic sort/topk/quantile real-mlir (coverage+perf smoke ok)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave17_sort_topk_quantile_smoke_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave17_sort_topk_quantile_smoke_v1/status_converged.json",
+      "next_focus": "Run full gpu-perf-wave-allowlist on wave17; then tackle high-rank kernels (pool/conv/attn/scatter) + dynamic-output (unique/nonzero).",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave17_sort_topk_quantile_smoke_v1",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave17_sort_topk_quantile_smoke_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave17_sort_topk_quantile_smoke_v1/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave17_sort_topk_quantile_smoke_v1"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T11:21:44+00:00",
+      "commit": "cceafe7856e9b4f4b4f8619458edcd1cb48e5b70",
+      "lane": "workflow",
+      "summary": "wave18 pooling smoke: diff OK (2/2) + perf ok (min~0.999) strict no-fallback",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave18_pooling_smoke_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave18_pooling_smoke_v1/status_converged.json",
+      "next_focus": "",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave18_pooling_smoke_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave18_pooling_smoke_v1/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_coverage_wave18_pooling_smoke_v1"
+      ],
+      "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
     }
   ],
-  "next_focus": "Perf: optimize attention/matmul real-MLIR kernels to >=0.8; add shape telemetry; then expand wave beyond triton-native 38.",
+  "next_focus": "",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -182,12 +183,10 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
+    "workflow": "Run full gpu-perf-wave-allowlist on wave17; then tackle high-rank kernels (pool/conv/attn/scatter) + dynamic-output (unique/nonzero).",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "backend_compiler": "Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.",
-    "workflow": "Perf: optimize attention/matmul real-MLIR kernels to >=0.8; add shape telemetry; then expand wave beyond triton-native 38.",
+    "backend_compiler": "Run gpu-perf-graph by family/chunk, then refresh gpu perf freshness on HEAD.",
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
-  "known_risks": [
-    "triton-native real-MLIR perf smoke (38 kernels): min=0.2866 p50=0.998 (slow: _attn_fwd, flash_attention2d, ai_bench_matmul)"
-  ]
+  "known_risks": []
 }
