@@ -618,7 +618,15 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     intent = _maybe_rewrite_relu2d_where_pattern(intent)
     intent, normalized_bf16 = _maybe_normalize_bf16_to_f32(intent)
     _ = materialize_missing_op_output_tensors(intent)
-    kernel_name = str(intent.name or "intent")
+    kernel_name = str(
+        incoming_meta.get("kernel")
+        or incoming_meta.get("spec_name")
+        or incoming_meta.get("kernel_name")
+        or intent.name
+        or "intent"
+    ).strip()
+    if not kernel_name:
+        kernel_name = str(intent.name or "intent")
 
     out_name = str((list(intent.outputs or []) or [""])[0]).strip()
     out_tt = (intent.tensors or {}).get(out_name) if out_name else None

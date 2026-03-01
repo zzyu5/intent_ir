@@ -414,6 +414,10 @@ def _emit_mlir_shadow_artifacts(
                         pass
                 try:
                     mid_mod.meta = dict(mid_mod.meta or {})
+                    # Preserve the KernelSpec name for downstream backends that need a
+                    # stable exported symbol name (e.g., RVV remote runner expects this).
+                    mid_mod.meta.setdefault("kernel", str(spec_name))
+                    mid_mod.meta.setdefault("spec_name", str(spec_name))
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
