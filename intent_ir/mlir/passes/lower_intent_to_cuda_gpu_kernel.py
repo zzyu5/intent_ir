@@ -1704,6 +1704,11 @@ def lower_intent_to_cuda_gpu_kernel(
     row_sort_axis1_bitonic_v1: dict[str, Any] | None = None
     row_topk_axis1_bitonic_v1: dict[str, Any] | None = None
     row_quantile_axis1_sort_v1: dict[str, Any] | None = None
+    index_add2d_axis0_v1: dict[str, Any] | None = None
+    index_put2d_v1: dict[str, Any] | None = None
+    scatter2d_dim1_v1: dict[str, Any] | None = None
+    select_scatter2d_dim1_v1: dict[str, Any] | None = None
+    slice_scatter2d_dim1_v1: dict[str, Any] | None = None
     avg_pool2d_nchw_v1: dict[str, Any] | None = None
     max_pool2d_with_indices_nchw_v1: dict[str, Any] | None = None
 
@@ -2904,6 +2909,274 @@ def lower_intent_to_cuda_gpu_kernel(
                                         "DH": 1,
                                         "DW": 1,
                                     }
+
+        # Wave19 (coverage_batches backfill): index/scatter family (row-parallel).
+        if index_add2d_axis0_v1 is None and intent_name == "index_add2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs0 = dict(getattr(op0, "attrs", {}) or {})
+                axis = attrs0.get("axis")
+                alpha = attrs0.get("alpha")
+                try:
+                    axis_i = int(axis) if axis is not None else None
+                except Exception:
+                    axis_i = None
+                try:
+                    alpha_f = float(alpha) if alpha is not None else 1.0
+                except Exception:
+                    alpha_f = 1.0
+                if op0_name == "index_add" and len(op0_inputs) == 3 and op0_out == str(out_name) and axis_i == 0:
+                    base_name, index_name, src_name = map(str, op0_inputs)
+                    required = {base_name, index_name, src_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        base_dims = list(arg_specs[base_name].get("dims") or [])
+                        idx_dims = list(arg_specs[index_name].get("dims") or [])
+                        src_dims = list(arg_specs[src_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(base_dims) == 2 and len(out_dims2) == 2 and len(idx_dims) == 1 and len(src_dims) == 2 and out_rank == 2:
+                            m_dim, n_dim = map(int, base_dims)
+                            l_dim = int(idx_dims[0])
+                            l2_dim, n2_dim = map(int, src_dims)
+                            m_out, n_out = map(int, out_dims2)
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and l_dim > 0
+                                and l2_dim == l_dim
+                                and n2_dim == n_dim
+                                and m_out == m_dim
+                                and n_out == n_dim
+                                and str(arg_specs[base_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[src_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[index_name].get("memref_elem_ty") or "") == "i32"
+                            )
+                            if ok:
+                                index_add2d_axis0_v1 = {
+                                    "base": str(base_name),
+                                    "index": str(index_name),
+                                    "src": str(src_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "L": int(l_dim),
+                                    "alpha": float(alpha_f),
+                                }
+
+        if index_put2d_v1 is None and intent_name == "index_put2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs0 = dict(getattr(op0, "attrs", {}) or {})
+                accumulate = bool(attrs0.get("accumulate")) if attrs0.get("accumulate") is not None else False
+                if op0_name == "index_put" and len(op0_inputs) == 4 and op0_out == str(out_name) and not accumulate:
+                    base_name, row_name, col_name, val_name = map(str, op0_inputs)
+                    required = {base_name, row_name, col_name, val_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        base_dims = list(arg_specs[base_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        row_dims = list(arg_specs[row_name].get("dims") or [])
+                        col_dims = list(arg_specs[col_name].get("dims") or [])
+                        val_dims = list(arg_specs[val_name].get("dims") or [])
+                        if (
+                            len(base_dims) == 2
+                            and len(out_dims2) == 2
+                            and len(row_dims) == 1
+                            and row_dims == col_dims
+                            and row_dims == val_dims
+                            and out_rank == 2
+                        ):
+                            m_dim, n_dim = map(int, base_dims)
+                            m_out, n_out = map(int, out_dims2)
+                            l_dim = int(row_dims[0])
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and l_dim > 0
+                                and m_out == m_dim
+                                and n_out == n_dim
+                                and str(arg_specs[base_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[val_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[row_name].get("memref_elem_ty") or "") == "i32"
+                                and str(arg_specs[col_name].get("memref_elem_ty") or "") == "i32"
+                            )
+                            if ok:
+                                index_put2d_v1 = {
+                                    "base": str(base_name),
+                                    "row_idx": str(row_name),
+                                    "col_idx": str(col_name),
+                                    "values": str(val_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "L": int(l_dim),
+                                }
+
+        if scatter2d_dim1_v1 is None and intent_name == "scatter2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs0 = dict(getattr(op0, "attrs", {}) or {})
+                dim = attrs0.get("dim")
+                try:
+                    dim_i = int(dim) if dim is not None else None
+                except Exception:
+                    dim_i = None
+                if op0_name == "scatter" and len(op0_inputs) == 3 and op0_out == str(out_name) and dim_i == 1:
+                    inp_name, idx_name, src_name = map(str, op0_inputs)
+                    required = {inp_name, idx_name, src_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        in_dims = list(arg_specs[inp_name].get("dims") or [])
+                        idx_dims = list(arg_specs[idx_name].get("dims") or [])
+                        src_dims = list(arg_specs[src_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(in_dims) == 2 and in_dims == idx_dims and in_dims == src_dims and in_dims == out_dims2 and out_rank == 2:
+                            m_dim, n_dim = map(int, in_dims)
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and str(arg_specs[inp_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[src_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[idx_name].get("memref_elem_ty") or "") == "i32"
+                            )
+                            if ok:
+                                scatter2d_dim1_v1 = {
+                                    "inp": str(inp_name),
+                                    "index": str(idx_name),
+                                    "src": str(src_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                }
+
+        if select_scatter2d_dim1_v1 is None and intent_name == "select_scatter2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs0 = dict(getattr(op0, "attrs", {}) or {})
+                dim = attrs0.get("dim")
+                index = attrs0.get("index")
+                try:
+                    dim_i = int(dim) if dim is not None else None
+                except Exception:
+                    dim_i = None
+                try:
+                    idx_i = int(index) if index is not None else None
+                except Exception:
+                    idx_i = None
+                if op0_name == "select_scatter" and len(op0_inputs) == 2 and op0_out == str(out_name) and dim_i == 1 and idx_i is not None:
+                    inp_name, src_name = map(str, op0_inputs)
+                    required = {inp_name, src_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        in_dims = list(arg_specs[inp_name].get("dims") or [])
+                        src_dims = list(arg_specs[src_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(in_dims) == 2 and len(out_dims2) == 2 and len(src_dims) == 1 and out_rank == 2:
+                            m_dim, n_dim = map(int, in_dims)
+                            m2_dim, n2_dim = map(int, out_dims2)
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and m2_dim == m_dim
+                                and n2_dim == n_dim
+                                and int(src_dims[0]) == m_dim
+                                and 0 <= int(idx_i) < n_dim
+                                and str(arg_specs[inp_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[src_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                select_scatter2d_dim1_v1 = {
+                                    "inp": str(inp_name),
+                                    "src": str(src_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "index": int(idx_i),
+                                }
+
+        if slice_scatter2d_dim1_v1 is None and intent_name == "slice_scatter2d":
+            if len(ops_list) == 1:
+                op0 = ops_list[0]
+                op0_name = str(getattr(op0, "op", "")).strip()
+                op0_inputs = [str(x) for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+                op0_out = str(getattr(op0, "output", "")).strip()
+                attrs0 = dict(getattr(op0, "attrs", {}) or {})
+                dim = attrs0.get("dim")
+                start = attrs0.get("start")
+                end = attrs0.get("end")
+                step = attrs0.get("step")
+                try:
+                    dim_i = int(dim) if dim is not None else None
+                except Exception:
+                    dim_i = None
+                try:
+                    start_i = int(start) if start is not None else None
+                except Exception:
+                    start_i = None
+                try:
+                    end_i = int(end) if end is not None else None
+                except Exception:
+                    end_i = None
+                try:
+                    step_i = int(step) if step is not None else 1
+                except Exception:
+                    step_i = 1
+                if (
+                    op0_name == "slice_scatter"
+                    and len(op0_inputs) == 2
+                    and op0_out == str(out_name)
+                    and dim_i == 1
+                    and start_i is not None
+                    and end_i is not None
+                    and step_i > 0
+                ):
+                    inp_name, src_name = map(str, op0_inputs)
+                    required = {inp_name, src_name, op0_out}
+                    if required.issubset(set(arg_specs.keys())):
+                        in_dims = list(arg_specs[inp_name].get("dims") or [])
+                        src_dims = list(arg_specs[src_name].get("dims") or [])
+                        out_dims2 = list(arg_specs[op0_out].get("dims") or [])
+                        if len(in_dims) == 2 and len(out_dims2) == 2 and len(src_dims) == 2 and out_rank == 2:
+                            m_dim, n_dim = map(int, in_dims)
+                            m2_dim, n2_dim = map(int, out_dims2)
+                            m_src, l_src = map(int, src_dims)
+                            slice_len = len(list(range(int(start_i), int(end_i), int(step_i))))
+                            ok = (
+                                m_dim > 0
+                                and n_dim > 0
+                                and m2_dim == m_dim
+                                and n2_dim == n_dim
+                                and m_src == m_dim
+                                and slice_len == l_src
+                                and 0 <= int(start_i) <= int(end_i) <= n_dim
+                                and str(arg_specs[inp_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[src_name].get("memref_elem_ty") or "") == "f32"
+                                and str(arg_specs[op0_out].get("memref_elem_ty") or "") == "f32"
+                            )
+                            if ok:
+                                slice_scatter2d_dim1_v1 = {
+                                    "inp": str(inp_name),
+                                    "src": str(src_name),
+                                    "out": str(op0_out),
+                                    "M": int(m_dim),
+                                    "N": int(n_dim),
+                                    "start": int(start_i),
+                                    "end": int(end_i),
+                                    "step": int(step_i),
+                                    "L": int(l_src),
+                                }
 
         # Pattern: matmul family (Triton-native perf/coverage kernels).
         #
@@ -8950,6 +9223,265 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %q_diff = arith.mulf %frac, %diff{fm} : f32")
         lines.append(f"          %outv = arith.addf %v0, %q_diff{fm} : f32")
         lines.append(f"          memref.store %outv, {arg_ssa[out_name2]}[%bid] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif index_add2d_axis0_v1 is not None:
+        kernel_kind = "index_add2d_axis0_v1"
+        m_dim = int(index_add2d_axis0_v1["M"])
+        n_dim = int(index_add2d_axis0_v1["N"])
+        l_dim = int(index_add2d_axis0_v1["L"])
+        alpha_f = float(index_add2d_axis0_v1.get("alpha", 1.0))
+        if m_dim <= 0 or n_dim <= 0 or l_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim} L={l_dim}")
+
+        base_name = str(index_add2d_axis0_v1["base"])
+        index_name = str(index_add2d_axis0_v1["index"])
+        src_name = str(index_add2d_axis0_v1["src"])
+        out_name2 = str(index_add2d_axis0_v1["out"])
+        base_memref = str(arg_specs[base_name]["memref"])
+        index_memref = str(arg_specs[index_name]["memref"])
+        src_memref = str(arg_specs[src_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cL = arith.constant {int(l_dim)} : index")
+        lines.append(f"      %alpha = arith.constant {_as_f32_const(alpha_f)} : f32")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %row_off = arith.muli %bid, %cN : index")
+        lines.append("        %bid_i32 = arith.index_cast %bid : index to i32")
+        lines.append("        scf.for %jj = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %row_off, %jj : index")
+        lines.append(f"          %base_v = memref.load {arg_ssa[base_name]}[%idx] : {base_memref}")
+        lines.append("          %acc = scf.for %ii = %c0 to %cL step %c1 iter_args(%a = %base_v) -> (f32) {")
+        lines.append(f"            %row_i32 = memref.load {arg_ssa[index_name]}[%ii] : {index_memref}")
+        lines.append("            %is_row = arith.cmpi eq, %row_i32, %bid_i32 : i32")
+        lines.append("            %a_next = scf.if %is_row -> (f32) {")
+        lines.append("              %src_row_off = arith.muli %ii, %cN : index")
+        lines.append("              %src_idx = arith.addi %src_row_off, %jj : index")
+        lines.append(f"              %sv = memref.load {arg_ssa[src_name]}[%src_idx] : {src_memref}")
+        lines.append(f"              %scaled = arith.mulf %sv, %alpha{fm} : f32")
+        lines.append(f"              %sum = arith.addf %a, %scaled{fm} : f32")
+        lines.append("              scf.yield %sum : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %a : f32")
+        lines.append("            }")
+        lines.append("            scf.yield %a_next : f32")
+        lines.append("          }")
+        lines.append(f"          memref.store %acc, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif index_put2d_v1 is not None:
+        kernel_kind = "index_put2d_v1"
+        m_dim = int(index_put2d_v1["M"])
+        n_dim = int(index_put2d_v1["N"])
+        l_dim = int(index_put2d_v1["L"])
+        if m_dim <= 0 or n_dim <= 0 or l_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim} L={l_dim}")
+
+        base_name = str(index_put2d_v1["base"])
+        row_name = str(index_put2d_v1["row_idx"])
+        col_name = str(index_put2d_v1["col_idx"])
+        val_name = str(index_put2d_v1["values"])
+        out_name2 = str(index_put2d_v1["out"])
+        base_memref = str(arg_specs[base_name]["memref"])
+        row_memref = str(arg_specs[row_name]["memref"])
+        col_memref = str(arg_specs[col_name]["memref"])
+        val_memref = str(arg_specs[val_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cL = arith.constant {int(l_dim)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %row_off = arith.muli %bid, %cN : index")
+        lines.append("        scf.for %jj = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %row_off, %jj : index")
+        lines.append(f"          %v = memref.load {arg_ssa[base_name]}[%idx] : {base_memref}")
+        lines.append(f"          memref.store %v, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is0 {")
+        lines.append("          %bid_i32 = arith.index_cast %bid : index to i32")
+        lines.append(f"          %c0_i32 = arith.constant 0 : i32")
+        lines.append(f"          %cN_i32 = arith.constant {int(n_dim)} : i32")
+        lines.append("          scf.for %ii = %c0 to %cL step %c1 {")
+        lines.append(f"            %r_i32 = memref.load {arg_ssa[row_name]}[%ii] : {row_memref}")
+        lines.append("            %match_row = arith.cmpi eq, %r_i32, %bid_i32 : i32")
+        lines.append("            scf.if %match_row {")
+        lines.append(f"              %c_i32 = memref.load {arg_ssa[col_name]}[%ii] : {col_memref}")
+        lines.append("              %ge0 = arith.cmpi sge, %c_i32, %c0_i32 : i32")
+        lines.append("              %ltN = arith.cmpi slt, %c_i32, %cN_i32 : i32")
+        lines.append("              %inb = arith.andi %ge0, %ltN : i1")
+        lines.append("              scf.if %inb {")
+        lines.append("                %cc = arith.index_cast %c_i32 : i32 to index")
+        lines.append("                %dst = arith.addi %row_off, %cc : index")
+        lines.append(f"                %vv = memref.load {arg_ssa[val_name]}[%ii] : {val_memref}")
+        lines.append(f"                memref.store %vv, {arg_ssa[out_name2]}[%dst] : {out_memref}")
+        lines.append("              }")
+        lines.append("            }")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("      }")
+    elif scatter2d_dim1_v1 is not None:
+        kernel_kind = "scatter2d_dim1_v1"
+        m_dim = int(scatter2d_dim1_v1["M"])
+        n_dim = int(scatter2d_dim1_v1["N"])
+        if m_dim <= 0 or n_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim}")
+
+        inp_name = str(scatter2d_dim1_v1["inp"])
+        idx_name = str(scatter2d_dim1_v1["index"])
+        src_name = str(scatter2d_dim1_v1["src"])
+        out_name2 = str(scatter2d_dim1_v1["out"])
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        idx_memref = str(arg_specs[idx_name]["memref"])
+        src_memref = str(arg_specs[src_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %row_off = arith.muli %bid, %cN : index")
+        lines.append("        scf.for %jj = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %row_off, %jj : index")
+        lines.append(f"          %v = memref.load {arg_ssa[inp_name]}[%idx] : {inp_memref}")
+        lines.append(f"          memref.store %v, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %c0_i32 = arith.constant 0 : i32")
+        lines.append(f"        %cN_i32 = arith.constant {int(n_dim)} : i32")
+        lines.append("        scf.for %jj = %tid to %cN step %bdim {")
+        lines.append("          %src_idx = arith.addi %row_off, %jj : index")
+        lines.append(f"          %dst_i32 = memref.load {arg_ssa[idx_name]}[%src_idx] : {idx_memref}")
+        lines.append("          %ge0 = arith.cmpi sge, %dst_i32, %c0_i32 : i32")
+        lines.append("          %ltN = arith.cmpi slt, %dst_i32, %cN_i32 : i32")
+        lines.append("          %inb = arith.andi %ge0, %ltN : i1")
+        lines.append("          scf.if %inb {")
+        lines.append("            %dst = arith.index_cast %dst_i32 : i32 to index")
+        lines.append("            %out_idx = arith.addi %row_off, %dst : index")
+        lines.append(f"            %vv = memref.load {arg_ssa[src_name]}[%src_idx] : {src_memref}")
+        lines.append(f"            memref.store %vv, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("      }")
+    elif select_scatter2d_dim1_v1 is not None:
+        kernel_kind = "select_scatter2d_dim1_v1"
+        m_dim = int(select_scatter2d_dim1_v1["M"])
+        n_dim = int(select_scatter2d_dim1_v1["N"])
+        col_i = int(select_scatter2d_dim1_v1["index"])
+        if m_dim <= 0 or n_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim}")
+        if col_i < 0 or col_i >= n_dim:
+            raise RuntimeError(f"{kernel_kind} requires 0<=index<N, got index={col_i} N={n_dim}")
+
+        inp_name = str(select_scatter2d_dim1_v1["inp"])
+        src_name = str(select_scatter2d_dim1_v1["src"])
+        out_name2 = str(select_scatter2d_dim1_v1["out"])
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        src_memref = str(arg_specs[src_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cCol = arith.constant {int(col_i)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %row_off = arith.muli %bid, %cN : index")
+        lines.append("        scf.for %jj = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %row_off, %jj : index")
+        lines.append(f"          %v = memref.load {arg_ssa[inp_name]}[%idx] : {inp_memref}")
+        lines.append(f"          memref.store %v, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        scf.if %is0 {")
+        lines.append("          %dst = arith.addi %row_off, %cCol : index")
+        lines.append(f"          %sv = memref.load {arg_ssa[src_name]}[%bid] : {src_memref}")
+        lines.append(f"          memref.store %sv, {arg_ssa[out_name2]}[%dst] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif slice_scatter2d_dim1_v1 is not None:
+        kernel_kind = "slice_scatter2d_dim1_v1"
+        m_dim = int(slice_scatter2d_dim1_v1["M"])
+        n_dim = int(slice_scatter2d_dim1_v1["N"])
+        start_i = int(slice_scatter2d_dim1_v1["start"])
+        end_i = int(slice_scatter2d_dim1_v1["end"])
+        step_i = int(slice_scatter2d_dim1_v1["step"])
+        l_dim = int(slice_scatter2d_dim1_v1["L"])
+        if m_dim <= 0 or n_dim <= 0 or l_dim <= 0:
+            raise RuntimeError(f"{kernel_kind} expects positive dims, got M={m_dim} N={n_dim} L={l_dim}")
+        if step_i <= 0:
+            raise RuntimeError(f"{kernel_kind} requires step>0, got step={step_i}")
+        if not (0 <= start_i <= end_i <= n_dim):
+            raise RuntimeError(f"{kernel_kind} requires 0<=start<=end<=N, got start={start_i} end={end_i} N={n_dim}")
+
+        inp_name = str(slice_scatter2d_dim1_v1["inp"])
+        src_name = str(slice_scatter2d_dim1_v1["src"])
+        out_name2 = str(slice_scatter2d_dim1_v1["out"])
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        src_memref = str(arg_specs[src_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(m_dim), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cL = arith.constant {int(l_dim)} : index")
+        lines.append(f"      %cStart = arith.constant {int(start_i)} : index")
+        lines.append(f"      %cStep = arith.constant {int(step_i)} : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %row_off = arith.muli %bid, %cN : index")
+        lines.append("        scf.for %jj = %tid to %cN step %bdim {")
+        lines.append("          %idx = arith.addi %row_off, %jj : index")
+        lines.append(f"          %v = memref.load {arg_ssa[inp_name]}[%idx] : {inp_memref}")
+        lines.append(f"          memref.store %v, {arg_ssa[out_name2]}[%idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        %src_row_off = arith.muli %bid, %cL : index")
+        lines.append("        scf.for %jj = %tid to %cL step %bdim {")
+        lines.append("          %dst_mul = arith.muli %jj, %cStep : index")
+        lines.append("          %dst_col = arith.addi %cStart, %dst_mul : index")
+        lines.append("          %out_idx = arith.addi %row_off, %dst_col : index")
+        lines.append("          %src_idx = arith.addi %src_row_off, %jj : index")
+        lines.append(f"          %vv = memref.load {arg_ssa[src_name]}[%src_idx] : {src_memref}")
+        lines.append(f"          memref.store %vv, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif avg_pool2d_nchw_v1 is not None:
