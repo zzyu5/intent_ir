@@ -28,9 +28,9 @@ def test_downstream_rvv_std_llvm_emits_riscv_triple(tmp_path: Path) -> None:
         assert bool(((toolchain.get("tools") or {}).get(k) or {}).get("available")) is True
 
     mod = to_mlir(_sample_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
     out, trace = run_pipeline(mod, "downstream_rvv_std_llvm", backend="rvv", out_dir=tmp_path, fail_on_error=True)
     assert bool(trace.get("ok")) is True
     text = str(out.module_text or "")
     assert "target triple = \"riscv64-unknown-linux-gnu\"" in text
-    assert str((out.meta or {}).get("llvm_dialect_origin") or "") in {"", "mlir_translate"}
-
+    assert str((out.meta or {}).get("llvm_dialect_origin") or "") == "mlir_translate"
