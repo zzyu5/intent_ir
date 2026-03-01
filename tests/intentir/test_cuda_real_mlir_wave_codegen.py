@@ -438,6 +438,101 @@ def _baddbmm3d_intent() -> IntentFunction:
     )
 
 
+def _kron2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "kron2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["P", "Q"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["MP", "NQ"], "layout": "row_major"},
+            },
+            "ops": [{"op": "kron", "inputs": ["A", "B"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _cumsum2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cumsum2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "offset": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "inp_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "result": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "offset", "attrs": {"axis": 1, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "identity", "inputs": ["inp"], "output": "inp_vals"},
+                {"op": "cumsum", "inputs": ["inp_vals"], "output": "result", "attrs": {"axis": 1}},
+                {"op": "identity", "inputs": ["result"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _normed_cumsum2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "normed_cumsum2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "EPS": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "y_cumsum": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y_denom": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
+                "y_sum_eps": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
+                "y_sum_eps_bc": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cumsum", "inputs": ["inp"], "output": "y_cumsum", "attrs": {"axis": 1}},
+                {"op": "reduce_sum", "inputs": ["inp"], "output": "y_denom", "attrs": {"dims": [1], "keepdims": True}},
+                {"op": "add", "inputs": ["y_denom", "EPS"], "output": "y_sum_eps"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["y_sum_eps"],
+                    "output": "y_sum_eps_bc",
+                    "attrs": {"broadcast_dims": [0, 1], "out_shape": ["M", "N"]},
+                },
+                {"op": "div", "inputs": ["y_cumsum", "y_sum_eps_bc"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _cummax1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cummax1d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "cummax", "inputs": ["x"], "output": "out", "attrs": {"axis": 0}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _cummin1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cummin1d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "cummin", "inputs": ["x"], "output": "out", "attrs": {"axis": 0}}],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -467,6 +562,12 @@ def _baddbmm3d_intent() -> IntentFunction:
         # wave15
         (_bmm3d_intent, {"BATCH": 2, "M": 8, "K": 16, "N": 8}, "bmm_tile_v2", "batch_m = arith.muli %bid_b"),
         (_baddbmm3d_intent, {"BATCH": 2, "M": 8, "K": 16, "N": 8}, "baddbmm_tile_v2", "batch_m = arith.muli %bid_b"),
+        # wave16
+        (_kron2d_intent, {"M": 4, "N": 8, "P": 2, "Q": 3, "MP": 8, "NQ": 24}, "kron2d_v1", "%out_row = arith.divui %lin, %cNQ"),
+        (_cumsum2d_intent, {"M": 4, "N": 64}, "cumsum2d_axis1_v1", "gpu.shuffle up"),
+        (_normed_cumsum2d_intent, {"M": 4, "N": 64}, "normed_cumsum2d_axis1_v1", "arith.divf %full_scan, %denom"),
+        (_cummax1d_intent, {"N": 64}, "cummax1d_axis0_v1", "arith.maximumf %acc, %xv"),
+        (_cummin1d_intent, {"N": 64}, "cummin1d_axis0_v1", "arith.minimumf %acc, %xv"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
