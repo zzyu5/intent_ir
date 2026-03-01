@@ -838,6 +838,142 @@ def _nll_loss2d_forward_intent() -> IntentFunction:
     )
 
 
+def _per_token_group_quant_fp8_2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "per_token_group_quant_fp8_2d",
+            "tensors": {
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "fp8_min": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "fp8_max": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "y_grouped": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_abs": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "absmax": {"dtype": "f32", "shape": ["MG", 1], "layout": "row_major"},
+                "absmax_clamped": {"dtype": "f32", "shape": ["MG", 1], "layout": "row_major"},
+                "y_s_2d": {"dtype": "f32", "shape": ["MG", 1], "layout": "row_major"},
+                "y_s_broadcast": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_scaled": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_clamped_min": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_clamped": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_q": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y_s": {"dtype": "f32", "shape": ["M", "G"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reshape", "inputs": ["y"], "output": "y_grouped", "attrs": {"shape": ["MG", "GROUP_SIZE"]}},
+                {"op": "abs", "inputs": ["y_grouped"], "output": "y_abs"},
+                {"op": "reduce_max", "inputs": ["y_abs"], "output": "absmax", "attrs": {"dims": [1], "keepdims": True}},
+                {"op": "max", "inputs": ["absmax", "eps"], "output": "absmax_clamped"},
+                {"op": "div", "inputs": ["absmax_clamped", "fp8_max"], "output": "y_s_2d"},
+                {"op": "reshape", "inputs": ["y_s_2d"], "output": "y_s", "attrs": {"shape": ["M", "G"]}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["y_s_2d"],
+                    "output": "y_s_broadcast",
+                    "attrs": {"out_shape": ["MG", "GROUP_SIZE"], "broadcast_dims": [0, 1]},
+                },
+                {"op": "div", "inputs": ["y_grouped", "y_s_broadcast"], "output": "y_scaled"},
+                {"op": "max", "inputs": ["y_scaled", "fp8_min"], "output": "y_clamped_min"},
+                {"op": "min", "inputs": ["y_clamped_min", "fp8_max"], "output": "y_clamped"},
+                {"op": "reshape", "inputs": ["y_clamped"], "output": "y_q", "attrs": {"shape": ["M", "N"]}},
+            ],
+            "outputs": ["y_q", "y_s"],
+        }
+    )
+
+
+def _batch_norm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "batch_norm2d",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_mean": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_var": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "momentum": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "n_elements": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "n_minus_1": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "output_1": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "mean": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "inv_std": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_mean_out": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_var_out": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "const_one": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "mean_sum": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "mean_bcast": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "centered": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "centered_sq": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "var_sum": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "var": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "var_eps": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "inv_std_bcast": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "normalized": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "weight_bcast": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "scaled": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "bias_bcast": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "one_minus_momentum": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "running_mean_keep": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_mean_delta": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "bessel": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "unbiased_var": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_var_keep": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_var_delta": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "const_one", "attrs": {"value": 1.0}},
+                {"op": "reduce_sum", "inputs": ["input"], "output": "mean_sum", "attrs": {"dims": [0, 2]}},
+                {"op": "div", "inputs": ["mean_sum", "n_elements"], "output": "mean"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["mean"],
+                    "output": "mean_bcast",
+                    "attrs": {"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]},
+                },
+                {"op": "sub", "inputs": ["input", "mean_bcast"], "output": "centered"},
+                {"op": "mul", "inputs": ["centered", "centered"], "output": "centered_sq"},
+                {"op": "reduce_sum", "inputs": ["centered_sq"], "output": "var_sum", "attrs": {"dims": [0, 2]}},
+                {"op": "div", "inputs": ["var_sum", "n_elements"], "output": "var"},
+                {"op": "add", "inputs": ["var", "eps"], "output": "var_eps"},
+                {"op": "rsqrt", "inputs": ["var_eps"], "output": "inv_std"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["inv_std"],
+                    "output": "inv_std_bcast",
+                    "attrs": {"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]},
+                },
+                {"op": "mul", "inputs": ["centered", "inv_std_bcast"], "output": "normalized"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["weight"],
+                    "output": "weight_bcast",
+                    "attrs": {"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]},
+                },
+                {"op": "mul", "inputs": ["normalized", "weight_bcast"], "output": "scaled"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["bias"],
+                    "output": "bias_bcast",
+                    "attrs": {"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]},
+                },
+                {"op": "add", "inputs": ["scaled", "bias_bcast"], "output": "output_1"},
+                {"op": "sub", "inputs": ["const_one", "momentum"], "output": "one_minus_momentum"},
+                {"op": "mul", "inputs": ["one_minus_momentum", "running_mean"], "output": "running_mean_keep"},
+                {"op": "mul", "inputs": ["momentum", "mean"], "output": "running_mean_delta"},
+                {"op": "add", "inputs": ["running_mean_keep", "running_mean_delta"], "output": "running_mean_out"},
+                {"op": "div", "inputs": ["n_elements", "n_minus_1"], "output": "bessel"},
+                {"op": "mul", "inputs": ["var", "bessel"], "output": "unbiased_var"},
+                {"op": "mul", "inputs": ["one_minus_momentum", "running_var"], "output": "running_var_keep"},
+                {"op": "mul", "inputs": ["momentum", "unbiased_var"], "output": "running_var_delta"},
+                {"op": "add", "inputs": ["running_var_keep", "running_var_delta"], "output": "running_var_out"},
+            ],
+            "outputs": ["output_1", "mean", "inv_std", "running_mean_out", "running_var_out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
@@ -898,6 +1034,14 @@ def _nll_loss2d_forward_intent() -> IntentFunction:
         # wave21
         (_nll_loss_forward_intent, {"N": 16, "C": 8}, "nll_loss_forward_v1", "arith.constant -100 : i64"),
         (_nll_loss2d_forward_intent, {"N": 2, "C": 4, "H": 4, "W": 4}, "nll_loss2d_forward_v1", "arith.constant -100 : i64"),
+        # wave22
+        (
+            _per_token_group_quant_fp8_2d_intent,
+            {"M": 4, "N": 64, "G": 4, "GROUP_SIZE": 16},
+            "per_token_group_quant_fp8_2d_v1",
+            "memref.store %scale, %y_s[%bid]",
+        ),
+        (_batch_norm2d_intent, {"N": 2, "C": 4, "HW": 4}, "batch_norm2d_v1", "memref.store %inv_std_v, %inv_std[%bid]"),
     ],
 )
 def test_cuda_real_mlir_wave_codegen_and_is_parseable(
