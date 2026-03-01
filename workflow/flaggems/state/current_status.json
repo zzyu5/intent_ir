@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-03-01T20:38:48+00:00",
+  "updated_at": "2026-03-01T20:43:34+00:00",
   "branch": "compiler-cleanup-v1",
   "head_commit": "1e04b07ac6720dcb0281f0dc59a6a96092abb757",
   "mode": "maintenance",
@@ -137,8 +137,8 @@
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d/run_summary.json",
-    "status_converged": "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d/status_converged.json"
+    "run_summary": "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod/run_summary.json",
+    "status_converged": "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod/status_converged.json"
   },
   "lanes": {
     "coverage": {
