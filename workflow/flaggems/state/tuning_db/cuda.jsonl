@@ -1,0 +1,6 @@
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"sort_stable2d","arch":"sm89","bindings":{"tile_n":1024},"note":"perf gate hint"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"batch_norm2d","arch":"sm89","bindings":{"tile_n":384},"note":"perf gate hint"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"rms_norm2d","arch":"sm89","bindings":{"tile_n":768},"note":"perf gate hint"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"select_scatter2d","arch":"sm89","bindings":{"tile_n":384},"note":"perf gate hint"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"conv3d_ncdhw","arch":"sm89","bindings":{"tile_n":192},"note":"perf gate hint"}
+

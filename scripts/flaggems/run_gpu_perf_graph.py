@@ -79,6 +79,64 @@ def _dump_json(path: Path, payload: dict[str, Any]) -> Path:
     return p
 
 
+_DEFAULT_TUNING_DB = ROOT / "workflow" / "flaggems" / "state" / "tuning_db" / "cuda.jsonl"
+_TUNING_DB_LOADED = False
+_TUNING_DB_PATH = ""
+_TUNING_DB_BY_KERNEL_ARCH: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def _load_tuning_db_jsonl(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    p = Path(path)
+    if not p.is_file():
+        return {}
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for i, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+        line = str(raw).strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            row = json.loads(line)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"invalid tuning_db jsonl at {p}:{i}: {type(e).__name__}: {e}") from e
+        if not isinstance(row, dict):
+            continue
+        backend = str(row.get("backend") or "").strip().lower()
+        if backend and backend != "cuda":
+            continue
+        kernel = str(row.get("kernel") or "").strip()
+        arch = str(row.get("arch") or "").strip()
+        bindings = row.get("bindings")
+        if not kernel or not arch or not isinstance(bindings, dict):
+            continue
+        out[(kernel, arch)] = dict(bindings)
+    return out
+
+
+def _configure_tuning_db(path: Path | None) -> None:
+    global _TUNING_DB_LOADED, _TUNING_DB_PATH, _TUNING_DB_BY_KERNEL_ARCH
+    _TUNING_DB_LOADED = False
+    _TUNING_DB_PATH = ""
+    _TUNING_DB_BY_KERNEL_ARCH = {}
+    _ensure_tuning_db_loaded(path=path)
+
+
+def _ensure_tuning_db_loaded(*, path: Path | None = None) -> None:
+    global _TUNING_DB_LOADED, _TUNING_DB_PATH, _TUNING_DB_BY_KERNEL_ARCH
+    if bool(_TUNING_DB_LOADED):
+        return
+    p = Path(path) if path is not None else None
+    if p is None:
+        p = _DEFAULT_TUNING_DB if _DEFAULT_TUNING_DB.is_file() else None
+    if p is None or not p.is_file():
+        _TUNING_DB_LOADED = True
+        _TUNING_DB_PATH = ""
+        _TUNING_DB_BY_KERNEL_ARCH = {}
+        return
+    _TUNING_DB_BY_KERNEL_ARCH = _load_tuning_db_jsonl(p)
+    _TUNING_DB_PATH = _to_repo_rel(p)
+    _TUNING_DB_LOADED = True
+
+
 def _load_gate_policy(path: Path | None) -> tuple[set[str], dict[str, Any], bool]:
     if path is None:
         return set(), {}, False
@@ -261,9 +319,15 @@ def _maybe_rewrite_contract_for_perf_rebuild(
     }
 
 
-def _intentir_perf_binding_overrides_for_kernel(kernel: str) -> dict[str, Any]:
-    # Tuned launch hints for the current hard kernels in gpu_perf gate.
-    # Keep these scoped and additive (setdefault) so artifact-provided bindings win.
+def _intentir_perf_binding_overrides_for_kernel(*, kernel: str, arch: str | None) -> tuple[dict[str, Any], str]:
+    _ensure_tuning_db_loaded()
+    k = str(kernel).strip()
+    a = str(arch or "").strip()
+    if k and a:
+        row = _TUNING_DB_BY_KERNEL_ARCH.get((k, a))
+        if isinstance(row, dict) and row:
+            return dict(row), "tuning_db"
+
     table: dict[str, dict[str, Any]] = {
         "sort_stable2d": {"tile_n": 1024},
         "batch_norm2d": {"tile_n": 384},
@@ -271,7 +335,10 @@ def _intentir_perf_binding_overrides_for_kernel(kernel: str) -> dict[str, Any]:
         "select_scatter2d": {"tile_n": 384},
         "conv3d_ncdhw": {"tile_n": 192},
     }
-    return dict(table.get(str(kernel), {}))
+    row2 = table.get(k)
+    if isinstance(row2, dict) and row2:
+        return dict(row2), "hardcoded"
+    return {}, "none"
 
 
 def _native_constexpr_overrides_for_kernel(*, kernel: str, spec_source: str) -> dict[str, int]:
@@ -362,20 +429,22 @@ def _apply_intentir_perf_binding_overrides(
     *,
     kernel: str,
     bindings: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    arch: str | None,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
     raw_disable = str(os.getenv("INTENTIR_GPU_PERF_DISABLE_KERNEL_TUNING", "")).strip().lower()
     if raw_disable in {"1", "true", "yes", "y"}:
-        return dict(bindings), {}
+        return dict(bindings), {}, "none"
 
     merged = dict(bindings)
     applied: dict[str, Any] = {}
-    for k, v in _intentir_perf_binding_overrides_for_kernel(str(kernel)).items():
+    overrides, override_source = _intentir_perf_binding_overrides_for_kernel(kernel=str(kernel), arch=str(arch or ""))
+    for k, v in overrides.items():
         key = str(k)
         if key in merged and merged.get(key) is not None:
             continue
         merged[key] = v
         applied[key] = v
-    return merged, applied
+    return merged, applied, (override_source if applied else "none")
 
 
 def _bench_graph(
@@ -1956,9 +2025,17 @@ def _build_intentir_launch_fn(
         artifact_dir=artifact_dir,
         require_baseline_npz=False,
     )
-    intent_bindings, applied_binding_overrides = _apply_intentir_perf_binding_overrides(
+    arch = ""
+    try:
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            arch = f"sm{int(major)}{int(minor)}"
+    except Exception:
+        arch = ""
+    intent_bindings, applied_binding_overrides, tuning_source = _apply_intentir_perf_binding_overrides(
         kernel=str(kernel),
         bindings=dict(ctx["bindings"]),
+        arch=str(arch),
     )
     mlir_contract_payload = dict(ctx["mlir_contract"])
     reason_ctx = dict(mlir_contract_payload.get("reason_context") or {})
@@ -2088,6 +2165,10 @@ def _build_intentir_launch_fn(
         "strict_mode": bool(strict_fallback_enabled()),
         "fallback_policy": ("strict" if bool(strict_fallback_enabled()) else "legacy_compatible"),
         "intent_binding_overrides": dict(applied_binding_overrides),
+        "intentir_tuning_source": str(tuning_source),
+        "intentir_tuning_applied": dict(applied_binding_overrides),
+        "intentir_tuning_arch": str(arch),
+        "intentir_tuning_db": str(_TUNING_DB_PATH),
         "intent_contract_rebuild": dict(rebuild_meta),
     }
     return _run, meta
@@ -2161,6 +2242,8 @@ def _bench_kernel(
         "runtime_fallback_detail": "",
         "native_launch_source": "",
         "native_launch_error": "",
+        "intentir_tuning_source": "none",
+        "intentir_tuning_applied": {},
     }
     if not torch.cuda.is_available():
         row["reason_code"] = "env_unavailable"
@@ -2181,6 +2264,8 @@ def _bench_kernel(
         row["cuda_ptx_origin"] = str(intent_meta.get("cuda_ptx_origin") or "")
         row["runtime_fallback"] = bool(intent_meta.get("runtime_fallback"))
         row["runtime_fallback_detail"] = str(intent_meta.get("runtime_fallback_detail") or "")
+        row["intentir_tuning_source"] = str(intent_meta.get("intentir_tuning_source") or "none")
+        row["intentir_tuning_applied"] = dict(intent_meta.get("intentir_tuning_applied") or {})
     except Exception as e:  # noqa: BLE001
         row["reason_code"] = _reason_code_from_exception(e, native=False)
         row["reason_detail"] = f"{type(e).__name__}: {e}"
@@ -2680,6 +2765,12 @@ def main() -> None:
         help="Optional gpu perf policy JSON; missing file is ignored.",
     )
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
+    ap.add_argument(
+        "--tuning-db",
+        type=Path,
+        default=None,
+        help="Optional tuning DB jsonl (default: workflow/flaggems/state/tuning_db/cuda.jsonl if present).",
+    )
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(
         "--monitor-only",
@@ -2693,6 +2784,9 @@ def main() -> None:
         help="Kernel alias to exclude from gpu_perf gate denominator (repeatable).",
     )
     args = ap.parse_args()
+    if args.tuning_db is not None and not Path(args.tuning_db).is_file():
+        raise SystemExit(f"missing tuning_db jsonl: {args.tuning_db}")
+    _configure_tuning_db(Path(args.tuning_db) if args.tuning_db is not None else None)
 
     kernel_source = str(args.kernel_source).strip().lower()
     family_order: list[str] = []
