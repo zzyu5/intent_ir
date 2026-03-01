@@ -187,9 +187,220 @@ def _allclose2d_intent() -> IntentFunction:
     )
 
 
+def _prod2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "prod2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [{"op": "reduce_prod", "inputs": ["inp"], "output": "out", "attrs": {"dims": [0, 1]}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _stack2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "stack2d",
+            "tensors": {
+                "input0": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "input1": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_ptr": {"dtype": "f32", "shape": [2, "M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "stack", "inputs": ["input0", "input1"], "output": "out_ptr", "attrs": {"axis": 0}}],
+            "outputs": ["out_ptr"],
+        }
+    )
+
+
+def _polar2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "polar2d",
+            "tensors": {
+                "abs": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "angle": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N", 2], "layout": "row_major"},
+            },
+            "ops": [{"op": "polar", "inputs": ["abs", "angle"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _diag_embed2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "diag_embed2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["B", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["B", "N", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["x"],
+                    "output": "y",
+                    "attrs": {"broadcast_dims": [0, 2], "out_shape": ["B", "N", "N"]},
+                }
+            ],
+            "outputs": ["y"],
+        }
+    )
+
+
+def _upsample_nearest1d_ncl_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "upsample_nearest1d_ncl",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "IL"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OL"], "layout": "row_major"},
+            },
+            "ops": [{"op": "upsample_nearest1d", "inputs": ["input"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _upsample_nearest2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "upsample_nearest2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "IH", "IW"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [{"op": "upsample_nearest2d", "inputs": ["input"], "output": "out"}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _glu2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "glu2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N_HALF"], "layout": "row_major"},
+            },
+            "ops": [{"op": "glu", "inputs": ["x"], "output": "out", "attrs": {"axis": 1}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _log_softmax2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "log_softmax2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "softmax", "inputs": ["inp"], "output": "softmax_out", "attrs": {"axis": 1}},
+                {"op": "log", "inputs": ["softmax_out"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _weight_norm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "weight_norm2d",
+            "tensors": {
+                "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "g": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "vv": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "norm_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "norm": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale_bc": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["v", "v"], "output": "vv"},
+                {"op": "reduce_sum", "inputs": ["vv"], "output": "norm_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "sqrt", "inputs": ["norm_sq"], "output": "norm"},
+                {"op": "div", "inputs": ["g", "norm"], "output": "scale"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["scale"],
+                    "output": "scale_bc",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {"op": "mul", "inputs": ["v", "scale_bc"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _mse_loss2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "mse_loss2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "target": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [{"op": "mse_loss", "inputs": ["inp", "target"], "output": "out", "attrs": {"reduction": 1}}],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _std2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "std2d",
+            "tensors": {
+                "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "std",
+                    "inputs": ["X"],
+                    "output": "Out",
+                    "attrs": {"axis": 1, "dims": [1], "keepdims": False, "correction": 1},
+                }
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
+def _var_mean2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "var_mean2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "std_out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "std", "inputs": ["inp"], "output": "std_out", "attrs": {"axis": 1, "dims": [1], "keepdims": False, "correction": 1}},
+                {"op": "mul", "inputs": ["std_out", "std_out"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "intent_fn,shape_bindings,expected_kind,needle",
     [
+        # wave12
         (_argmax2d_intent, {"M": 4, "N": 64}, "row_argmax_axis1_v1", "arith.cmpf"),
         (_argmin2d_intent, {"M": 4, "N": 64}, "row_argmin_axis1_v1", "arith.cmpf"),
         (_prod_dim2d_intent, {"M": 4, "N": 64}, "row_reduce_prod_axis1_v1", "arith.mulf"),
@@ -198,9 +409,23 @@ def _allclose2d_intent() -> IntentFunction:
         (_trace2d_intent, {"M": 16, "N": 16}, "trace2d_v1", "gpu.thread_id x"),
         (_count_nonzero2d_intent, {"M": 4, "N": 64}, "count_nonzero2d_v1", "arith.addi"),
         (_allclose2d_intent, {"M": 4, "N": 64}, "allclose2d_v1", "math.absf"),
+        # wave13
+        (_prod2d_intent, {"M": 4, "N": 64}, "reduce_prod_all_v1", "cS_prodall_128"),
+        (_stack2d_intent, {"M": 4, "N": 16}, "stack2d_v1", "arith.divui %lin, %cPlane"),
+        (_polar2d_intent, {"M": 8, "N": 16}, "polar2d_v1", "math.cos"),
+        (_diag_embed2d_intent, {"B": 2, "N": 8}, "diag_embed2d_v1", "arith.cmpi eq, %ii, %jj"),
+        (_upsample_nearest1d_ncl_intent, {"N": 2, "C": 3, "IL": 8, "OL": 16}, "upsample_nearest1d_ncl_v1", "%ol_mul"),
+        (_upsample_nearest2d_nchw_intent, {"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16}, "upsample_nearest2d_nchw_v1", "%cIHW"),
+        (_glu2d_intent, {"M": 4, "N": 64, "N_HALF": 32}, "glu2d_v1", "arith.divf %c1f, %den"),
+        (_log_softmax2d_intent, {"M": 4, "N": 64}, "row_log_softmax_axis1_v1", "math.log"),
+        # wave14
+        (_weight_norm2d_intent, {"M": 4, "N": 64}, "weight_norm2d_v1", "math.sqrt %sumsq"),
+        (_mse_loss2d_intent, {"M": 4, "N": 64}, "mse_loss2d_v1", "arith.mulf %d, %d"),
+        (_std2d_intent, {"M": 4, "N": 64}, "row_std_axis1_v1", "memref.store %outv"),
+        (_var_mean2d_intent, {"M": 4, "N": 64}, "row_var_axis1_v1", "memref.store %var"),
     ],
 )
-def test_cuda_real_mlir_wave12_codegen_and_is_parseable(
+def test_cuda_real_mlir_wave_codegen_and_is_parseable(
     monkeypatch: pytest.MonkeyPatch,
     intent_fn,
     shape_bindings: dict[str, int],
