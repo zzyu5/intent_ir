@@ -62,6 +62,26 @@ def _relu2d_where_intent() -> IntentFunction:
     )
 
 
+def _clamp2d_cast_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "clamp2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mini": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "maxi": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "max", "inputs": ["mini", "x_f32"], "output": "clamped_min", "attrs": {}},
+                {"op": "min", "inputs": ["clamped_min", "maxi"], "output": "out", "attrs": {}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_rvv_cpu_loops_v1_lowering_emits_scf_loops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     mod = to_mlir(_add2d_intent())
@@ -81,4 +101,15 @@ def test_rvv_cpu_loops_v1_rewrites_relu_where_pattern(monkeypatch: pytest.Monkey
     assert str(out.meta.get("rvv_real_mlir_kernel_kind") or "") == "cpu_loops_v1"
     text = str(out.module_text or "")
     assert "arith.maximumf" in text
+    _verify_with_mlir_opt(text)
+
+
+def test_rvv_cpu_loops_v1_supports_cast_to_f32(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    mod = to_mlir(_clamp2d_cast_intent())
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64}
+    out = lower_intent_to_rvv_cpu_kernel(mod, backend="rvv")
+    text = str(out.module_text or "")
+    assert "arith.maximumf" in text
+    assert "arith.minimumf" in text
     _verify_with_mlir_opt(text)

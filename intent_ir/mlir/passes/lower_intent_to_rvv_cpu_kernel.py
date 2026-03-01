@@ -175,6 +175,15 @@ def _emit_elementwise_kernel(
             nm = ins[idx]
             return computed.get(nm) or _load(nm)
 
+        if name == "cast":
+            if len(ins) != 1 or not out:
+                raise RuntimeError(f"invalid cast op: inputs={ins} output={out!r}")
+            to = str(attrs.get("to") or attrs.get("dtype") or "f32").strip().lower()
+            if to != "f32":
+                raise RuntimeError(f"rvv cpu-loops v1 supports only cast to f32, got to={to!r}")
+            computed[out] = _in(0)
+            continue
+
         if name in {"add", "sub", "mul", "div", "max", "min"}:
             if len(ins) != 2 or not out:
                 raise RuntimeError(f"invalid binary op: {name} inputs={ins} output={out!r}")
