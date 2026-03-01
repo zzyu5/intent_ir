@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-03-01T15:26:35+00:00",
+  "updated_at": "2026-03-01T17:10:16+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,28 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "86c991a fix(mkl): set MKL_THREADING_LAYER=GNU before numpy in torch-lazy modules\nc11f23e backend(rvv-real-mlir): support --shape in mlir helpers + enable opt -mattr=+v\n7ad98cd tests(cuda-real-mlir): assert support_report covers all kernels\nbf078a3 workflow: refresh current_status + session_context snapshots\nde95853 workflow: refresh refactor_context snapshot\n5849b2d workflow: refresh kernel_denominators snapshot\ne1d9976 workflow: refresh refactor_context for wave25 real-mlir\nf2a63e7 fix(pipeline): default MKL_THREADING_LAYER=GNU to avoid OMP SHM2 crash\nf1e0695 workflow(cuda-real-mlir): add wave25 allowlist + refresh support report\n6beacce tests(cuda-real-mlir): add wave25 unique/nonzero codegen\n051e0cc backend(cuda-real-mlir): wave25 add unique+nonzero\nc2a5c47 workflow(cuda-real-mlir): add wave24 allowlist + refresh support report\n30ae365 tests(cuda-real-mlir): add wave24 conv codegen\ne7f0afb backend(cuda-real-mlir): wave24 add conv kernels\nbb3cb73 workflow(cuda-real-mlir): add wave23 allowlist + refresh support report\n766f84d tests(cuda-real-mlir): add wave23 sdpa/flash codegen\n0163c8d backend(cuda-real-mlir): wave23 add sdpa_bhsd kernel\n6bc4b82 workflow(cuda-real-mlir): add wave22 allowlist + refresh support report\n8e9301e tests(cuda-real-mlir): add wave22 per_token+batch_norm codegen\n60fac06 backend(cuda-real-mlir): wave22 add per_token quant + batch_norm2d",
+  "git_log_short": "1e04b07 rvv(remote): disable PIE to fix remote_llvm link\n2b30b20 perf(gpu-perf): enable kernel adapters for flaggems_native baselines\n4f53b03 backend(cuda-real-mlir): sdpa_bhsd v2 broadcast exp scalars\neb6d754 backend(cuda-real-mlir): sdpa_bhsd warp-only v2\n45c8ba1 workflow: refresh state snapshots (current_status/refactor_context/denominators)\n86c991a fix(mkl): set MKL_THREADING_LAYER=GNU before numpy in torch-lazy modules\nc11f23e backend(rvv-real-mlir): support --shape in mlir helpers + enable opt -mattr=+v\n7ad98cd tests(cuda-real-mlir): assert support_report covers all kernels\nbf078a3 workflow: refresh current_status + session_context snapshots\nde95853 workflow: refresh refactor_context snapshot\n5849b2d workflow: refresh kernel_denominators snapshot\ne1d9976 workflow: refresh refactor_context for wave25 real-mlir\nf2a63e7 fix(pipeline): default MKL_THREADING_LAYER=GNU to avoid OMP SHM2 crash\nf1e0695 workflow(cuda-real-mlir): add wave25 allowlist + refresh support report\n6beacce tests(cuda-real-mlir): add wave25 unique/nonzero codegen\n051e0cc backend(cuda-real-mlir): wave25 add unique+nonzero\nc2a5c47 workflow(cuda-real-mlir): add wave24 allowlist + refresh support report\n30ae365 tests(cuda-real-mlir): add wave24 conv codegen\ne7f0afb backend(cuda-real-mlir): wave24 add conv kernels\nbb3cb73 workflow(cuda-real-mlir): add wave23 allowlist + refresh support report",
   "progress_tail": [
-    {
-      "ts": "2026-03-01T04:20:23+00:00",
-      "commit": "d09cbc8354ec8faeaf39f311e33fa2b00f0ae6a2",
-      "lane": "workflow",
-      "summary": "wave12 allowlist perf v2: min=0.8706 strict no-fallback; wave12 coverage smoke OK (8/8)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/status_converged.json",
-      "next_focus": "RVV wave1 real-MLIR: run remote vsetvli evidence; expand CUDA allowlist beyond wave12",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable",
-        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_coverage_batches_wave12_realmlir_allowlist_monitor_v2_microstable/status_converged.json",
-        "artifacts/validation_rounds/20260301/flaggems_coverage_wave12_smoke"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-03-01T05:01:16+00:00",
       "commit": "cd6609c02847389667802acc00632a71ee506252",
@@ -169,6 +149,25 @@
         "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave18_pooling_smoke_v1/run_summary.json",
         "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave18_pooling_smoke_v1/status_converged.json",
         "artifacts/validation_rounds/20260301/flaggems_coverage_wave18_pooling_smoke_v1"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-01T17:09:39+00:00",
+      "commit": "1e04b07ac6720dcb0281f0dc59a6a96092abb757",
+      "lane": "workflow",
+      "summary": "perf(attention_sequence): sdpa baseline uses adapter; strict real-mlir ok",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave25_attention_sdpa_v2c_local/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave25_attention_sdpa_v2c_local/status_converged.json",
+      "next_focus": "",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave25_attention_sdpa_v2c_local/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260301/gpu_perf_wave25_attention_sdpa_v2c_local/status_converged.json",
+        "artifacts/validation_rounds/20260301/flaggems_cov_wave25_attention_sdpa_v2c_local"
       ],
       "run_ok": true,
       "run_out_dir": null,
