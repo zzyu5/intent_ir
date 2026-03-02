@@ -2407,11 +2407,22 @@ def _bench_kernel(
             artifact_dir=intent_artifact_dir,
             require_baseline_npz=False,
         )
+        contract_artifacts = {}
+        try:
+            contract = dict(ctx.get("mlir_contract") or {})
+            contract_artifacts = dict(contract.get("artifacts") or {}) if isinstance(contract, dict) else {}
+        except Exception:
+            contract_artifacts = {}
         row["shape"] = _shape_telemetry_for_kernel(
             kernel=str(kernel),
             ctx_bindings=ctx.get("bindings"),
             spec_entry=dict(spec_map.get(str(kernel)) or {}),
         )
+        row["cuda_sm"] = str(contract_artifacts.get("cuda_sm") or "")
+        row["cuda_ptx_cache_hit"] = bool(contract_artifacts.get("cuda_ptx_cache_hit"))
+        row["cuda_ptx_cache_key"] = str(contract_artifacts.get("cuda_ptx_cache_key") or "")
+        row["intentir_evidence_mode"] = str(contract_artifacts.get("intentir_evidence_mode") or "")
+        row["cuda_real_mlir_kernel_kind"] = str(contract_artifacts.get("cuda_real_mlir_kernel_kind") or "")
         tensor_specs = dict(ctx.get("tensor_specs") or {})
         if not tensor_specs:
             # Backward compatibility for older context payloads.
@@ -3377,6 +3388,31 @@ def main() -> None:
         "suite": "gpu_perf_graph",
         "requested_suite": "gpu_perf_graph",
         "repo": repo_meta,
+        "cuda": {
+            "device_name": (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"),
+            "capability": (
+                list(torch.cuda.get_device_capability(0))
+                if torch.cuda.is_available()
+                else []
+            ),
+            "sm": (
+                f"sm_{int(torch.cuda.get_device_capability(0)[0])}{int(torch.cuda.get_device_capability(0)[1])}"
+                if torch.cuda.is_available()
+                else ""
+            ),
+        },
+        "env": {
+            "INTENTIR_REAL_MLIR": str(os.getenv("INTENTIR_REAL_MLIR", "")),
+            "INTENTIR_FALLBACK_POLICY": str(os.getenv("INTENTIR_FALLBACK_POLICY", "")),
+            "INTENTIR_CUDA_REQUIRE_LLVM_PTX": str(os.getenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", "")),
+            "INTENTIR_EVIDENCE_MODE": str(os.getenv("INTENTIR_EVIDENCE_MODE", "")),
+            "INTENTIR_CUDA_SM": str(os.getenv("INTENTIR_CUDA_SM", "")),
+            "INTENTIR_CUDA_REAL_MLIR_WAVE": str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")),
+            "INTENTIR_CUDA_TUNING_DB": str(os.getenv("INTENTIR_CUDA_TUNING_DB", "")),
+            "INTENTIR_TUNING_DB": str(os.getenv("INTENTIR_TUNING_DB", "")),
+            "INTENTIR_CUDA_PTX_CACHE": str(os.getenv("INTENTIR_CUDA_PTX_CACHE", "")),
+            "INTENTIR_CUDA_PTX_CACHE_DIR": str(os.getenv("INTENTIR_CUDA_PTX_CACHE_DIR", "")),
+        },
         "execution_engine": "mlir_native",
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
