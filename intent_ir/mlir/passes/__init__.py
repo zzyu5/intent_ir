@@ -1,4 +1,5 @@
 from .attach_provider_meta import attach_provider_meta
+from .apply_tuning_db import apply_tuning_db
 from .backend_legalize import backend_legalize
 from .canonicalize_intent import canonicalize_intent
 from .cse_like import cse_like
@@ -17,6 +18,7 @@ from .set_llvm_target_triple import set_llvm_target_triple
 PASS_REGISTRY = {
     "normalize_symbols": normalize_symbols,
     "attach_provider_meta": attach_provider_meta,
+    "apply_tuning_db": apply_tuning_db,
     "expand_macros_intent": expand_macros_intent,
     "canonicalize_intent": canonicalize_intent,
     "cse_like": cse_like,

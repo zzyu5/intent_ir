@@ -1,6 +1,7 @@
 passes:
   - python:backend_legalize
   - python:attach_provider_meta
+  - python:apply_tuning_db
   - python:lower_intent_to_cuda_gpu_kernel
   - mlir-opt:verify-each canonicalize cse convert-gpu-to-nvvm="use-bare-ptr-memref-call-conv" convert-nvvm-to-llvm convert-scf-to-cf convert-cf-to-llvm convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-vector-to-llvm convert-func-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
   - python:extract_gpu_module_llvm

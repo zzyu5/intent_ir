@@ -43,6 +43,7 @@ from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel
 from backends.cuda.runtime import load_cuda_ptx_module
 from intent_ir.utils.repo_state import repo_state
 from pipeline.common.strict_policy import strict_fallback_enabled
+from pipeline.common.tuning_db import TuningDBEntry, load_tuning_db
 from pipeline.triton.core import coverage_kernel_specs
 from scripts.cuda_backend_smoke import (
     _build_inputs_np,
@@ -79,37 +80,9 @@ def _dump_json(path: Path, payload: dict[str, Any]) -> Path:
     return p
 
 
-_DEFAULT_TUNING_DB = ROOT / "workflow" / "flaggems" / "state" / "tuning_db" / "cuda.jsonl"
 _TUNING_DB_LOADED = False
 _TUNING_DB_PATH = ""
-_TUNING_DB_BY_KERNEL_ARCH: dict[tuple[str, str], dict[str, Any]] = {}
-
-
-def _load_tuning_db_jsonl(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
-    p = Path(path)
-    if not p.is_file():
-        return {}
-    out: dict[tuple[str, str], dict[str, Any]] = {}
-    for i, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
-        line = str(raw).strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            row = json.loads(line)
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(f"invalid tuning_db jsonl at {p}:{i}: {type(e).__name__}: {e}") from e
-        if not isinstance(row, dict):
-            continue
-        backend = str(row.get("backend") or "").strip().lower()
-        if backend and backend != "cuda":
-            continue
-        kernel = str(row.get("kernel") or "").strip()
-        arch = str(row.get("arch") or "").strip()
-        bindings = row.get("bindings")
-        if not kernel or not arch or not isinstance(bindings, dict):
-            continue
-        out[(kernel, arch)] = dict(bindings)
-    return out
+_TUNING_DB_BY_KERNEL_ARCH: dict[tuple[str, str], TuningDBEntry] = {}
 
 
 def _configure_tuning_db(path: Path | None) -> None:
@@ -124,16 +97,9 @@ def _ensure_tuning_db_loaded(*, path: Path | None = None) -> None:
     global _TUNING_DB_LOADED, _TUNING_DB_PATH, _TUNING_DB_BY_KERNEL_ARCH
     if bool(_TUNING_DB_LOADED):
         return
-    p = Path(path) if path is not None else None
-    if p is None:
-        p = _DEFAULT_TUNING_DB if _DEFAULT_TUNING_DB.is_file() else None
-    if p is None or not p.is_file():
-        _TUNING_DB_LOADED = True
-        _TUNING_DB_PATH = ""
-        _TUNING_DB_BY_KERNEL_ARCH = {}
-        return
-    _TUNING_DB_BY_KERNEL_ARCH = _load_tuning_db_jsonl(p)
-    _TUNING_DB_PATH = _to_repo_rel(p)
+    mapping, rel_path = load_tuning_db(path=path, backend="cuda")
+    _TUNING_DB_BY_KERNEL_ARCH = dict(mapping or {})
+    _TUNING_DB_PATH = str(rel_path or "")
     _TUNING_DB_LOADED = True
 
 
@@ -324,9 +290,9 @@ def _intentir_perf_binding_overrides_for_kernel(*, kernel: str, arch: str | None
     k = str(kernel).strip()
     a = str(arch or "").strip()
     if k and a:
-        row = _TUNING_DB_BY_KERNEL_ARCH.get((k, a))
-        if isinstance(row, dict) and row:
-            return dict(row), "tuning_db"
+        entry = _TUNING_DB_BY_KERNEL_ARCH.get((k, a))
+        if isinstance(entry, TuningDBEntry) and bool(entry.bindings):
+            return dict(entry.bindings), "tuning_db"
 
     table: dict[str, dict[str, Any]] = {
         "sort_stable2d": {"tile_n": 1024},
