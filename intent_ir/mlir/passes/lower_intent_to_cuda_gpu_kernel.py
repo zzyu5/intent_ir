@@ -14401,9 +14401,18 @@ def lower_intent_to_cuda_gpu_kernel(
 
         lines.append("      %pred_q = arith.cmpi ult, %bid, %cQ : index")
         lines.append("      scf.if %pred_q {")
-        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sh0 = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sh = memref.assume_alignment %sh0, 16 : {shared_global_memref_ty}")
         lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
         lines.append(f"        %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+        # Assume 16B alignment for contiguous Q/K/V tensors to unlock aligned
+        # vector global loads/stores (ld.global.v4.b32) on large GPUs.
+        k_aligned = f"%{_mlir_ident(k_name)}_aligned"
+        v_aligned = f"%{_mlir_ident(v_name)}_aligned"
+        lines.append(f"        {k_aligned} = memref.assume_alignment {arg_ssa[k_name]}, 16 : {k_memref}")
+        lines.append(f"        {v_aligned} = memref.assume_alignment {arg_ssa[v_name]}, 16 : {v_memref}")
+        arg_ssa[str(k_name)] = str(k_aligned)
+        arg_ssa[str(v_name)] = str(v_aligned)
 
         lines.append("        %lane = arith.remui %tid, %c32_idx : index")
         lines.append("        %lane2 = arith.addi %lane, %c32_idx : index")
@@ -14678,9 +14687,18 @@ def lower_intent_to_cuda_gpu_kernel(
 
         lines.append("      %pred_q = arith.cmpi ult, %bid, %cQ : index")
         lines.append("      scf.if %pred_q {")
-        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sh0 = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sh = memref.assume_alignment %sh0, 16 : {shared_global_memref_ty}")
         lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
         lines.append(f"        %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+        # Assume 16B alignment for contiguous K/V tensors to unlock aligned
+        # vector global loads/stores (ld.global.v4.b32) on large GPUs.
+        k_aligned = f"%{_mlir_ident(k_name)}_aligned"
+        v_aligned = f"%{_mlir_ident(v_name)}_aligned"
+        lines.append(f"        {k_aligned} = memref.assume_alignment {arg_ssa[k_name]}, 16 : {k_memref}")
+        lines.append(f"        {v_aligned} = memref.assume_alignment {arg_ssa[v_name]}, 16 : {v_memref}")
+        arg_ssa[str(k_name)] = str(k_aligned)
+        arg_ssa[str(v_name)] = str(v_aligned)
 
         lines.append("        %lane = arith.remui %tid, %c32_idx : index")
         lines.append("        %lane2 = arith.addi %lane, %c32_idx : index")
@@ -14972,9 +14990,18 @@ def lower_intent_to_cuda_gpu_kernel(
 
         lines.append("      %pred_q = arith.cmpi ult, %bid, %cQ : index")
         lines.append("      scf.if %pred_q {")
-        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sh0 = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sh = memref.assume_alignment %sh0, 16 : {shared_global_memref_ty}")
         lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
         lines.append(f"        %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+        # Assume 16B alignment for contiguous K/V tensors to unlock aligned
+        # vector global loads/stores (ld.global.v4.b32) on large GPUs.
+        k_aligned = f"%{_mlir_ident(k_name)}_aligned"
+        v_aligned = f"%{_mlir_ident(v_name)}_aligned"
+        lines.append(f"        {k_aligned} = memref.assume_alignment {arg_ssa[k_name]}, 16 : {k_memref}")
+        lines.append(f"        {v_aligned} = memref.assume_alignment {arg_ssa[v_name]}, 16 : {v_memref}")
+        arg_ssa[str(k_name)] = str(k_aligned)
+        arg_ssa[str(v_name)] = str(v_aligned)
 
         lines.append("        %lane = arith.remui %tid, %c32_idx : index")
         lines.append("        %warp = arith.divui %tid, %c32_idx : index")
