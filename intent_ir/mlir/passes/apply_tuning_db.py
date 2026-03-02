@@ -12,13 +12,16 @@ def _normalize_cuda_arch(raw: str) -> str:
     s = str(raw or "").strip().lower()
     if not s:
         return ""
-    if s.startswith("sm_"):
-        s = "sm" + s[3:]
-    if s.startswith("sm") and s[2:].isdigit():
-        return s
     if s.isdigit():
         return f"sm{s}"
-    return ""
+    if s.startswith("sm_"):
+        s = s[3:]
+    elif s.startswith("sm"):
+        s = s[2:]
+    else:
+        return ""
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return f"sm{digits}" if digits else ""
 
 
 def _detect_cuda_arch() -> str:

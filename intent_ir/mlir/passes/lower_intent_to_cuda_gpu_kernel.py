@@ -6696,12 +6696,33 @@ def lower_intent_to_cuda_gpu_kernel(
             (str(sh_a_sym), f"memref<{int(bm)}x{int(bk)}xf32, 3>"),
             (str(sh_b_sym), f"memref<{int(bk)}x{int(bn)}xf32, 3>"),
         ]
+        vec4_ty = "vector<4xf32>"
+        vec_copy = (
+            (int(bk) % 4) == 0
+            and (int(bn) % 4) == 0
+            and ((int(bm) * int(bk)) % 4) == 0
+            and ((int(bk) * int(bn)) % 4) == 0
+        )
+        tile_a4 = (int(bm) * int(bk)) // 4 if vec_copy else 0
+        tile_b4 = (int(bk) * int(bn)) // 4 if vec_copy else 0
+        async_copy_requested = bool(int(bindings.get("MMA_ASYNC_COPY") or 0))
+        async_copy_enabled = bool(
+            async_copy_requested
+            and vec_copy
+            and tile_a4 > 0
+            and tile_b4 > 0
+            and (tile_a4 % int(threads)) == 0
+            and (tile_b4 % int(threads)) == 0
+        )
+        cuda_real_mlir_matmul_cfg["vec_copy"] = bool(vec_copy)
+        cuda_real_mlir_matmul_cfg["async_copy"] = bool(async_copy_enabled)
 
         lines.append("      %tid = gpu.thread_id x")
         lines.append("      %bid_x = gpu.block_id x")
         lines.append("      %bid_y = gpu.block_id y")
         lines.append("      %c0 = arith.constant 0 : index")
         lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c4 = arith.constant 4 : index")
         lines.append("      %c8 = arith.constant 8 : index")
         lines.append("      %c16 = arith.constant 16 : index")
         lines.append("      %c32 = arith.constant 32 : index")
@@ -6713,6 +6734,9 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %cBK = arith.constant {int(bk)} : index")
         lines.append(f"      %cTileA = arith.constant {int(bm * bk)} : index")
         lines.append(f"      %cTileB = arith.constant {int(bk * bn)} : index")
+        if vec_copy:
+            lines.append(f"      %cTileA4 = arith.constant {int(tile_a4)} : index")
+            lines.append(f"      %cTileB4 = arith.constant {int(tile_b4)} : index")
         lines.append(f"      %cThreads = arith.constant {int(threads)} : index")
         lines.append(f"      %cWarpsN = arith.constant {int(warps_n)} : index")
         lines.append("      %c0f = arith.constant 0.0 : f32")
@@ -6751,29 +6775,126 @@ def lower_intent_to_cuda_gpu_kernel(
             kb_ssa = f"%k_base_{kb}"
             lines.append(f"      {kb_ssa} = arith.constant {int(kb)} : index")
 
+            cp_tokens: list[str] = []
+
             # Load A tile to shared
-            lines.append("      scf.for %i = %tid to %cTileA step %cThreads {")
-            lines.append("        %a_r = arith.divui %i, %cBK : index")
-            lines.append("        %a_c = arith.remui %i, %cBK : index")
-            lines.append("        %a_gr = arith.addi %row0, %a_r : index")
-            lines.append(f"        %a_gk = arith.addi {kb_ssa}, %a_c : index")
-            lines.append("        %a_mul = arith.muli %a_gr, %cK : index")
-            lines.append("        %a_idx = arith.addi %a_mul, %a_gk : index")
-            lines.append(f"        %a_val = memref.load {arg_ssa[a_name]}[%a_idx] : {a_memref}")
-            lines.append(f"        memref.store %a_val, %As[%a_r, %a_c] : memref<{int(bm)}x{int(bk)}xf32, 3>")
-            lines.append("      }")
+            if vec_copy and async_copy_enabled:
+                a_iters = int(tile_a4) // int(threads)
+                for it in range(int(a_iters)):
+                    off = int(it) * int(threads)
+                    i_ssa = "%tid"
+                    if off:
+                        c_off = _fresh("c_off_a")
+                        i_ssa = _fresh("i")
+                        lines.append(f"      {c_off} = arith.constant {int(off)} : index")
+                        lines.append(f"      {i_ssa} = arith.addi %tid, {c_off} : index")
+                    i4_ssa = _fresh("i4")
+                    a_r = _fresh("a_r")
+                    a_c = _fresh("a_c")
+                    a_gr = _fresh("a_gr")
+                    a_gk = _fresh("a_gk")
+                    a_mul = _fresh("a_mul")
+                    a_idx = _fresh("a_idx")
+                    cp = _fresh("cp_a")
+                    lines.append(f"      {i4_ssa} = arith.muli {i_ssa}, %c4 : index")
+                    lines.append(f"      {a_r} = arith.divui {i4_ssa}, %cBK : index")
+                    lines.append(f"      {a_c} = arith.remui {i4_ssa}, %cBK : index")
+                    lines.append(f"      {a_gr} = arith.addi %row0, {a_r} : index")
+                    lines.append(f"      {a_gk} = arith.addi {kb_ssa}, {a_c} : index")
+                    lines.append(f"      {a_mul} = arith.muli {a_gr}, %cK : index")
+                    lines.append(f"      {a_idx} = arith.addi {a_mul}, {a_gk} : index")
+                    lines.append(
+                        f"      {cp} = nvgpu.device_async_copy {arg_ssa[a_name]}[{a_idx}], %As[{a_r}, {a_c}], 4 : "
+                        f"{a_memref} to memref<{int(bm)}x{int(bk)}xf32, 3>"
+                    )
+                    cp_tokens.append(str(cp))
+            elif vec_copy:
+                lines.append("      scf.for %i = %tid to %cTileA4 step %cThreads {")
+                lines.append("        %i4 = arith.muli %i, %c4 : index")
+                lines.append("        %a_r = arith.divui %i4, %cBK : index")
+                lines.append("        %a_c = arith.remui %i4, %cBK : index")
+                lines.append("        %a_gr = arith.addi %row0, %a_r : index")
+                lines.append(f"        %a_gk = arith.addi {kb_ssa}, %a_c : index")
+                lines.append("        %a_mul = arith.muli %a_gr, %cK : index")
+                lines.append("        %a_idx = arith.addi %a_mul, %a_gk : index")
+                lines.append(f"        %a_vec = vector.load {arg_ssa[a_name]}[%a_idx] : {a_memref}, {vec4_ty}")
+                lines.append(
+                    f"        vector.store %a_vec, %As[%a_r, %a_c] : memref<{int(bm)}x{int(bk)}xf32, 3>, {vec4_ty}"
+                )
+                lines.append("      }")
+            else:
+                lines.append("      scf.for %i = %tid to %cTileA step %cThreads {")
+                lines.append("        %a_r = arith.divui %i, %cBK : index")
+                lines.append("        %a_c = arith.remui %i, %cBK : index")
+                lines.append("        %a_gr = arith.addi %row0, %a_r : index")
+                lines.append(f"        %a_gk = arith.addi {kb_ssa}, %a_c : index")
+                lines.append("        %a_mul = arith.muli %a_gr, %cK : index")
+                lines.append("        %a_idx = arith.addi %a_mul, %a_gk : index")
+                lines.append(f"        %a_val = memref.load {arg_ssa[a_name]}[%a_idx] : {a_memref}")
+                lines.append(f"        memref.store %a_val, %As[%a_r, %a_c] : memref<{int(bm)}x{int(bk)}xf32, 3>")
+                lines.append("      }")
 
             # Load B tile to shared
-            lines.append("      scf.for %j = %tid to %cTileB step %cThreads {")
-            lines.append("        %b_r = arith.divui %j, %cBN : index")
-            lines.append("        %b_c = arith.remui %j, %cBN : index")
-            lines.append(f"        %b_gk = arith.addi {kb_ssa}, %b_r : index")
-            lines.append("        %b_gn = arith.addi %col0, %b_c : index")
-            lines.append("        %b_mul = arith.muli %b_gk, %cN : index")
-            lines.append("        %b_idx = arith.addi %b_mul, %b_gn : index")
-            lines.append(f"        %b_val = memref.load {arg_ssa[b_name]}[%b_idx] : {b_memref}")
-            lines.append(f"        memref.store %b_val, %Bs[%b_r, %b_c] : memref<{int(bk)}x{int(bn)}xf32, 3>")
-            lines.append("      }")
+            if vec_copy and async_copy_enabled:
+                b_iters = int(tile_b4) // int(threads)
+                for it in range(int(b_iters)):
+                    off = int(it) * int(threads)
+                    j_ssa = "%tid"
+                    if off:
+                        c_off = _fresh("c_off_b")
+                        j_ssa = _fresh("j")
+                        lines.append(f"      {c_off} = arith.constant {int(off)} : index")
+                        lines.append(f"      {j_ssa} = arith.addi %tid, {c_off} : index")
+                    j4_ssa = _fresh("j4")
+                    b_r = _fresh("b_r")
+                    b_c = _fresh("b_c")
+                    b_gk = _fresh("b_gk")
+                    b_gn = _fresh("b_gn")
+                    b_mul = _fresh("b_mul")
+                    b_idx = _fresh("b_idx")
+                    cp = _fresh("cp_b")
+                    lines.append(f"      {j4_ssa} = arith.muli {j_ssa}, %c4 : index")
+                    lines.append(f"      {b_r} = arith.divui {j4_ssa}, %cBN : index")
+                    lines.append(f"      {b_c} = arith.remui {j4_ssa}, %cBN : index")
+                    lines.append(f"      {b_gk} = arith.addi {kb_ssa}, {b_r} : index")
+                    lines.append(f"      {b_gn} = arith.addi %col0, {b_c} : index")
+                    lines.append(f"      {b_mul} = arith.muli {b_gk}, %cN : index")
+                    lines.append(f"      {b_idx} = arith.addi {b_mul}, {b_gn} : index")
+                    lines.append(
+                        f"      {cp} = nvgpu.device_async_copy {arg_ssa[b_name]}[{b_idx}], %Bs[{b_r}, {b_c}], 4 : "
+                        f"{b_memref} to memref<{int(bk)}x{int(bn)}xf32, 3>"
+                    )
+                    cp_tokens.append(str(cp))
+            elif vec_copy:
+                lines.append("      scf.for %j = %tid to %cTileB4 step %cThreads {")
+                lines.append("        %j4 = arith.muli %j, %c4 : index")
+                lines.append("        %b_r = arith.divui %j4, %cBN : index")
+                lines.append("        %b_c = arith.remui %j4, %cBN : index")
+                lines.append(f"        %b_gk = arith.addi {kb_ssa}, %b_r : index")
+                lines.append("        %b_gn = arith.addi %col0, %b_c : index")
+                lines.append("        %b_mul = arith.muli %b_gk, %cN : index")
+                lines.append("        %b_idx = arith.addi %b_mul, %b_gn : index")
+                lines.append(f"        %b_vec = vector.load {arg_ssa[b_name]}[%b_idx] : {b_memref}, {vec4_ty}")
+                lines.append(
+                    f"        vector.store %b_vec, %Bs[%b_r, %b_c] : memref<{int(bk)}x{int(bn)}xf32, 3>, {vec4_ty}"
+                )
+                lines.append("      }")
+            else:
+                lines.append("      scf.for %j = %tid to %cTileB step %cThreads {")
+                lines.append("        %b_r = arith.divui %j, %cBN : index")
+                lines.append("        %b_c = arith.remui %j, %cBN : index")
+                lines.append(f"        %b_gk = arith.addi {kb_ssa}, %b_r : index")
+                lines.append("        %b_gn = arith.addi %col0, %b_c : index")
+                lines.append("        %b_mul = arith.muli %b_gk, %cN : index")
+                lines.append("        %b_idx = arith.addi %b_mul, %b_gn : index")
+                lines.append(f"        %b_val = memref.load {arg_ssa[b_name]}[%b_idx] : {b_memref}")
+                lines.append(f"        memref.store %b_val, %Bs[%b_r, %b_c] : memref<{int(bk)}x{int(bn)}xf32, 3>")
+                lines.append("      }")
+
+            if cp_tokens:
+                cp_group = _fresh("cp_group")
+                lines.append(f"      {cp_group} = nvgpu.device_async_create_group " + ", ".join(cp_tokens))
+                lines.append(f"      nvgpu.device_async_wait {cp_group}")
 
             lines.append("      gpu.barrier")
 
