@@ -8796,6 +8796,11 @@ def lower_intent_to_cuda_gpu_kernel(
         if unroll_tile:
             # EPT register tile: v[i] per lane, no exp shmem cache required.
             max_cur_local = "%neg_inf"
+            # Ragged optimization: for the first (red_n // block_threads) tiles,
+            # all lanes are in-bounds and we can eliminate per-element bounds
+            # checks. Only the remainder tile needs `ci < N` predicates.
+            full_tiles = int(int(red_n) // int(block_threads))
+            rem = int(int(red_n) - int(full_tiles) * int(block_threads))
             for i in range(int(ept)):
                 off = int(i) * int(block_threads)
                 if int(i) == 0:
@@ -8805,22 +8810,26 @@ def lower_intent_to_cuda_gpu_kernel(
                     ci = f"%ci_t{i}"
                     lines.append(f"        {c_off} = arith.constant {int(off)} : index")
                     lines.append(f"        {ci} = arith.addi %tid, {c_off} : index")
-                pred = f"%pred_t{i}"
                 idx = f"%idx_t{i}"
                 v = f"%v_t{i}"
-                xv = f"%xv_t{i}"
                 tmax = f"%tmax_t{i}"
-                lines.append(f"        {pred} = arith.cmpi ult, {ci}, %cN : index")
                 lines.append(f"        {idx} = arith.addi %base, {ci} : index")
-                lines.append(f"        {v} = scf.if {pred} -> (f32) {{")
-                lines.append(f"          {xv} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
-                lines.append(f"          scf.yield {xv} : f32")
-                lines.append("        } else {")
-                lines.append("          scf.yield %neg_inf : f32")
-                lines.append("        }")
+                if int(i) < int(full_tiles):
+                    lines.append(f"        {v} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                    tile_entries.append(("", str(idx), str(v)))
+                else:
+                    pred = f"%pred_t{i}"
+                    xv = f"%xv_t{i}"
+                    lines.append(f"        {pred} = arith.cmpi ult, {ci}, %cN : index")
+                    lines.append(f"        {v} = scf.if {pred} -> (f32) {{")
+                    lines.append(f"          {xv} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                    lines.append(f"          scf.yield {xv} : f32")
+                    lines.append("        } else {")
+                    lines.append("          scf.yield %neg_inf : f32")
+                    lines.append("        }")
+                    tile_entries.append((str(pred), str(idx), str(v)))
                 lines.append(f"        {tmax} = arith.maximumf {max_cur_local}, {v}{fm} : f32")
                 max_cur_local = str(tmax)
-                tile_entries.append((str(pred), str(idx), str(v)))
             max_seed = str(max_cur_local)
         else:
             lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
@@ -8884,14 +8893,19 @@ def lower_intent_to_cuda_gpu_kernel(
                 xcl2 = f"%xcl2_t{i}"
                 ev = f"%ev_t{i}"
                 tsum = f"%tsum_t{i}"
-                lines.append(f"        {e} = scf.if {pred} -> (f32) {{")
-                lines.append(f"          {xc} = arith.subf {v}, %maxv{fm} : f32")
-                lines.append(f"          {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
-                lines.append(f"          {ev} = math.exp2 {xcl2}{fm} : f32")
-                lines.append(f"          scf.yield {ev} : f32")
-                lines.append("        } else {")
-                lines.append("          scf.yield %c0f : f32")
-                lines.append("        }")
+                if str(pred).strip():
+                    lines.append(f"        {e} = scf.if {pred} -> (f32) {{")
+                    lines.append(f"          {xc} = arith.subf {v}, %maxv{fm} : f32")
+                    lines.append(f"          {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
+                    lines.append(f"          {ev} = math.exp2 {xcl2}{fm} : f32")
+                    lines.append(f"          scf.yield {ev} : f32")
+                    lines.append("        } else {")
+                    lines.append("          scf.yield %c0f : f32")
+                    lines.append("        }")
+                else:
+                    lines.append(f"        {xc} = arith.subf {v}, %maxv{fm} : f32")
+                    lines.append(f"        {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
+                    lines.append(f"        {e} = math.exp2 {xcl2}{fm} : f32")
                 lines.append(f"        {tsum} = arith.addf {sum_cur_local}, {e}{fm} : f32")
                 sum_cur_local = str(tsum)
                 tile_exps.append(str(e))
@@ -8955,10 +8969,14 @@ def lower_intent_to_cuda_gpu_kernel(
         if unroll_tile:
             for i, (pred, idx, _v) in enumerate(tile_entries):
                 e = tile_exps[int(i)]
-                lines.append(f"        scf.if {pred} {{")
-                lines.append(f"          %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
-                lines.append(f"          memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
-                lines.append("        }")
+                if str(pred).strip():
+                    lines.append(f"        scf.if {pred} {{")
+                    lines.append(f"          %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
+                    lines.append(f"          memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+                    lines.append("        }")
+                else:
+                    lines.append(f"        %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
+                    lines.append(f"        memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
         else:
             lines.append("        scf.for %j = %tid to %cN step %bdim {")
             lines.append("          %idx = arith.addi %base, %j : index")
