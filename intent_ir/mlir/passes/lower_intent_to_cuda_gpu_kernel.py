@@ -8730,6 +8730,18 @@ def lower_intent_to_cuda_gpu_kernel(
                 block_threads = 128
         else:
             block_threads = 256
+        # Allow limited arch/shape-specific tuning via shape_bindings (tuning_db).
+        req_block_threads = int(bindings.get("SOFTMAX_BLOCK_THREADS") or 0)
+        if req_block_threads:
+            if (int(req_block_threads) % 32) != 0 or int(req_block_threads) <= 0:
+                raise RuntimeError(
+                    f"{kernel_kind} requires SOFTMAX_BLOCK_THREADS to be a positive multiple of 32; got {req_block_threads}"
+                )
+            if int(req_block_threads) > 256:
+                raise RuntimeError(
+                    f"{kernel_kind} SOFTMAX_BLOCK_THREADS>256 is currently unsupported; got {req_block_threads}"
+                )
+            block_threads = int(req_block_threads)
         if (int(block_threads) % 32) != 0:
             raise RuntimeError(f"softmax2d block_threads must be multiple of 32, got {block_threads}")
         warps = int(block_threads // 32)
