@@ -8765,6 +8765,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
         lines.append("      %c0f = arith.constant 0.0 : f32")
         lines.append("      %c1f = arith.constant 1.0 : f32")
+        # Prefer exp2 (rewritten to NVVM intrinsic) over libdevice exp for perf.
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
         lines.append(f"      %cM = arith.constant {int(out_m)} : index")
         lines.append(f"      %cN = arith.constant {int(red_n)} : index")
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
@@ -8870,11 +8872,13 @@ def lower_intent_to_cuda_gpu_kernel(
             for i, (pred, _idx, v) in enumerate(tile_entries):
                 e = f"%e_t{i}"
                 xc = f"%xc_t{i}"
+                xcl2 = f"%xcl2_t{i}"
                 ev = f"%ev_t{i}"
                 tsum = f"%tsum_t{i}"
                 lines.append(f"        {e} = scf.if {pred} -> (f32) {{")
                 lines.append(f"          {xc} = arith.subf {v}, %maxv{fm} : f32")
-                lines.append(f"          {ev} = math.exp {xc}{fm} : f32")
+                lines.append(f"          {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
+                lines.append(f"          {ev} = math.exp2 {xcl2}{fm} : f32")
                 lines.append(f"          scf.yield {ev} : f32")
                 lines.append("        } else {")
                 lines.append("          scf.yield %c0f : f32")
@@ -8888,7 +8892,8 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("          %idx = arith.addi %base, %j : index")
             lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
             lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
-            lines.append(f"          %e = math.exp %xc{fm} : f32")
+            lines.append(f"          %xcl2 = arith.mulf %xc, %cLOG2E{fm} : f32")
+            lines.append(f"          %e = math.exp2 %xcl2{fm} : f32")
             if use_exp_shmem_cache:
                 lines.append("          %sh_i = arith.addi %cShOff, %j : index")
                 lines.append(f"          memref.store %e, %sh[%sh_i] : {shared_global_memref_ty}")
@@ -8958,7 +8963,8 @@ def lower_intent_to_cuda_gpu_kernel(
             else:
                 lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
                 lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
-                lines.append(f"          %e = math.exp %xc{fm} : f32")
+                lines.append(f"          %xcl2 = arith.mulf %xc, %cLOG2E{fm} : f32")
+                lines.append(f"          %e = math.exp2 %xcl2{fm} : f32")
             lines.append(f"          %o = arith.mulf %e, %inv{fm} : f32")
             lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
             lines.append("        }")
