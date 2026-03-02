@@ -5893,6 +5893,7 @@ def lower_intent_to_cuda_gpu_kernel(
             "_attn_fwd": {"attn_fwd_tiled_v3", "attn_fwd_softmax_v2", "attn_fwd_softmax_v1"},
             "flash_attention2d": {
                 "attn2d_causal_softmax_mma_tf32_v1",
+                "attn2d_causal_softmax_v8",
                 "attn2d_causal_softmax_v7",
                 "attn2d_causal_softmax_v6",
                 "attn2d_causal_softmax_v5",
@@ -5961,6 +5962,11 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError("attn2d_causal_softmax_v7 override is only supported for flash_attention2d")
                 if int(attn2d_v1.get("HEAD_DIM") or 0) != 64:
                     raise RuntimeError("attn2d_causal_softmax_v7 requires HEAD_DIM==64")
+            if kernel_kind_override == "attn2d_causal_softmax_v8":
+                if intent_name != "flash_attention2d":
+                    raise RuntimeError("attn2d_causal_softmax_v8 override is only supported for flash_attention2d")
+                if int(attn2d_v1.get("HEAD_DIM") or 0) != 64:
+                    raise RuntimeError("attn2d_causal_softmax_v8 requires HEAD_DIM==64")
         if intent_name in {"ai_bench_matmul", "matmul_fused_epilogue2d"}:
             if matmul_v1 is None:
                 raise RuntimeError(
@@ -14300,6 +14306,264 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"          vector.store {out_vec}, {arg_ssa[out_name2]}[{idx_o}] : {out_memref}, {vec4_ty}")
             lines.append("        }")
             lines.append("      }")
+    elif (
+        attn2d_v1 is not None
+        and intent_name == "flash_attention2d"
+        and int(attn2d_v1.get("HEAD_DIM") or 0) == 64
+        and kernel_kind_override_enabled
+        and kernel_kind_override == "attn2d_causal_softmax_v8"
+    ):
+        # v8: Split KV across warps, compute per-warp partial softmax (m,l,acc),
+        # then combine across warps using the associative log-sum-exp merge:
+        #   m = max(m1,m2)
+        #   l = l1*exp(m1-m) + l2*exp(m2-m)
+        #   acc = acc1*exp(m1-m) + acc2*exp(m2-m)
+        # This drastically reduces barriers and shared traffic vs v6.
+        kernel_kind = "attn2d_causal_softmax_v8"
+        q_name = str(attn2d_v1["Q"])
+        k_name = str(attn2d_v1["K"])
+        v_name = str(attn2d_v1["V"])
+        out_name2 = str(attn2d_v1["out"])
+        sm_scale_name = str(attn2d_v1["sm_scale"])
+        q_ctx = int(attn2d_v1["Q_CTX"])
+        kv_ctx = int(attn2d_v1["KV_CTX"])
+        hd = int(attn2d_v1["HEAD_DIM"])
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        v_memref = str(arg_specs[v_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
+
+        # Fixed launch: one query row per CTA, 8 warps.
+        block_warps = 8
+        block_x = block_warps * 32
+        block_kv = 64
+        kv_per_warp = block_kv // block_warps  # 8
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
+        cuda_real_mlir_attention_cfg = {
+            "block_x": int(block_x),
+            "block_kv": int(block_kv),
+            "per_warp_segment": True,
+            "warps": int(block_warps),
+            "kv_per_warp": int(kv_per_warp),
+        }
+
+        # Shared layout: m[warps], l[warps], acc[warps*HD].
+        off_m = 0
+        off_l = int(off_m + block_warps)
+        off_acc = int(off_l + block_warps)
+        sh_elems = int(off_acc + (block_warps * hd))
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
+
+        def _warp_allreduce_sum_xor(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c16_i32", "%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                nxt = _fresh("sum")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c32_i32 : f32")
+                lines.append(f"{indent}{nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %c16_i32 = arith.constant 16 : i32")
+        lines.append("      %c8_i32 = arith.constant 8 : i32")
+        lines.append("      %c4_i32 = arith.constant 4 : i32")
+        lines.append("      %c2_i32 = arith.constant 2 : i32")
+        lines.append("      %c1_i32 = arith.constant 1 : i32")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+        lines.append(f"      %cQ = arith.constant {int(q_ctx)} : index")
+        lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
+        lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+        lines.append(f"      %cBlockKV = arith.constant {int(block_kv)} : index")
+        lines.append(f"      %cKVPerWarp = arith.constant {int(kv_per_warp)} : index")
+        lines.append(f"      %cWarps = arith.constant {int(block_warps)} : index")
+        lines.append(f"      %cOffM = arith.constant {int(off_m)} : index")
+        lines.append(f"      %cOffL = arith.constant {int(off_l)} : index")
+        lines.append(f"      %cOffAcc = arith.constant {int(off_acc)} : index")
+
+        lines.append("      %pred_q = arith.cmpi ult, %bid, %cQ : index")
+        lines.append("      scf.if %pred_q {")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
+        lines.append(f"        %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+
+        lines.append("        %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("        %lane2 = arith.addi %lane, %c32_idx : index")
+        lines.append("        %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("        %is0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("        %lane0 = arith.cmpi eq, %lane, %c0 : index")
+
+        # Load Q lane-pair into registers.
+        lines.append("        %base_q = arith.muli %bid, %cHD : index")
+        lines.append("        %qidx0 = arith.addi %base_q, %lane : index")
+        lines.append("        %qidx1 = arith.addi %base_q, %lane2 : index")
+        lines.append(f"        %q0 = memref.load {arg_ssa[q_name]}[%qidx0] : {q_memref}")
+        lines.append(f"        %q1 = memref.load {arg_ssa[q_name]}[%qidx1] : {q_memref}")
+
+        # kv_end = min(KV, bid+1) for causal attention.
+        lines.append("        %kv_end0 = arith.addi %bid, %c1 : index")
+        lines.append("        %p_kv_end = arith.cmpi ule, %kv_end0, %cKV : index")
+        lines.append("        %kv_end = arith.select %p_kv_end, %kv_end0, %cKV : index")
+
+        lines.append(
+            "        %m_out, %l_out, %a0_out, %a1_out = scf.for %tile0 = %c0 to %kv_end step %cBlockKV "
+            "iter_args(%m_i = %neg_inf, %l_i = %c0f, %a0 = %c0f, %a1 = %c0f) -> (f32, f32, f32, f32) {"
+        )
+        lines.append("          %tile_end0 = arith.addi %tile0, %cBlockKV : index")
+        lines.append("          %p_tile_end = arith.cmpi ule, %tile_end0, %kv_end : index")
+        lines.append("          %tile_end = arith.select %p_tile_end, %tile_end0, %kv_end : index")
+
+        # Per-warp segment: kv_start = tile0 + warp*KVPerWarp.
+        lines.append("          %warp_off = arith.muli %warp, %cKVPerWarp : index")
+        lines.append("          %kv_start = arith.addi %tile0, %warp_off : index")
+        lines.append(
+            "          %m_seg, %l_seg, %a0_seg, %a1_seg = scf.for %t = %c0 to %cKVPerWarp step %c1 "
+            "iter_args(%m_s = %neg_inf, %l_s = %c0f, %x0 = %c0f, %x1 = %c0f) -> (f32, f32, f32, f32) {"
+        )
+        lines.append("            %kv = arith.addi %kv_start, %t : index")
+        lines.append("            %pred_kv = arith.cmpi ult, %kv, %tile_end : index")
+        lines.append("            %m_n, %l_n, %x0_n, %x1_n = scf.if %pred_kv -> (f32, f32, f32, f32) {")
+        lines.append("              %base_k = arith.muli %kv, %cHD : index")
+        lines.append("              %kidx0 = arith.addi %base_k, %lane : index")
+        lines.append("              %kidx1 = arith.addi %base_k, %lane2 : index")
+        lines.append(f"              %k0 = memref.load {arg_ssa[k_name]}[%kidx0] : {k_memref}")
+        lines.append(f"              %k1 = memref.load {arg_ssa[k_name]}[%kidx1] : {k_memref}")
+        lines.append("              %tmp0 = llvm.intr.fma(%q0, %k0, %c0f) : (f32, f32, f32) -> f32")
+        lines.append("              %partial = llvm.intr.fma(%q1, %k1, %tmp0) : (f32, f32, f32) -> f32")
+        dot = _warp_allreduce_sum_xor("%partial", indent="              ")
+        lines.append(f"              %score = arith.mulf {dot}, %sm2{fm} : f32")
+        lines.append("              %m_new = arith.maximumf %m_s, %score : f32")
+        lines.append("              %delta = arith.subf %m_s, %m_new : f32")
+        lines.append("              %alpha = math.exp2 %delta : f32")
+        lines.append("              %shift = arith.subf %score, %m_new : f32")
+        lines.append("              %p = math.exp2 %shift : f32")
+        lines.append("              %l_scaled = arith.mulf %l_s, %alpha : f32")
+        lines.append("              %l_next = arith.addf %l_scaled, %p : f32")
+        lines.append("              %v0s = arith.muli %kv, %cHD : index")
+        lines.append("              %vidx0 = arith.addi %v0s, %lane : index")
+        lines.append("              %vidx1 = arith.addi %v0s, %lane2 : index")
+        lines.append(f"              %v0 = memref.load {arg_ssa[v_name]}[%vidx0] : {v_memref}")
+        lines.append(f"              %v1 = memref.load {arg_ssa[v_name]}[%vidx1] : {v_memref}")
+        lines.append("              %x0_scaled = arith.mulf %x0, %alpha : f32")
+        lines.append("              %x1_scaled = arith.mulf %x1, %alpha : f32")
+        lines.append("              %px0 = arith.mulf %p, %v0 : f32")
+        lines.append("              %px1 = arith.mulf %p, %v1 : f32")
+        lines.append("              %x0_next = arith.addf %x0_scaled, %px0 : f32")
+        lines.append("              %x1_next = arith.addf %x1_scaled, %px1 : f32")
+        lines.append("              scf.yield %m_new, %l_next, %x0_next, %x1_next : f32, f32, f32, f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %m_s, %l_s, %x0, %x1 : f32, f32, f32, f32")
+        lines.append("            }")
+        lines.append("            scf.yield %m_n, %l_n, %x0_n, %x1_n : f32, f32, f32, f32")
+        lines.append("          }")
+
+        # Store per-warp partials to shared.
+        lines.append("          scf.if %lane0 {")
+        lines.append("            %m_idx = arith.addi %cOffM, %warp : index")
+        lines.append(f"            memref.store %m_seg, %sh[%m_idx] : {shared_global_memref_ty}")
+        lines.append("            %l_idx = arith.addi %cOffL, %warp : index")
+        lines.append(f"            memref.store %l_seg, %sh[%l_idx] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("          %acc_base0 = arith.muli %warp, %cHD : index")
+        lines.append("          %acc_base = arith.addi %cOffAcc, %acc_base0 : index")
+        lines.append("          %acc_i0 = arith.addi %acc_base, %lane : index")
+        lines.append("          %acc_i1 = arith.addi %acc_base, %lane2 : index")
+        lines.append(f"          memref.store %a0_seg, %sh[%acc_i0] : {shared_global_memref_ty}")
+        lines.append(f"          memref.store %a1_seg, %sh[%acc_i1] : {shared_global_memref_ty}")
+        lines.append("          gpu.barrier")
+
+        # Warp0 combines all warp partials for this tile.
+        lines.append("          %m_tile, %l_tile, %t0, %t1 = scf.if %is0 -> (f32, f32, f32, f32) {")
+        lines.append("            %m0i = arith.addi %cOffM, %c0 : index")
+        lines.append(f"            %m0 = memref.load %sh[%m0i] : {shared_global_memref_ty}")
+        lines.append("            %l0i = arith.addi %cOffL, %c0 : index")
+        lines.append(f"            %l0 = memref.load %sh[%l0i] : {shared_global_memref_ty}")
+        lines.append("            %a0i = arith.addi %cOffAcc, %lane : index")
+        lines.append("            %a1i = arith.addi %cOffAcc, %lane2 : index")
+        lines.append(f"            %a0v = memref.load %sh[%a0i] : {shared_global_memref_ty}")
+        lines.append(f"            %a1v = memref.load %sh[%a1i] : {shared_global_memref_ty}")
+        lines.append("            %m_acc, %l_acc, %x0_acc, %x1_acc = scf.for %w = %c1 to %cWarps step %c1 "
+                     "iter_args(%mm = %m0, %ll = %l0, %xx0 = %a0v, %xx1 = %a1v) -> (f32, f32, f32, f32) {")
+        lines.append("              %mi = arith.addi %cOffM, %w : index")
+        lines.append(f"              %mw = memref.load %sh[%mi] : {shared_global_memref_ty}")
+        lines.append("              %li = arith.addi %cOffL, %w : index")
+        lines.append(f"              %lw = memref.load %sh[%li] : {shared_global_memref_ty}")
+        lines.append("              %ab0 = arith.muli %w, %cHD : index")
+        lines.append("              %ab = arith.addi %cOffAcc, %ab0 : index")
+        lines.append("              %ai0 = arith.addi %ab, %lane : index")
+        lines.append("              %ai1 = arith.addi %ab, %lane2 : index")
+        lines.append(f"              %aw0 = memref.load %sh[%ai0] : {shared_global_memref_ty}")
+        lines.append(f"              %aw1 = memref.load %sh[%ai1] : {shared_global_memref_ty}")
+        lines.append("              %m_new2 = arith.maximumf %mm, %mw : f32")
+        lines.append("              %d0 = arith.subf %mm, %m_new2 : f32")
+        lines.append("              %d1 = arith.subf %mw, %m_new2 : f32")
+        lines.append("              %a0s = math.exp2 %d0 : f32")
+        lines.append("              %a1s = math.exp2 %d1 : f32")
+        lines.append("              %ll0 = arith.mulf %ll, %a0s : f32")
+        lines.append("              %ll1 = arith.mulf %lw, %a1s : f32")
+        lines.append("              %lln = arith.addf %ll0, %ll1 : f32")
+        lines.append("              %xx0s = arith.mulf %xx0, %a0s : f32")
+        lines.append("              %xx1s = arith.mulf %xx1, %a0s : f32")
+        lines.append("              %aw0s = arith.mulf %aw0, %a1s : f32")
+        lines.append("              %aw1s = arith.mulf %aw1, %a1s : f32")
+        lines.append("              %xx0n = arith.addf %xx0s, %aw0s : f32")
+        lines.append("              %xx1n = arith.addf %xx1s, %aw1s : f32")
+        lines.append("              scf.yield %m_new2, %lln, %xx0n, %xx1n : f32, f32, f32, f32")
+        lines.append("            }")
+        lines.append("            scf.yield %m_acc, %l_acc, %x0_acc, %x1_acc : f32, f32, f32, f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %neg_inf, %c0f, %c0f, %c0f : f32, f32, f32, f32")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+
+        # Merge tile into global (warp0 only).
+        lines.append("          %m_next, %l_next2, %a0_next, %a1_next = scf.if %is0 -> (f32, f32, f32, f32) {")
+        lines.append("            %m_new3 = arith.maximumf %m_i, %m_tile : f32")
+        lines.append("            %d_old = arith.subf %m_i, %m_new3 : f32")
+        lines.append("            %d_tile = arith.subf %m_tile, %m_new3 : f32")
+        lines.append("            %a_old = math.exp2 %d_old : f32")
+        lines.append("            %a_tile = math.exp2 %d_tile : f32")
+        lines.append("            %l0s2 = arith.mulf %l_i, %a_old : f32")
+        lines.append("            %l1s2 = arith.mulf %l_tile, %a_tile : f32")
+        lines.append("            %ln2 = arith.addf %l0s2, %l1s2 : f32")
+        lines.append("            %a0s2 = arith.mulf %a0, %a_old : f32")
+        lines.append("            %a1s2 = arith.mulf %a1, %a_old : f32")
+        lines.append("            %t0s2 = arith.mulf %t0, %a_tile : f32")
+        lines.append("            %t1s2 = arith.mulf %t1, %a_tile : f32")
+        lines.append("            %an0 = arith.addf %a0s2, %t0s2 : f32")
+        lines.append("            %an1 = arith.addf %a1s2, %t1s2 : f32")
+        lines.append("            scf.yield %m_new3, %ln2, %an0, %an1 : f32, f32, f32, f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %m_i, %l_i, %a0, %a1 : f32, f32, f32, f32")
+        lines.append("          }")
+
+        lines.append("          scf.yield %m_next, %l_next2, %a0_next, %a1_next : f32, f32, f32, f32")
+        lines.append("        }")
+
+        # Write output (warp0).
+        lines.append("        scf.if %is0 {")
+        lines.append("          %nz = arith.cmpf one, %l_out, %c0f : f32")
+        lines.append("          %l_safe = arith.select %nz, %l_out, %c1f : f32")
+        lines.append("          %o0 = arith.divf %a0_out, %l_safe : f32")
+        lines.append("          %o1 = arith.divf %a1_out, %l_safe : f32")
+        lines.append("          %oidx0 = arith.addi %base_q, %lane : index")
+        lines.append("          %oidx1 = arith.addi %base_q, %lane2 : index")
+        lines.append(f"          memref.store %o0, {arg_ssa[out_name2]}[%oidx0] : {out_memref}")
+        lines.append(f"          memref.store %o1, {arg_ssa[out_name2]}[%oidx1] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
     elif (
         attn2d_v1 is not None
         and intent_name == "flash_attention2d"
