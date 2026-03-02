@@ -5897,6 +5897,13 @@ def lower_intent_to_cuda_gpu_kernel(
                 "attn2d_causal_softmax_v2",
                 "attn2d_causal_softmax_v1",
             },
+            "masked_attention2d": {
+                "attn2d_causal_softmax_v5",
+                "attn2d_causal_softmax_v4",
+                "attn2d_causal_softmax_v3",
+                "attn2d_causal_softmax_v2",
+                "attn2d_causal_softmax_v1",
+            },
             "ai_bench_matmul": {"matmul_tile_v2", "matmul_tile_v1"},
             "matmul_fused_epilogue2d": {"matmul_tile_v2", "matmul_tile_v1"},
         }
@@ -5917,14 +5924,17 @@ def lower_intent_to_cuda_gpu_kernel(
                 f"intentir_kernel_kind_override={kernel_kind_override!r} requires _attn_fwd matcher; "
                 "got no attn_fwd_v1 pattern match"
             )
-        if intent_name == "flash_attention2d":
+        if intent_name in {"flash_attention2d", "masked_attention2d"}:
             if attn2d_v1 is None:
                 raise RuntimeError(
                     f"intentir_kernel_kind_override={kernel_kind_override!r} requires flash_attention2d matcher; "
                     "got no attn2d_v1 pattern match"
                 )
-            if kernel_kind_override == "attn2d_causal_softmax_v5" and int(attn2d_v1.get("HEAD_DIM") or 0) != 64:
-                raise RuntimeError("attn2d_causal_softmax_v5 requires HEAD_DIM==64")
+            if kernel_kind_override == "attn2d_causal_softmax_v5":
+                if intent_name != "flash_attention2d":
+                    raise RuntimeError("attn2d_causal_softmax_v5 override is only supported for flash_attention2d")
+                if int(attn2d_v1.get("HEAD_DIM") or 0) != 64:
+                    raise RuntimeError("attn2d_causal_softmax_v5 requires HEAD_DIM==64")
         if intent_name in {"ai_bench_matmul", "matmul_fused_epilogue2d"}:
             if matmul_v1 is None:
                 raise RuntimeError(
@@ -13311,11 +13321,11 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("      }")
     elif (
         attn2d_v1 is not None
-        and intent_name == "flash_attention2d"
         and (
             (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v4")
             or (
                 (not kernel_kind_override_enabled)
+                and intent_name == "flash_attention2d"
                 and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
                 and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
                 and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V3", default=False)
@@ -13768,11 +13778,11 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
     elif (
         attn2d_v1 is not None
-        and intent_name == "flash_attention2d"
         and (
             (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v3")
             or (
                 (not kernel_kind_override_enabled)
+                and intent_name == "flash_attention2d"
                 and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
                 and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
             )
