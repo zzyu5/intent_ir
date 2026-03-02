@@ -6,7 +6,7 @@
 
 # Attention kernel_kind selection (arch-specific)
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm90","bindings":{"ATTN_BLOCK_KV":64},"kernel_kind":"attn2d_causal_softmax_v6","note":"sweep: sm90 v6(bkv64) ratio~0.94 @ Q=64,KV=64,HD=64"}
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm120","bindings":{"ATTN_BLOCK_KV":64},"kernel_kind":"attn2d_causal_softmax_v6","note":"sweep: sm120a v6(bkv64) ratio~0.64..0.67 @ Q=64,KV=64,HD=64 (needs new kernel_kind)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm120","bindings":{"ATTN_BLOCK_KV":32},"kernel_kind":"attn2d_causal_softmax_v7","note":"sm120: v7 warp-only cached scores (target >=0.90 @ Q=64,KV=64,HD=64)"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm90","bindings":{},"kernel_kind":"attn2d_causal_softmax_v4","note":"sweep: sm90 v4 best (ratio~0.91 @ Q=16,KV=16,HD=16)"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm120","bindings":{"ATTN_BLOCK_M":4,"ATTN_BLOCK_KV":32},"kernel_kind":"attn2d_causal_softmax_v4","note":"sweep: sm120a v4(BM4,BKV32) ratio~0.98 @ Q=64,KV=64,HD=64"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"_attn_fwd","arch":"sm90","bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32},"kernel_kind":"attn_fwd_tiled_v3","note":"sweep: sm90 BM8 BKV32 ratio~0.93 @ Q=64,KV=64,HD=64"}
