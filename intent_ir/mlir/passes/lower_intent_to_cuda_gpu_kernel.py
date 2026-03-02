@@ -5883,6 +5883,7 @@ def lower_intent_to_cuda_gpu_kernel(
     kernel_kind = "elementwise_v1"
     shared_global_sym: str | None = None
     shared_global_memref_ty: str | None = None
+    extra_shared_globals: list[tuple[str, str]] = []
     cuda_real_mlir_attention_cfg: dict[str, Any] | None = None
     cuda_real_mlir_matmul_cfg: dict[str, Any] | None = None
     kernel_kind_override = str((module.meta or {}).get("intentir_kernel_kind_override") or "").strip()
@@ -5904,8 +5905,8 @@ def lower_intent_to_cuda_gpu_kernel(
                 "attn2d_causal_softmax_v2",
                 "attn2d_causal_softmax_v1",
             },
-            "ai_bench_matmul": {"matmul_tile_v2", "matmul_tile_v1"},
-            "matmul_fused_epilogue2d": {"matmul_tile_v2", "matmul_tile_v1"},
+            "ai_bench_matmul": {"matmul_mma_tf32_v1", "matmul_mma_tf32_global_v1", "matmul_tile_v2", "matmul_tile_v1"},
+            "matmul_fused_epilogue2d": {"matmul_mma_tf32_v1", "matmul_mma_tf32_global_v1", "matmul_tile_v2", "matmul_tile_v1"},
         }
         allowed = allowed_by_intent.get(intent_name)
         if allowed is None:
@@ -5948,6 +5949,36 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(
                         "matmul_tile_v2 override requires BN%4==0 and BM*(BN/4)==256; "
                         f"got BM={bm} BN={bn}"
+                    )
+            if kernel_kind_override in {"matmul_mma_tf32_v1", "matmul_mma_tf32_global_v1"}:
+                mma_bm = int(bindings.get("MMA_BM") or 64)
+                mma_bn = int(bindings.get("MMA_BN") or 32)
+                mma_bk = int(bindings.get("MMA_BK") or 32)
+                m_dim = int(matmul_v1.get("M") or 0)
+                n_dim = int(matmul_v1.get("N") or 0)
+                k_dim = int(matmul_v1.get("K") or 0)
+                warps_m = mma_bm // 16
+                warps_n = mma_bn // 16
+                warps = warps_m * warps_n
+                threads = warps * 32
+                if mma_bm <= 0 or mma_bn <= 0 or mma_bk <= 0:
+                    raise RuntimeError(
+                        f"{kernel_kind_override} requires positive MMA_BM/MMA_BN/MMA_BK; got {mma_bm},{mma_bn},{mma_bk}"
+                    )
+                if (mma_bm % 16) != 0 or (mma_bn % 16) != 0 or (mma_bk % 8) != 0:
+                    raise RuntimeError(
+                        f"{kernel_kind_override} requires MMA_BM%16==0, MMA_BN%16==0, MMA_BK%8==0; "
+                        f"got MMA_BM={mma_bm} MMA_BN={mma_bn} MMA_BK={mma_bk}"
+                    )
+                if warps <= 0 or warps > 32 or threads <= 0 or threads > 1024:
+                    raise RuntimeError(
+                        f"{kernel_kind_override} requires 1..32 warps (threads 32..1024); "
+                        f"got warps={warps} threads={threads} (MMA_BM={mma_bm} MMA_BN={mma_bn})"
+                    )
+                if (m_dim % mma_bm) != 0 or (n_dim % mma_bn) != 0 or (k_dim % mma_bk) != 0 or (k_dim % 8) != 0:
+                    raise RuntimeError(
+                        f"{kernel_kind_override} override requires M%MMA_BM==0, N%MMA_BN==0, K%MMA_BK==0, and K%8==0; "
+                        f"got M={m_dim} N={n_dim} K={k_dim} MMA_BM={mma_bm} MMA_BN={mma_bn} MMA_BK={mma_bk}"
                     )
         kernel_kind_override_enabled = True
     lines: list[str] = []
@@ -6565,6 +6596,359 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("  " + l)
         lines.append("        }")
         lines.append("      }")
+    elif matmul_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "matmul_mma_tf32_v1":
+        kernel_kind = "matmul_mma_tf32_v1"
+        a_name = str(matmul_v1["A"])
+        b_name = str(matmul_v1["B"])
+        out_name2 = str(matmul_v1["out"])
+        bias_name = matmul_v1.get("bias")
+        add_inp_name = matmul_v1.get("add_inp")
+        alpha_name = matmul_v1.get("alpha")
+        beta_name = matmul_v1.get("beta")
+        row_mask_name = matmul_v1.get("row_mask")
+        col_mask_name = matmul_v1.get("col_mask")
+        relu = bool(matmul_v1.get("relu") or False)
+
+        if bias_name is not None or add_inp_name is not None or alpha_name is not None or beta_name is not None:
+            raise RuntimeError("matmul_mma_tf32_v1 currently supports plain matmul only (no addmm/alpha/beta/bias)")
+        if row_mask_name is not None or col_mask_name is not None or relu:
+            raise RuntimeError("matmul_mma_tf32_v1 currently supports plain matmul only (no masks/relu)")
+
+        m_dim = int(matmul_v1["M"])
+        n_dim = int(matmul_v1["N"])
+        k_dim = int(matmul_v1["K"])
+        bm = int(bindings.get("MMA_BM") or 64)
+        bn = int(bindings.get("MMA_BN") or 32)
+        bk = int(bindings.get("MMA_BK") or 32)
+        if (m_dim % int(bm)) != 0 or (n_dim % int(bn)) != 0 or (k_dim % int(bk)) != 0 or (k_dim % 8) != 0:
+            raise RuntimeError(
+                "matmul_mma_tf32_v1 requires M%MMA_BM==0, N%MMA_BN==0, K%MMA_BK==0, and K%8==0; "
+                f"got M={m_dim} N={n_dim} K={k_dim} MMA_BM={bm} MMA_BN={bn} MMA_BK={bk}"
+            )
+
+        if str(arg_specs[a_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matmul expects f32 A tensor")
+        if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matmul expects f32 B tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matmul expects f32 output tensor")
+
+        a_memref = str(arg_specs[a_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        out2_memref = f"memref<{int(m_dim)}x{int(n_dim)}xf32, 1>"
+
+        if bm <= 0 or bn <= 0 or bk <= 0:
+            raise RuntimeError(f"matmul_mma_tf32_v1 requires positive MMA_BM/MMA_BN/MMA_BK; got {bm},{bn},{bk}")
+        if (int(bm) % 16) != 0 or (int(bn) % 16) != 0 or (int(bk) % 8) != 0:
+            raise RuntimeError(
+                "matmul_mma_tf32_v1 requires MMA_BM%16==0, MMA_BN%16==0, MMA_BK%8==0; "
+                f"got MMA_BM={bm} MMA_BN={bn} MMA_BK={bk}"
+            )
+        warps_m = int(bm) // 16
+        warps_n = int(bn) // 16
+        warps = int(warps_m) * int(warps_n)
+        threads = int(warps) * 32
+        if warps <= 0 or warps > 32 or threads <= 0 or threads > 1024:
+            raise RuntimeError(
+                "matmul_mma_tf32_v1 requires 1..32 warps (threads 32..1024); "
+                f"got warps={warps} threads={threads} (MMA_BM={bm} MMA_BN={bn})"
+            )
+        cuda_real_mlir_matmul_cfg = {
+            "BM": int(bm),
+            "BN": int(bn),
+            "BK": int(bk),
+            "mma": "tf32",
+            "warp_tile_m": 16,
+            "warp_tile_n": 16,
+            "warp_tile_k": 8,
+            "warps_m": int(warps_m),
+            "warps_n": int(warps_n),
+            "warps": int(warps),
+        }
+
+        grid_x = int(n_dim) // int(bn)
+        grid_y = int(m_dim) // int(bm)
+        launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), int(grid_y), 1]}
+
+        sh_a_sym = f"__intentir_sh_a_{_mlir_ident(kernel_name)}_f32"
+        sh_b_sym = f"__intentir_sh_b_{_mlir_ident(kernel_name)}_f32"
+        extra_shared_globals = [
+            (str(sh_a_sym), f"memref<{int(bm)}x{int(bk)}xf32, 3>"),
+            (str(sh_b_sym), f"memref<{int(bk)}x{int(bn)}xf32, 3>"),
+        ]
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_x = gpu.block_id x")
+        lines.append("      %bid_y = gpu.block_id y")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c8 = arith.constant 8 : index")
+        lines.append("      %c16 = arith.constant 16 : index")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cK = arith.constant {int(k_dim)} : index")
+        lines.append(f"      %cBM = arith.constant {int(bm)} : index")
+        lines.append(f"      %cBN = arith.constant {int(bn)} : index")
+        lines.append(f"      %cBK = arith.constant {int(bk)} : index")
+        lines.append(f"      %cTileA = arith.constant {int(bm * bk)} : index")
+        lines.append(f"      %cTileB = arith.constant {int(bk * bn)} : index")
+        lines.append(f"      %cThreads = arith.constant {int(threads)} : index")
+        lines.append(f"      %cWarpsN = arith.constant {int(warps_n)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+
+        lines.append(f"      %As = memref.get_global @{sh_a_sym} : memref<{int(bm)}x{int(bk)}xf32, 3>")
+        lines.append(f"      %Bs = memref.get_global @{sh_b_sym} : memref<{int(bk)}x{int(bn)}xf32, 3>")
+
+        lines.append(f"      %out2 = memref.reinterpret_cast {arg_ssa[out_name2]} to")
+        lines.append("        offset: [0],")
+        lines.append(f"        sizes: [{int(m_dim)}, {int(n_dim)}],")
+        lines.append(f"        strides: [{int(n_dim)}, 1]")
+        lines.append(f"      : {out_memref} to {out2_memref}")
+
+        lines.append("      %row0 = arith.muli %bid_y, %cBM : index")
+        lines.append("      %col0 = arith.muli %bid_x, %cBN : index")
+        lines.append("      %warp = arith.divui %tid, %c32 : index")
+        lines.append("      %warp_m = arith.divui %warp, %cWarpsN : index")
+        lines.append("      %warp_n = arith.remui %warp, %cWarpsN : index")
+        lines.append("      %row_w = arith.muli %warp_m, %c16 : index")
+        lines.append("      %col_w = arith.muli %warp_n, %c16 : index")
+        lines.append("      %gm = arith.addi %row0, %row_w : index")
+        lines.append("      %gn = arith.addi %col0, %col_w : index")
+
+        # NOTE: Avoid scf.for loop-carried !gpu.mma_matrix. Some conversion paths
+        # mark such scf.for illegal because its iter_args types need conversion.
+        # Since our canonical focus shapes are fully static, unroll the MMA
+        # K-loop here to keep scf.for restricted to copy loops only.
+        lines.append("      %acc0 = gpu.subgroup_mma_constant_matrix %c0f : !gpu.mma_matrix<16x16xf32, \"COp\">")
+        acc_cur = "%acc0"
+        kk_steps: list[str] = []
+        for kk in range(0, int(bk), 8):
+            kk_ssa = f"%kk_{int(kk)}"
+            lines.append(f"      {kk_ssa} = arith.constant {int(kk)} : index")
+            kk_steps.append(str(kk_ssa))
+        for kb in range(0, int(k_dim), int(bk)):
+            kb_ssa = f"%k_base_{kb}"
+            lines.append(f"      {kb_ssa} = arith.constant {int(kb)} : index")
+
+            # Load A tile to shared
+            lines.append("      scf.for %i = %tid to %cTileA step %cThreads {")
+            lines.append("        %a_r = arith.divui %i, %cBK : index")
+            lines.append("        %a_c = arith.remui %i, %cBK : index")
+            lines.append("        %a_gr = arith.addi %row0, %a_r : index")
+            lines.append(f"        %a_gk = arith.addi {kb_ssa}, %a_c : index")
+            lines.append("        %a_mul = arith.muli %a_gr, %cK : index")
+            lines.append("        %a_idx = arith.addi %a_mul, %a_gk : index")
+            lines.append(f"        %a_val = memref.load {arg_ssa[a_name]}[%a_idx] : {a_memref}")
+            lines.append(f"        memref.store %a_val, %As[%a_r, %a_c] : memref<{int(bm)}x{int(bk)}xf32, 3>")
+            lines.append("      }")
+
+            # Load B tile to shared
+            lines.append("      scf.for %j = %tid to %cTileB step %cThreads {")
+            lines.append("        %b_r = arith.divui %j, %cBN : index")
+            lines.append("        %b_c = arith.remui %j, %cBN : index")
+            lines.append(f"        %b_gk = arith.addi {kb_ssa}, %b_r : index")
+            lines.append("        %b_gn = arith.addi %col0, %b_c : index")
+            lines.append("        %b_mul = arith.muli %b_gk, %cN : index")
+            lines.append("        %b_idx = arith.addi %b_mul, %b_gn : index")
+            lines.append(f"        %b_val = memref.load {arg_ssa[b_name]}[%b_idx] : {b_memref}")
+            lines.append(f"        memref.store %b_val, %Bs[%b_r, %b_c] : memref<{int(bk)}x{int(bn)}xf32, 3>")
+            lines.append("      }")
+
+            lines.append("      gpu.barrier")
+
+            for kk in kk_steps:
+                a_frag = _fresh("A_frag")
+                b_frag = _fresh("B_frag")
+                acc_next = _fresh("acc")
+                lines.append(
+                    f"      {a_frag} = gpu.subgroup_mma_load_matrix %As[%row_w, {kk}] "
+                    f"{{leadDimension = {int(bk)} : index}} : memref<{int(bm)}x{int(bk)}xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+                )
+                lines.append(
+                    f"      {b_frag} = gpu.subgroup_mma_load_matrix %Bs[{kk}, %col_w] "
+                    f"{{leadDimension = {int(bn)} : index}} : memref<{int(bk)}x{int(bn)}xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+                )
+                lines.append(
+                    f"      {acc_next} = gpu.subgroup_mma_compute {a_frag}, {b_frag}, {acc_cur} : "
+                    "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+                    "!gpu.mma_matrix<16x16xf32, \"COp\">"
+                )
+                acc_cur = str(acc_next)
+
+            lines.append("      gpu.barrier")
+
+        lines.append(
+            f"      gpu.subgroup_mma_store_matrix {acc_cur}, %out2[%gm, %gn] "
+            f"{{leadDimension = {int(n_dim)} : index}} : !gpu.mma_matrix<16x16xf32, \"COp\">, {out2_memref}"
+        )
+    elif matmul_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "matmul_mma_tf32_global_v1":
+        kernel_kind = "matmul_mma_tf32_global_v1"
+        a_name = str(matmul_v1["A"])
+        b_name = str(matmul_v1["B"])
+        out_name2 = str(matmul_v1["out"])
+        bias_name = matmul_v1.get("bias")
+        add_inp_name = matmul_v1.get("add_inp")
+        alpha_name = matmul_v1.get("alpha")
+        beta_name = matmul_v1.get("beta")
+        row_mask_name = matmul_v1.get("row_mask")
+        col_mask_name = matmul_v1.get("col_mask")
+        relu = bool(matmul_v1.get("relu") or False)
+
+        # Perf-first focus: keep v1 restricted to plain matmul to minimize risk.
+        if bias_name is not None or add_inp_name is not None or alpha_name is not None or beta_name is not None:
+            raise RuntimeError("matmul_mma_tf32_global_v1 currently supports plain matmul only (no addmm/alpha/beta/bias)")
+        if row_mask_name is not None or col_mask_name is not None or relu:
+            raise RuntimeError("matmul_mma_tf32_global_v1 currently supports plain matmul only (no masks/relu)")
+
+        m_dim = int(matmul_v1["M"])
+        n_dim = int(matmul_v1["N"])
+        k_dim = int(matmul_v1["K"])
+        bm = int(bindings.get("MMA_BM") or 64)
+        bn = int(bindings.get("MMA_BN") or 32)
+        bk = int(bindings.get("MMA_BK") or 32)
+        b_transpose = bool(int(bindings.get("MMA_B_TRANSPOSE") or 0))
+        if (m_dim % int(bm)) != 0 or (n_dim % int(bn)) != 0 or (k_dim % int(bk)) != 0 or (k_dim % 8) != 0:
+            raise RuntimeError(
+                "matmul_mma_tf32_global_v1 requires M%MMA_BM==0, N%MMA_BN==0, K%MMA_BK==0, and K%8==0; "
+                f"got M={m_dim} N={n_dim} K={k_dim} MMA_BM={bm} MMA_BN={bn} MMA_BK={bk}"
+            )
+
+        if str(arg_specs[a_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matmul expects f32 A tensor")
+        if str(arg_specs[b_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matmul expects f32 B tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("matmul expects f32 output tensor")
+
+        a_memref = str(arg_specs[a_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        a2_memref = f"memref<{int(m_dim)}x{int(k_dim)}xf32, 1>"
+        b2_memref = f"memref<{int(k_dim)}x{int(n_dim)}xf32, 1>"
+        out2_memref = f"memref<{int(m_dim)}x{int(n_dim)}xf32, 1>"
+
+        if bm <= 0 or bn <= 0 or bk <= 0:
+            raise RuntimeError(f"matmul_mma_tf32_global_v1 requires positive MMA_BM/MMA_BN/MMA_BK; got {bm},{bn},{bk}")
+        if (int(bm) % 16) != 0 or (int(bn) % 16) != 0 or (int(bk) % 8) != 0:
+            raise RuntimeError(
+                "matmul_mma_tf32_global_v1 requires MMA_BM%16==0, MMA_BN%16==0, MMA_BK%8==0; "
+                f"got MMA_BM={bm} MMA_BN={bn} MMA_BK={bk}"
+            )
+        warps_m = int(bm) // 16
+        warps_n = int(bn) // 16
+        warps = int(warps_m) * int(warps_n)
+        threads = int(warps) * 32
+        if warps <= 0 or warps > 32 or threads <= 0 or threads > 1024:
+            raise RuntimeError(
+                "matmul_mma_tf32_global_v1 requires 1..32 warps (threads 32..1024); "
+                f"got warps={warps} threads={threads} (MMA_BM={bm} MMA_BN={bn})"
+            )
+        cuda_real_mlir_matmul_cfg = {
+            "BM": int(bm),
+            "BN": int(bn),
+            "BK": int(bk),
+            "mma": "tf32",
+            "global_load": True,
+            "b_transpose": bool(b_transpose),
+            "warp_tile_m": 16,
+            "warp_tile_n": 16,
+            "warp_tile_k": 8,
+            "warps_m": int(warps_m),
+            "warps_n": int(warps_n),
+            "warps": int(warps),
+        }
+
+        grid_x = int(n_dim) // int(bn)
+        grid_y = int(m_dim) // int(bm)
+        launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), int(grid_y), 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_x = gpu.block_id x")
+        lines.append("      %bid_y = gpu.block_id y")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c8 = arith.constant 8 : index")
+        lines.append("      %c16 = arith.constant 16 : index")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append(f"      %cK = arith.constant {int(k_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cBM = arith.constant {int(bm)} : index")
+        lines.append(f"      %cBN = arith.constant {int(bn)} : index")
+        lines.append(f"      %cBK = arith.constant {int(bk)} : index")
+        lines.append(f"      %cWarpsN = arith.constant {int(warps_n)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+
+        lines.append(f"      %A2 = memref.reinterpret_cast {arg_ssa[a_name]} to")
+        lines.append("        offset: [0],")
+        lines.append(f"        sizes: [{int(m_dim)}, {int(k_dim)}],")
+        lines.append(f"        strides: [{int(k_dim)}, 1]")
+        lines.append(f"      : {a_memref} to {a2_memref}")
+
+        lines.append(f"      %B2 = memref.reinterpret_cast {arg_ssa[b_name]} to")
+        lines.append("        offset: [0],")
+        lines.append(f"        sizes: [{int(k_dim)}, {int(n_dim)}],")
+        lines.append(f"        strides: [{int(n_dim)}, 1]")
+        lines.append(f"      : {b_memref} to {b2_memref}")
+
+        lines.append(f"      %out2 = memref.reinterpret_cast {arg_ssa[out_name2]} to")
+        lines.append("        offset: [0],")
+        lines.append(f"        sizes: [{int(m_dim)}, {int(n_dim)}],")
+        lines.append(f"        strides: [{int(n_dim)}, 1]")
+        lines.append(f"      : {out_memref} to {out2_memref}")
+
+        lines.append("      %row0 = arith.muli %bid_y, %cBM : index")
+        lines.append("      %col0 = arith.muli %bid_x, %cBN : index")
+        lines.append("      %warp = arith.divui %tid, %c32 : index")
+        lines.append("      %warp_m = arith.divui %warp, %cWarpsN : index")
+        lines.append("      %warp_n = arith.remui %warp, %cWarpsN : index")
+        lines.append("      %row_w = arith.muli %warp_m, %c16 : index")
+        lines.append("      %col_w = arith.muli %warp_n, %c16 : index")
+        lines.append("      %gm = arith.addi %row0, %row_w : index")
+        lines.append("      %gn = arith.addi %col0, %col_w : index")
+
+        # No shared tiles: load MMA fragments directly from global memory.
+        lines.append("      %acc0 = gpu.subgroup_mma_constant_matrix %c0f : !gpu.mma_matrix<16x16xf32, \"COp\">")
+        acc_cur = "%acc0"
+        kk_steps: list[str] = []
+        for kk in range(0, int(bk), 8):
+            kk_ssa = f"%kk_{int(kk)}"
+            lines.append(f"      {kk_ssa} = arith.constant {int(kk)} : index")
+            kk_steps.append(str(kk_ssa))
+        for kb in range(0, int(k_dim), int(bk)):
+            kb_ssa = f"%k_base_{kb}"
+            lines.append(f"      {kb_ssa} = arith.constant {int(kb)} : index")
+            for kk in kk_steps:
+                k_ssa = _fresh("k")
+                a_frag = _fresh("A_frag")
+                b_frag = _fresh("B_frag")
+                acc_next = _fresh("acc")
+                lines.append(f"      {k_ssa} = arith.addi {kb_ssa}, {kk} : index")
+                lines.append(
+                    f"      {a_frag} = gpu.subgroup_mma_load_matrix %A2[%gm, {k_ssa}] "
+                    f"{{leadDimension = {int(k_dim)} : index}} : {a2_memref} -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+                )
+                b_load_attrs = (
+                    f"{{leadDimension = {int(n_dim)} : index, transpose}}"
+                    if b_transpose
+                    else f"{{leadDimension = {int(n_dim)} : index}}"
+                )
+                lines.append(
+                    f"      {b_frag} = gpu.subgroup_mma_load_matrix %B2[{k_ssa}, %gn] "
+                    f"{b_load_attrs} : {b2_memref} -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+                )
+                compute_attrs = " {b_transpose}" if b_transpose else ""
+                lines.append(
+                    f"      {acc_next} = gpu.subgroup_mma_compute {a_frag}, {b_frag}, {acc_cur}{compute_attrs} : "
+                    "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+                    "!gpu.mma_matrix<16x16xf32, \"COp\">"
+                )
+                acc_cur = str(acc_next)
+
+        lines.append(
+            f"      gpu.subgroup_mma_store_matrix {acc_cur}, %out2[%gm, %gn] "
+            f"{{leadDimension = {int(n_dim)} : index}} : !gpu.mma_matrix<16x16xf32, \"COp\">, {out2_memref}"
+        )
     elif (
         matmul_v1 is not None
         and (
@@ -16663,6 +17047,12 @@ def lower_intent_to_cuda_gpu_kernel(
             gpu_module_sym_insert,
             f'    memref.global "private" @{shared_global_sym} : {shared_global_memref_ty} {{alignment = 16}}',
         )
+    if extra_shared_globals:
+        for sym, ty in reversed(extra_shared_globals):
+            lines.insert(
+                gpu_module_sym_insert,
+                f'    memref.global "private" @{sym} : {ty} {{alignment = 16}}',
+            )
     lines.append("      gpu.return")
     lines.append("    }")
     lines.append("  }")

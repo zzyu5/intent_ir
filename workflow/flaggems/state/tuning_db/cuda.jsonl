@@ -4,3 +4,7 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"select_scatter2d","arch":"sm89","bindings":{"tile_n":384},"note":"perf gate hint"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"conv3d_ncdhw","arch":"sm89","bindings":{"tile_n":192},"note":"perf gate hint"}
 
+# TensorCore matmul (WMMA TF32, global-load) focus tuning
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm89","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32},"kernel_kind":"matmul_mma_tf32_global_v1","note":"wmma tf32 global-load (local sm89 ratio>1.0)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm90","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":128},"kernel_kind":"matmul_mma_tf32_global_v1","note":"wmma tf32 global-load (H100 sm90 ratio~0.895)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm120","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32},"kernel_kind":"matmul_mma_tf32_global_v1","note":"wmma tf32 global-load (5090D sm120 ratio~0.816)"}
