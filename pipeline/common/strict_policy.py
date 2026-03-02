@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from pipeline.common.evidence_mode import evidence_mode
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_SCHEMA_VERSION = "intent_mlir_backend_contract_v2"
@@ -102,6 +104,7 @@ def enrich_frontend_report_with_strict_fields(
     report["execution_engine"] = "mlir_native"
     report["fallback_policy"] = str(fallback_policy)
     report["strict_mode"] = bool(strict_mode)
+    report["intentir_evidence_mode"] = str(evidence_mode())
 
     contract_schema = CONTRACT_SCHEMA_VERSION
     runtime_fallback = False

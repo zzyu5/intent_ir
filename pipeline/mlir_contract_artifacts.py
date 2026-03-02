@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 from typing import Any
@@ -13,6 +15,10 @@ from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
 from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 from intent_ir.mlir.toolchain import detect_mlir_toolchain
 from pipeline.common.strict_policy import cuda_require_llvm_ptx
+from pipeline.common.evidence_mode import evidence_mode
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _dump_json(path: Path, payload: dict[str, Any]) -> str:
@@ -207,6 +213,62 @@ def _cuda_llc_target() -> str:
     except Exception:
         pass
     return "sm_80"
+
+
+def _cuda_ptx_cache_enabled() -> bool:
+    raw = str(os.getenv("INTENTIR_CUDA_PTX_CACHE", "1") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _cuda_ptx_cache_dir() -> Path:
+    raw = str(os.getenv("INTENTIR_CUDA_PTX_CACHE_DIR", "") or "").strip()
+    if raw:
+        p = Path(raw)
+        return p if p.is_absolute() else (ROOT / p).resolve()
+    return (ROOT / "artifacts" / "ptx_cache").resolve()
+
+
+def _file_fingerprint(path: Path) -> str:
+    try:
+        st = Path(path).stat()
+        return f"{Path(path).resolve()}:{int(st.st_size)}:{int(st.st_mtime)}"
+    except Exception:
+        return str(path)
+
+
+def _cuda_ptx_cache_key(
+    *,
+    llvm_ir_text: str,
+    llc_path: str,
+    llc_ver: str,
+    target_sm: str,
+    link_libdevice: bool,
+    libdevice_fingerprint: str,
+) -> str:
+    """
+    Stable cache key for LLVM->PTX compilation (llc NVPTX).
+
+    IMPORTANT:
+    - This is NOT an "implicit fallback" to cached LLVM IR. It only reuses PTX
+      that was produced by `llc` from the exact same textual LLVM IR + toolchain
+      fingerprint + arch inputs.
+    """
+
+    h = hashlib.sha256()
+    h.update(str(llvm_ir_text or "").encode("utf-8", errors="ignore"))
+    h.update(b"\n--llc--\n")
+    h.update(str(llc_path or "").encode("utf-8", errors="ignore"))
+    h.update(b"\n--llc_ver--\n")
+    h.update(str(llc_ver or "").encode("utf-8", errors="ignore"))
+    h.update(b"\n--target_sm--\n")
+    h.update(str(target_sm or "").encode("utf-8", errors="ignore"))
+    h.update(b"\n--link_libdevice--\n")
+    h.update(b"1" if bool(link_libdevice) else b"0")
+    h.update(b"\n--libdevice--\n")
+    h.update(str(libdevice_fingerprint or "").encode("utf-8", errors="ignore"))
+    return h.hexdigest()
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -689,7 +751,7 @@ def _compile_llvm_ir_to_cuda_ptx(
     *,
     llvm_ir_text: str,
     out_path: Path,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     triple = _llvm_target_triple(llvm_ir_text)
     probe = detect_mlir_toolchain()
     tools = dict(probe.get("tools") or {}) if isinstance(probe, dict) else {}
@@ -718,6 +780,58 @@ def _compile_llvm_ir_to_cuda_ptx(
                 return p
         return None
 
+    llvm_as_path = str((tools.get("llvm-as") or {}).get("path") or "").strip()
+    llvm_link_path = ""
+    if llvm_as_path:
+        llvm_link_path = str(Path(llvm_as_path).with_name("llvm-link"))
+
+    libdevice_bc = _find_libdevice_bc()
+    # Default: link libdevice when available. Without it, LLVM's NVPTX
+    # backend can emit unresolved extern calls like __nv_expf/__nv_erff,
+    # which the CUDA driver rejects at module-load time.
+    link_libdevice = _env_flag("INTENTIR_CUDA_LINK_LIBDEVICE", default=True)
+    will_link_libdevice = bool(
+        link_libdevice
+        and llvm_as_path
+        and llvm_link_path
+        and Path(llvm_link_path).is_file()
+        and libdevice_bc is not None
+        and Path(libdevice_bc).is_file()
+    )
+    libdevice_fingerprint = _file_fingerprint(libdevice_bc) if will_link_libdevice and libdevice_bc is not None else ""
+
+    cache_enabled = bool(_cuda_ptx_cache_enabled())
+    cache_key = _cuda_ptx_cache_key(
+        llvm_ir_text=str(llvm_ir_text or ""),
+        llc_path=str(llc_path),
+        llc_ver=str(llc_ver),
+        target_sm=str(target),
+        link_libdevice=bool(will_link_libdevice),
+        libdevice_fingerprint=str(libdevice_fingerprint),
+    )
+    cache_dir = _cuda_ptx_cache_dir() / str(target)
+    cache_path = cache_dir / f"{cache_key}.ptx"
+    cache_meta: dict[str, Any] = {
+        "cuda_ptx_cache_hit": False,
+        "cuda_ptx_cache_key": str(cache_key),
+        "cuda_ptx_cache_path": (str(cache_path) if cache_enabled else ""),
+    }
+    if cache_enabled:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            cache_enabled = False
+            cache_meta["cuda_ptx_cache_path"] = ""
+    if cache_enabled and cache_path.is_file():
+        try:
+            if int(cache_path.stat().st_size) > 0:
+                shutil.copyfile(str(cache_path), str(out_path))
+                cache_meta["cuda_ptx_cache_hit"] = True
+                return f"llc:{llc_path}:{llc_ver}", cache_meta
+        except Exception:
+            # Fall back to compilation on any cache I/O error.
+            cache_meta["cuda_ptx_cache_hit"] = False
+
     with tempfile.TemporaryDirectory(prefix="intentir_cuda_llc_") as td:
         ll_path = Path(td) / "kernel.ll"
         ll_text = str(llvm_ir_text or "")
@@ -732,20 +846,10 @@ def _compile_llvm_ir_to_cuda_ptx(
         # math functions (exp/erf/etc). Without libdevice, LLVM often emits
         # unresolved extern calls like __nv_expf.
         llc_input: Path = ll_path
-        llvm_as_path = str((tools.get("llvm-as") or {}).get("path") or "").strip()
-        llvm_link_path = ""
-        if llvm_as_path:
-            llvm_link_path = str(Path(llvm_as_path).with_name("llvm-link"))
-        libdevice_bc = _find_libdevice_bc()
-        # Default: link libdevice when available. Without it, LLVM's NVPTX
-        # backend can emit unresolved extern calls like __nv_expf/__nv_erff,
-        # which the CUDA driver rejects at module-load time.
-        link_libdevice = _env_flag("INTENTIR_CUDA_LINK_LIBDEVICE", default=True)
         if (
-            link_libdevice
+            will_link_libdevice
             and llvm_as_path
             and llvm_link_path
-            and Path(llvm_link_path).is_file()
             and libdevice_bc is not None
         ):
             bc_path = Path(td) / "kernel.bc"
@@ -791,7 +895,14 @@ def _compile_llvm_ir_to_cuda_ptx(
             raise RuntimeError(
                 f"llc nvptx compile failed rc={cp.returncode}: {cp.stderr or cp.stdout}"
             )
-    return f"llc:{llc_path}:{llc_ver}"
+    if cache_enabled:
+        try:
+            tmp = cache_path.with_suffix(f".tmp.{os.getpid()}.ptx")
+            shutil.copyfile(str(out_path), str(tmp))
+            Path(tmp).replace(cache_path)
+        except Exception:
+            pass
+    return f"llc:{llc_path}:{llc_ver}", cache_meta
 
 
 def _validate_cuda_ptx_assembly(
@@ -935,7 +1046,7 @@ def _materialize_executable(
         ptx_path = out_dir / f"{spec_name}.intentir.intentdialect.{suffix}.kernel.ptx"
         entry = str((module.meta or {}).get("kernel_name") or spec_name)
         try:
-            fingerprint = _compile_llvm_ir_to_cuda_ptx(
+            fingerprint, cache_meta = _compile_llvm_ir_to_cuda_ptx(
                 llvm_ir_text=module_text,
                 out_path=ptx_path,
             )
@@ -959,6 +1070,14 @@ def _materialize_executable(
                 "cuda_llvm_origin": str(llvm_origin),
                 "cuda_sm": str(_cuda_llc_target()),
             }
+            artifacts.update(dict(cache_meta or {}))
+            artifacts["intentir_evidence_mode"] = str(evidence_mode())
+            tuning_source = str((module.meta or {}).get("intentir_tuning_source") or "").strip()
+            if tuning_source:
+                artifacts["intentir_tuning_source"] = tuning_source
+            tuning_applied = (module.meta or {}).get("intentir_tuning_applied")
+            if isinstance(tuning_applied, dict) and tuning_applied:
+                artifacts["intentir_tuning_applied"] = {str(k): v for k, v in tuning_applied.items()}
             if isinstance(recovered_intent_json, dict):
                 try:
                     inv = dict(executable.get("invocation") or {})

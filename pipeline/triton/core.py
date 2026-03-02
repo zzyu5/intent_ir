@@ -42,6 +42,7 @@ from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
 from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
+from pipeline.common.evidence_mode import evidence_enabled, evidence_mode
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
@@ -189,6 +190,10 @@ def _load_intent_seed(seed_path: Path) -> tuple[CandidateIntent, CandidateIntent
 
 
 def _mlir_shadow_mode_enabled() -> bool:
+    # Evidence mode is a stronger switch than the legacy "shadow" toggle:
+    # INTENTIR_EVIDENCE_MODE=off must suppress large intermediate dumps.
+    if not bool(evidence_enabled()):
+        return False
     # Transitional default: keep shadow artifacts on unless explicitly disabled.
     return str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -330,25 +335,39 @@ def _emit_mlir_shadow_artifacts(
     backend_target: str | None,
     shape_bindings: Dict[str, int] | None = None,
 ) -> None:
-    if not _mlir_shadow_mode_enabled() and _execution_ir_mode() != "mlir":
+    shadow_enabled = bool(_mlir_shadow_mode_enabled())
+    if (not shadow_enabled) and _execution_ir_mode() != "mlir":
         return
     mlir_report: dict[str, object] = dict(report.get("mlir") or {})
     mlir_report["enabled"] = True
     mlir_report["execution_ir"] = _execution_ir_mode()
-    mlir_report["shadow_mode"] = bool(_mlir_shadow_mode_enabled())
+    mlir_report["shadow_mode"] = bool(shadow_enabled)
+    mlir_report["evidence_mode"] = str(evidence_mode())
     mlir_report["toolchain"] = detect_mlir_toolchain()
     try:
         mod = to_mlir(intent)
-        mod_path = out_dir / f"{spec_name}.intentir.intentdialect.mlir"
-        mod_path.write_text(mod.module_text, encoding="utf-8")
-        mlir_report["module_path"] = str(mod_path)
+        mlir_report["module_path"] = ""
+        if shadow_enabled:
+            mod_path = out_dir / f"{spec_name}.intentir.intentdialect.mlir"
+            mod_path.write_text(mod.module_text, encoding="utf-8")
+            mlir_report["module_path"] = str(mod_path)
         mlir_report["dialect_version"] = str(mod.dialect_version)
 
-        upstream_mod, upstream_trace = run_mlir_pipeline(mod, "upstream", out_dir=(out_dir / "mlir_upstream"))
-        mid_mod, mid_trace = run_mlir_pipeline(upstream_mod, "midend", out_dir=(out_dir / "mlir_midend"))
-        mid_path = out_dir / f"{spec_name}.intentir.intentdialect.midend.mlir"
-        mid_path.write_text(mid_mod.module_text, encoding="utf-8")
-        mlir_report["midend_module_path"] = str(mid_path)
+        upstream_mod, upstream_trace = run_mlir_pipeline(
+            mod,
+            "upstream",
+            out_dir=((out_dir / "mlir_upstream") if shadow_enabled else None),
+        )
+        mid_mod, mid_trace = run_mlir_pipeline(
+            upstream_mod,
+            "midend",
+            out_dir=((out_dir / "mlir_midend") if shadow_enabled else None),
+        )
+        mlir_report["midend_module_path"] = ""
+        if shadow_enabled:
+            mid_path = out_dir / f"{spec_name}.intentir.intentdialect.midend.mlir"
+            mid_path.write_text(mid_mod.module_text, encoding="utf-8")
+            mlir_report["midend_module_path"] = str(mid_path)
         mlir_report["upstream"] = dict(upstream_trace)
         mlir_report["midend"] = dict(mid_trace)
         up_ms = sum(float(p.get("ms") or 0.0) for p in list(upstream_trace.get("passes") or []))
@@ -371,12 +390,14 @@ def _emit_mlir_shadow_artifacts(
                 mid_mod,
                 down,
                 backend=str(backend_target),
-                out_dir=(out_dir / f"mlir_{down}"),
+                out_dir=((out_dir / f"mlir_{down}") if shadow_enabled else None),
             )
-            down_path = out_dir / f"{spec_name}.intentir.intentdialect.{down}.mlir"
-            down_path.write_text(down_mod.module_text, encoding="utf-8")
             mlir_report["downstream"] = dict(down_trace)
-            mlir_report["downstream_module_path"] = str(down_path)
+            mlir_report["downstream_module_path"] = ""
+            if shadow_enabled:
+                down_path = out_dir / f"{spec_name}.intentir.intentdialect.{down}.mlir"
+                down_path.write_text(down_mod.module_text, encoding="utf-8")
+                mlir_report["downstream_module_path"] = str(down_path)
             down_ms = sum(float(p.get("ms") or 0.0) for p in list(down_trace.get("passes") or []))
             lower_ms_total += float(down_ms)
         else:
@@ -434,12 +455,14 @@ def _emit_mlir_shadow_artifacts(
                     mid_mod,
                     str(llvm_pipeline),
                     backend=str(llvm_backend or ""),
-                    out_dir=(out_dir / f"mlir_{llvm_pipeline}"),
+                    out_dir=((out_dir / f"mlir_{llvm_pipeline}") if shadow_enabled else None),
                 )
-                llvm_stage_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.mlir"
-                llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
                 mlir_report[str(llvm_pipeline)] = dict(llvm_trace)
-                mlir_report[f"{llvm_pipeline}_module_path"] = str(llvm_stage_path)
+                mlir_report[f"{llvm_pipeline}_module_path"] = ""
+                if shadow_enabled:
+                    llvm_stage_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.mlir"
+                    llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                    mlir_report[f"{llvm_pipeline}_module_path"] = str(llvm_stage_path)
                 llvm_variants.append((str(llvm_pipeline), llvm_mod))
 
                 llvm_passes = [p for p in list(llvm_trace.get("passes") or []) if isinstance(p, dict)]
@@ -517,10 +540,16 @@ def _emit_mlir_shadow_artifacts(
                         llvm_skip_reason = llvm_opt_reason or "llvm_opt_not_ok"
 
                 if llvm_emit_ok:
-                    llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.ll"
-                    llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
                     mlir_report["llvm_emit_ok"] = True
-                    mlir_report["llvm_ir_path"] = str(llvm_ir_path)
+                    if shadow_enabled:
+                        llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.ll"
+                        llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                        mlir_report["llvm_ir_path"] = str(llvm_ir_path)
+                    else:
+                        # Keep minimal LLVM provenance evidence in off mode:
+                        # the backend contract will persist the LLVM-text module.
+                        llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.module.mlir"
+                        mlir_report["llvm_ir_path"] = str(llvm_ir_path)
                     mlir_report["llvm_skip_reason"] = ""
                 else:
                     mlir_report["llvm_emit_ok"] = False
@@ -553,12 +582,14 @@ def _emit_mlir_shadow_artifacts(
                         mid_mod,
                         str(extra_pipeline),
                         backend=str(extra_backend or ""),
-                        out_dir=(out_dir / f"mlir_{extra_pipeline}"),
+                        out_dir=((out_dir / f"mlir_{extra_pipeline}") if shadow_enabled else None),
                     )
-                    extra_path = out_dir / f"{spec_name}.intentir.intentdialect.{extra_pipeline}.mlir"
-                    extra_path.write_text(extra_mod.module_text, encoding="utf-8")
                     mlir_report[str(extra_pipeline)] = dict(extra_trace)
-                    mlir_report[f"{extra_pipeline}_module_path"] = str(extra_path)
+                    mlir_report[f"{extra_pipeline}_module_path"] = ""
+                    if shadow_enabled:
+                        extra_path = out_dir / f"{spec_name}.intentir.intentdialect.{extra_pipeline}.mlir"
+                        extra_path.write_text(extra_mod.module_text, encoding="utf-8")
+                        mlir_report[f"{extra_pipeline}_module_path"] = str(extra_path)
                     llvm_variants.append((str(extra_pipeline), extra_mod))
                     extra_passes = [p for p in list(extra_trace.get("passes") or []) if isinstance(p, dict)]
                     lower_ms_total += sum(float(p.get("ms") or 0.0) for p in extra_passes)

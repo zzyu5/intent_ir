@@ -72,6 +72,7 @@ def test_emit_backend_contract_artifacts_materializes_cuda_executable_from_downs
     mid_mod = to_mlir(_add_intent("cuda_contract_exec_llc"))
     llvm_mod = _llvm_module(mid_mod, kernel_name="k")
     mlir_report: dict[str, object] = {}
+    monkeypatch.setenv("INTENTIR_CUDA_PTX_CACHE_DIR", str(tmp_path / "ptx_cache"))
 
     monkeypatch.setattr(
         "pipeline.mlir_contract_artifacts.detect_mlir_toolchain",
@@ -135,6 +136,7 @@ def test_emit_backend_contract_artifacts_reports_cuda_llvm_error_when_materializ
     mid_mod = to_mlir(_add_intent("cuda_contract_exec_llc_fail"))
     llvm_mod = _llvm_module(mid_mod, kernel_name="k")
     mlir_report: dict[str, object] = {}
+    monkeypatch.setenv("INTENTIR_CUDA_PTX_CACHE_DIR", str(tmp_path / "ptx_cache"))
 
     monkeypatch.setattr(
         "pipeline.mlir_contract_artifacts.detect_mlir_toolchain",
@@ -449,6 +451,7 @@ def test_compile_llvm_ir_to_cuda_ptx_rewrites_math_intrinsics_for_nvptx(monkeypa
         "declare float @llvm.log.f32(float)\n"
     )
     seen = {"ll_text": ""}
+    monkeypatch.setenv("INTENTIR_CUDA_PTX_CACHE_DIR", str(tmp_path / "ptx_cache"))
 
     monkeypatch.setattr(
         "pipeline.mlir_contract_artifacts.detect_mlir_toolchain",
@@ -500,6 +503,7 @@ def test_compile_llvm_ir_to_cuda_ptx_retargets_host_triple_to_nvptx(monkeypatch,
         "define void @k() { ret void }\n"
     )
     seen = {"ll_text": ""}
+    monkeypatch.setenv("INTENTIR_CUDA_PTX_CACHE_DIR", str(tmp_path / "ptx_cache"))
 
     monkeypatch.setattr(
         "pipeline.mlir_contract_artifacts.detect_mlir_toolchain",
@@ -551,6 +555,7 @@ def test_compile_llvm_ir_to_cuda_ptx_rewrites_atanf_acosf_libcalls(monkeypatch, 
         "declare dso_local float @atanf(float noundef) local_unnamed_addr #2\n"
     )
     seen = {"ll_text": ""}
+    monkeypatch.setenv("INTENTIR_CUDA_PTX_CACHE_DIR", str(tmp_path / "ptx_cache"))
 
     monkeypatch.setattr(
         "pipeline.mlir_contract_artifacts.detect_mlir_toolchain",
