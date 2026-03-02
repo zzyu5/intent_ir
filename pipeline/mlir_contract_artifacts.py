@@ -793,9 +793,19 @@ def _compile_llvm_ir_to_cuda_ptx(
     )
     libdevice_fingerprint = _file_fingerprint(libdevice_bc) if will_link_libdevice and libdevice_bc is not None else ""
 
+    # IMPORTANT: The PTX cache key must include the *final* LLVM IR text passed to llc,
+    # including any retargeting and NVPTX-specific intrinsic rewrites. Otherwise, codegen
+    # changes (e.g. exp2 rewriting) can be silently masked by stale cache hits.
+    ll_text = str(llvm_ir_text or "")
+    if _is_host_llvm_triple_for_cuda(triple):
+        ll_text, _ = _retarget_llvm_ir_to_cuda_device_triple(ll_text)
+        triple = _llvm_target_triple(ll_text)
+    if "nvptx" in triple:
+        ll_text = _rewrite_nvptx_math_intrinsics_for_llc(ll_text)
+
     cache_enabled = bool(_cuda_ptx_cache_enabled())
     cache_key = _cuda_ptx_cache_key(
-        llvm_ir_text=str(llvm_ir_text or ""),
+        llvm_ir_text=ll_text,
         llc_path=str(llc_path),
         llc_ver=str(llc_ver),
         target_sm=str(target),
@@ -827,12 +837,6 @@ def _compile_llvm_ir_to_cuda_ptx(
 
     with tempfile.TemporaryDirectory(prefix="intentir_cuda_llc_") as td:
         ll_path = Path(td) / "kernel.ll"
-        ll_text = str(llvm_ir_text or "")
-        if _is_host_llvm_triple_for_cuda(triple):
-            ll_text, _ = _retarget_llvm_ir_to_cuda_device_triple(ll_text)
-            triple = _llvm_target_triple(ll_text)
-        if "nvptx" in triple:
-            ll_text = _rewrite_nvptx_math_intrinsics_for_llc(ll_text)
         ll_path.write_text(ll_text, encoding="utf-8")
 
         # Link CUDA libdevice when available so ptxas validation can succeed for
