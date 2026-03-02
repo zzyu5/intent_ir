@@ -16256,7 +16256,7 @@ def lower_intent_to_cuda_gpu_kernel(
         # Perf-first: flash_attention2d is a micro-kernel (Q=64,KV=64,HD=64) where
         # extra dot recomputation and cross-warp barriers dominate on large GPUs
         # (sm120). v7 keeps the warp-only mapping (one query per CTA), but caches
-        # per-tile scores in registers to avoid pass2 dot recompute.
+        # per-tile scores in shared memory to avoid pass2 dot recompute.
         kernel_kind = "attn2d_causal_softmax_v7"
         q_name = str(attn2d_v1["Q"])
         k_name = str(attn2d_v1["K"])
@@ -16280,6 +16280,8 @@ def lower_intent_to_cuda_gpu_kernel(
         block_kv = int(min(int(req_block_kv), int(kv_ctx))) if int(kv_ctx) > 0 else int(req_block_kv)
         launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
         cuda_real_mlir_attention_cfg = {"block_x": int(block_x), "block_kv": int(block_kv), "scores_cached": True}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_scores_f32"
+        shared_global_memref_ty = f"memref<{int(block_kv)}xf32, 3>"
 
         def _warp_allreduce_sum_xor(val_ssa: str, *, indent: str) -> str:
             cur = str(val_ssa)
@@ -16353,6 +16355,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %idx_q1 = arith.addi %base_q, %d1 : index")
         lines.append(f"        %q0 = memref.load {arg_ssa[q_name]}[%idx_q0] : {q_memref}")
         lines.append(f"        %q1 = memref.load {arg_ssa[q_name]}[%idx_q1] : {q_memref}")
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
 
         # For causal attention, keys beyond the query index are masked. Limit the
         # KV loop upper bound to reduce wasted work on early queries.
@@ -16369,26 +16373,29 @@ def lower_intent_to_cuda_gpu_kernel(
             "iter_args(%m_i = %neg_inf, %l_i = %c0f, %a0 = %c0f, %a1 = %c0f) -> (f32, f32, f32, f32) {"
         )
 
-        # Compute per-tile KV scores once and cache them in SSA (avoid dot recompute).
-        tile_scores: list[tuple[str, str, str]] = []
-        for t in range(int(block_kv)):
-            ct = _fresh("ct")
-            kv_ssa = _fresh("kv")
-            lines.append(f"          {ct} = arith.constant {int(t)} : index")
-            lines.append(f"          {kv_ssa} = arith.addi %tile0, {ct} : index")
-            pred_t, score_t = _emit_dot_score(kv_ssa=str(kv_ssa), indent="          ")
-            tile_scores.append((str(kv_ssa), str(pred_t), str(score_t)))
-
-        max_tile_ssa = "%neg_inf"
-        for _kv_ssa, _pred, score_t in tile_scores:
-            mx_next = _fresh("mx_next")
-            lines.append(f"          {mx_next} = arith.maximumf {max_tile_ssa}, {score_t}{fm} : f32")
-            max_tile_ssa = str(mx_next)
+        # Compute per-tile KV scores once, staging them in shared memory (warp-only CTA),
+        # then reuse the staged scores to compute weights and accumulate the output.
+        t0 = _fresh("t0")
+        kv0 = _fresh("kv0")
+        max_tile = _fresh("max_tile")
+        lines.append(
+            f"          {max_tile} = scf.for {t0} = %c0 to %cBlockKV step %c1 iter_args(%mx = %neg_inf) -> (f32) {{"
+        )
+        lines.append(f"            {kv0} = arith.addi %tile0, {t0} : index")
+        pred0, score0 = _emit_dot_score(kv_ssa=str(kv0), indent="            ")
+        mx_next = _fresh("mx_next")
+        lines.append(f"            {mx_next} = arith.maximumf %mx, {score0}{fm} : f32")
+        lines.append("            scf.if %is0 {")
+        lines.append(f"              memref.store {score0}, %sh[{t0}] : {shared_global_memref_ty}")
+        lines.append("            }")
+        lines.append(f"            scf.yield {mx_next} : f32")
+        lines.append("          }")
+        lines.append("          nvvm.barrier0")
 
         m_new = _fresh("m_new")
         delta = _fresh("delta")
         alpha = _fresh("alpha")
-        lines.append(f"          {m_new} = arith.maximumf %m_i, {max_tile_ssa}{fm} : f32")
+        lines.append(f"          {m_new} = arith.maximumf %m_i, {max_tile}{fm} : f32")
         lines.append(f"          {delta} = arith.subf %m_i, {m_new}{fm} : f32")
         lines.append(f"          {alpha} = math.exp2 {delta} : f32")
         l_scaled = _fresh("l_scaled")
@@ -16398,58 +16405,71 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          {a0_scaled} = arith.mulf %a0, {alpha}{fm} : f32")
         lines.append(f"          {a1_scaled} = arith.mulf %a1, {alpha}{fm} : f32")
 
-        sum_cur = "%c0f"
-        acc0_cur = str(a0_scaled)
-        acc1_cur = str(a1_scaled)
-        for kv_ssa, pred_kv2, score_t in tile_scores:
-            shift = _fresh("shift")
-            p = _fresh("p")
-            lines.append(f"          {shift} = arith.subf {score_t}, {m_new}{fm} : f32")
-            lines.append(f"          {p} = scf.if {pred_kv2} -> (f32) {{")
-            pv = _fresh("pv")
-            lines.append(f"            {pv} = math.exp2 {shift} : f32")
-            lines.append(f"            scf.yield {pv} : f32")
-            lines.append("          } else {")
-            lines.append("            scf.yield %c0f : f32")
-            lines.append("          }")
-            s_next = _fresh("s_next")
-            lines.append(f"          {s_next} = arith.addf {sum_cur}, {p}{fm} : f32")
-            sum_cur = str(s_next)
+        t1 = _fresh("t1")
+        kv1 = _fresh("kv1")
+        pred_kv1 = _fresh("pred_kv")
+        pred_causal1 = _fresh("pred_causal")
+        pred_attend1 = _fresh("pred_attend")
+        score1 = _fresh("score_ld")
+        shift1 = _fresh("shift")
+        sum_out = _fresh("sum")
+        acc0_sum = _fresh("acc0_sum")
+        acc1_sum = _fresh("acc1_sum")
+        lines.append(
+            f"          {sum_out}, {acc0_sum}, {acc1_sum} = scf.for {t1} = %c0 to %cBlockKV step %c1 "
+            f"iter_args(%s = %c0f, %b0 = {a0_scaled}, %b1 = {a1_scaled}) -> (f32, f32, f32) {{"
+        )
+        lines.append(f"            {kv1} = arith.addi %tile0, {t1} : index")
+        lines.append(f"            {pred_kv1} = arith.cmpi ult, {kv1}, %cKV : index")
+        lines.append(f"            {pred_causal1} = arith.cmpi ule, {kv1}, %bid : index")
+        lines.append(f"            {pred_attend1} = arith.andi {pred_kv1}, {pred_causal1} : i1")
+        lines.append(f"            {score1} = memref.load %sh[{t1}] : {shared_global_memref_ty}")
+        lines.append(f"            {shift1} = arith.subf {score1}, {m_new}{fm} : f32")
+        p = _fresh("p")
+        lines.append(f"            {p} = scf.if {pred_attend1} -> (f32) {{")
+        pv = _fresh("pv")
+        lines.append(f"              {pv} = math.exp2 {shift1} : f32")
+        lines.append(f"              scf.yield {pv} : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        s_next = _fresh("s_next")
+        lines.append(f"            {s_next} = arith.addf %s, {p}{fm} : f32")
 
-            base_v = _fresh("base_v")
-            idx_v0 = _fresh("idx_v0")
-            idx_v1 = _fresh("idx_v1")
-            lines.append(f"          {base_v} = arith.muli {kv_ssa}, %cHD : index")
-            lines.append(f"          {idx_v0} = arith.addi {base_v}, %tid : index")
-            lines.append(f"          {idx_v1} = arith.addi {base_v}, %d1 : index")
+        base_v = _fresh("base_v")
+        idx_v0 = _fresh("idx_v0")
+        idx_v1 = _fresh("idx_v1")
+        lines.append(f"            {base_v} = arith.muli {kv1}, %cHD : index")
+        lines.append(f"            {idx_v0} = arith.addi {base_v}, %tid : index")
+        lines.append(f"            {idx_v1} = arith.addi {base_v}, %d1 : index")
 
-            v0 = _fresh("v0")
-            v1 = _fresh("v1")
-            lines.append(f"          {v0} = scf.if {pred_kv2} -> (f32) {{")
-            vv0 = _fresh("vv0")
-            lines.append(f"            {vv0} = memref.load {arg_ssa[v_name]}[{idx_v0}] : {v_memref}")
-            lines.append(f"            scf.yield {vv0} : f32")
-            lines.append("          } else {")
-            lines.append("            scf.yield %c0f : f32")
-            lines.append("          }")
-            lines.append(f"          {v1} = scf.if {pred_kv2} -> (f32) {{")
-            vv1 = _fresh("vv1")
-            lines.append(f"            {vv1} = memref.load {arg_ssa[v_name]}[{idx_v1}] : {v_memref}")
-            lines.append(f"            scf.yield {vv1} : f32")
-            lines.append("          } else {")
-            lines.append("            scf.yield %c0f : f32")
-            lines.append("          }")
+        v0 = _fresh("v0")
+        v1 = _fresh("v1")
+        lines.append(f"            {v0} = scf.if {pred_attend1} -> (f32) {{")
+        vv0 = _fresh("vv0")
+        lines.append(f"              {vv0} = memref.load {arg_ssa[v_name]}[{idx_v0}] : {v_memref}")
+        lines.append(f"              scf.yield {vv0} : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append(f"            {v1} = scf.if {pred_attend1} -> (f32) {{")
+        vv1 = _fresh("vv1")
+        lines.append(f"              {vv1} = memref.load {arg_ssa[v_name]}[{idx_v1}] : {v_memref}")
+        lines.append(f"              scf.yield {vv1} : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
 
-            b0_next = _fresh("b0_next")
-            b1_next = _fresh("b1_next")
-            lines.append(f"          {b0_next} = llvm.intr.fma({p}, {v0}, {acc0_cur}) : (f32, f32, f32) -> f32")
-            lines.append(f"          {b1_next} = llvm.intr.fma({p}, {v1}, {acc1_cur}) : (f32, f32, f32) -> f32")
-            acc0_cur = str(b0_next)
-            acc1_cur = str(b1_next)
+        b0_next = _fresh("b0_next")
+        b1_next = _fresh("b1_next")
+        lines.append(f"            {b0_next} = llvm.intr.fma({p}, {v0}, %b0) : (f32, f32, f32) -> f32")
+        lines.append(f"            {b1_next} = llvm.intr.fma({p}, {v1}, %b1) : (f32, f32, f32) -> f32")
+        lines.append(f"            scf.yield {s_next}, {b0_next}, {b1_next} : f32, f32, f32")
+        lines.append("          }")
 
         l_new = _fresh("l_new")
-        lines.append(f"          {l_new} = arith.addf {l_scaled}, {sum_cur}{fm} : f32")
-        lines.append(f"          scf.yield {m_new}, {l_new}, {acc0_cur}, {acc1_cur} : f32, f32, f32, f32")
+        lines.append(f"          {l_new} = arith.addf {l_scaled}, {sum_out}{fm} : f32")
+        lines.append(f"          scf.yield {m_new}, {l_new}, {acc0_sum}, {acc1_sum} : f32, f32, f32, f32")
         lines.append("        }")
 
         sum_nz = _fresh("sum_nz")
