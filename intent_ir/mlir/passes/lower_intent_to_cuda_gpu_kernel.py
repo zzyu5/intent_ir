@@ -14194,9 +14194,15 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
         sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
 
-        block_x = 256
-        block_m = 8
-        req_block_kv = 32
+        # Allow limited arch/shape-specific tuning via shape_bindings (tuning_db).
+        # Defaults preserve the historical v4 behavior.
+        block_m = int(bindings.get("ATTN_BLOCK_M") or 8)
+        if int(block_m) not in {4, 8, 16}:
+            block_m = 8
+        block_x = int(block_m) * 32
+        req_block_kv = int(bindings.get("ATTN_BLOCK_KV") or 32)
+        if int(req_block_kv) not in {16, 32, 64}:
+            req_block_kv = 32
         block_kv = int(min(int(req_block_kv), int(kv_ctx))) if int(kv_ctx) > 0 else int(req_block_kv)
         grid_x = (int(q_ctx) + int(block_m) - 1) // int(block_m)
         launch_override = {"block": [int(block_x), 1, 1], "grid": [int(grid_x), 1, 1]}
