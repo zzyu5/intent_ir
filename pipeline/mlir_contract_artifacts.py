@@ -439,8 +439,10 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
         out = out.replace("@llvm.exp.f32(", "@intentir_nvvm_expf_approx(")
         out = re.sub(r"^.*declare float @intentir_nvvm_expf_approx\(float\).*\n", "", out, flags=re.MULTILINE)
     if rewrite_exp2:
-        out = out.replace("@llvm.exp2.f32(", "@intentir_nvvm_exp2f_approx(")
-        out = re.sub(r"^.*declare float @intentir_nvvm_exp2f_approx\(float\).*\n", "", out, flags=re.MULTILINE)
+        # Prefer the NVVM intrinsic directly to avoid out-of-line wrappers in PTX
+        # (function calls are extremely costly in tight loops like attention softmax).
+        out = out.replace("@llvm.exp2.f32(", "@llvm.nvvm.ex2.approx.f(")
+        out = re.sub(r"^.*declare float @llvm.exp2.f32\(float\).*\n", "", out, flags=re.MULTILINE)
     if rewrite_log:
         out = out.replace("@llvm.log.f32(", "@intentir_nvvm_logf_approx(")
         out = re.sub(r"^.*declare float @intentir_nvvm_logf_approx\(float\).*\n", "", out, flags=re.MULTILINE)
@@ -509,7 +511,10 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
         return out
 
     helper_blocks: list[str] = []
-    if (rewrite_exp or rewrite_exp2 or rewrite_pow or rewrite_erf) and "@llvm.nvvm.ex2.approx.f(" not in out:
+    if (
+        (rewrite_exp or rewrite_exp2 or rewrite_pow or rewrite_erf)
+        and "declare float @llvm.nvvm.ex2.approx.f(float)" not in out
+    ):
         helper_blocks.append("declare float @llvm.nvvm.ex2.approx.f(float)")
     if (rewrite_log or rewrite_pow) and "@llvm.nvvm.lg2.approx.f(" not in out:
         helper_blocks.append("declare float @llvm.nvvm.lg2.approx.f(float)")
@@ -530,18 +535,6 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
                     "  %c_log2e = bitcast i32 1069066811 to float",
                     "  %scaled = fmul float %x, %c_log2e",
                     "  %r = call float @llvm.nvvm.ex2.approx.f(float %scaled)",
-                    "  ret float %r",
-                    "}",
-                ]
-            )
-        )
-    if rewrite_exp2 and "define internal float @intentir_nvvm_exp2f_approx(" not in out:
-        helper_blocks.append(
-            "\n".join(
-                [
-                    "define internal float @intentir_nvvm_exp2f_approx(float %x) {",
-                    "entry:",
-                    "  %r = call float @llvm.nvvm.ex2.approx.f(float %x)",
                     "  ret float %r",
                     "}",
                 ]
