@@ -5908,7 +5908,12 @@ def lower_intent_to_cuda_gpu_kernel(
                 "attn2d_causal_softmax_v1",
             },
             "ai_bench_matmul": {"matmul_mma_tf32_v1", "matmul_mma_tf32_global_v1", "matmul_tile_v2", "matmul_tile_v1"},
-            "matmul_fused_epilogue2d": {"matmul_mma_tf32_v1", "matmul_mma_tf32_global_v1", "matmul_tile_v2", "matmul_tile_v1"},
+            "matmul_fused_epilogue2d": {
+                "matmul_mma_tf32_v1",
+                "matmul_mma_tf32_global_v1",
+                "matmul_tile_v2",
+                "matmul_tile_v1",
+            },
         }
         allowed = allowed_by_intent.get(intent_name)
         if allowed is None:
@@ -14196,20 +14201,25 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
         sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
 
-        block_x = 256
+        # Allow limited tuning via shape_bindings (tuning_db). Keep the historical
+        # v6 default (2 out warps + 6 score warps => 8 warps / 256 threads).
+        out_warps = 2
+        score_warps = int(bindings.get("ATTN_SCORE_WARPS") or 6)
+        if score_warps not in (2, 4, 6):
+            score_warps = 6
+        block_warps = int(out_warps) + int(score_warps)
+        block_x = int(block_warps) * 32
         req_block_kv = int(bindings.get("ATTN_BLOCK_KV") or 32)
         if req_block_kv not in (16, 32, 64):
             raise RuntimeError(f"{kernel_kind} requires ATTN_BLOCK_KV in {{16,32,64}}; got {req_block_kv}")
-        block_kv = int(min(int(req_block_kv), int(kv_ctx))) if int(kv_ctx) > 0 else int(req_block_kv)
-        if block_kv not in (16, 32, 64):
-            raise RuntimeError(f"{kernel_kind} requires block_kv in {{16,32,64}}; got {block_kv}")
+        block_kv = int(req_block_kv)
         launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
         cuda_real_mlir_attention_cfg = {
             "block_x": int(block_x),
             "block_kv": int(block_kv),
             "per_query_multiwarp": True,
-            "out_warps": 2,
-            "score_warps": 6,
+            "out_warps": int(out_warps),
+            "score_warps": int(score_warps),
         }
 
         # Shared layout: [Q(HD), K_tile(block_kv*HD), V_tile(block_kv*HD),
@@ -14248,6 +14258,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %c1f = arith.constant 1.0 : f32")
         lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
         lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %c4_idx = arith.constant 4 : index")
         lines.append("      %c16_i32 = arith.constant 16 : i32")
         lines.append("      %c8_i32 = arith.constant 8 : i32")
         lines.append("      %c4_i32 = arith.constant 4 : i32")
@@ -14259,8 +14270,10 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
         lines.append(f"      %cHD = arith.constant {int(hd)} : index")
         lines.append(f"      %cBlockKV = arith.constant {int(block_kv)} : index")
-        lines.append(f"      %cScoreWarps = arith.constant 6 : index")
+        lines.append(f"      %cScoreWarps = arith.constant {int(score_warps)} : index")
         lines.append(f"      %cTileElems = arith.constant {int(tile_elems)} : index")
+        lines.append(f"      %cTileVecs = arith.constant {int(tile_elems // 4)} : index")
+        lines.append(f"      %cVecPerRow = arith.constant {int(hd // 4)} : index")
         lines.append(f"      %cThreads = arith.constant {int(block_x)} : index")
         lines.append(f"      %cOffK = arith.constant {int(off_k)} : index")
         lines.append(f"      %cOffV = arith.constant {int(off_v)} : index")
@@ -14306,31 +14319,36 @@ def lower_intent_to_cuda_gpu_kernel(
         # Each output thread keeps one accumulator (dim=0..63) for the query row.
         lines.append("        %acc_out = scf.for %tile0 = %c0 to %cKV step %cBlockKV iter_args(%acc = %c0f) -> (f32) {")
         # Cooperative K/V tile load into shared (at cOffK/cOffV).
-        lines.append("          scf.for %i = %tid to %cTileElems step %cThreads {")
-        lines.append("            %t = arith.divui %i, %cHD : index")
-        lines.append("            %d = arith.remui %i, %cHD : index")
+        vec4_ty = "vector<4xf32>"
+        lines.append("          scf.for %vi = %tid to %cTileVecs step %cThreads {")
+        lines.append("            %t = arith.divui %vi, %cVecPerRow : index")
+        lines.append("            %d4 = arith.remui %vi, %cVecPerRow : index")
+        lines.append("            %d = arith.muli %d4, %c4_idx : index")
         lines.append("            %kv = arith.addi %tile0, %t : index")
         lines.append("            %pred_kv = arith.cmpi ult, %kv, %cKV : index")
-        lines.append("            %k_val = scf.if %pred_kv -> (f32) {")
+        lines.append(f"            %k_vec = scf.if %pred_kv -> ({vec4_ty}) {{")
         lines.append("              %mul_k = arith.muli %kv, %cHD : index")
         lines.append("              %idx_k = arith.addi %mul_k, %d : index")
-        lines.append(f"              %kvv = memref.load {arg_ssa[k_name]}[%idx_k] : {k_memref}")
-        lines.append("              scf.yield %kvv : f32")
+        lines.append(f"              %kvv = vector.load {arg_ssa[k_name]}[%idx_k] : {k_memref}, {vec4_ty}")
+        lines.append(f"              scf.yield %kvv : {vec4_ty}")
         lines.append("            } else {")
-        lines.append("              scf.yield %c0f : f32")
+        lines.append(f"              %z = vector.splat %c0f : {vec4_ty}")
+        lines.append(f"              scf.yield %z : {vec4_ty}")
         lines.append("            }")
-        lines.append("            %v_val = scf.if %pred_kv -> (f32) {")
+        lines.append(f"            %v_vec = scf.if %pred_kv -> ({vec4_ty}) {{")
         lines.append("              %mul_v = arith.muli %kv, %cHD : index")
         lines.append("              %idx_v = arith.addi %mul_v, %d : index")
-        lines.append(f"              %vvv = memref.load {arg_ssa[v_name]}[%idx_v] : {v_memref}")
-        lines.append("              scf.yield %vvv : f32")
+        lines.append(f"              %vvv = vector.load {arg_ssa[v_name]}[%idx_v] : {v_memref}, {vec4_ty}")
+        lines.append(f"              scf.yield %vvv : {vec4_ty}")
         lines.append("            } else {")
-        lines.append("              scf.yield %c0f : f32")
+        lines.append(f"              %z = vector.splat %c0f : {vec4_ty}")
+        lines.append(f"              scf.yield %z : {vec4_ty}")
         lines.append("            }")
-        lines.append("            %sh_k = arith.addi %cOffK, %i : index")
-        lines.append(f"            memref.store %k_val, %sh[%sh_k] : {shared_global_memref_ty}")
-        lines.append("            %sh_v = arith.addi %cOffV, %i : index")
-        lines.append(f"            memref.store %v_val, %sh[%sh_v] : {shared_global_memref_ty}")
+        lines.append("            %i4 = arith.muli %vi, %c4_idx : index")
+        lines.append("            %sh_k = arith.addi %cOffK, %i4 : index")
+        lines.append(f"            vector.store %k_vec, %sh[%sh_k] : {shared_global_memref_ty}, {vec4_ty}")
+        lines.append("            %sh_v = arith.addi %cOffV, %i4 : index")
+        lines.append(f"            vector.store %v_vec, %sh[%sh_v] : {shared_global_memref_ty}, {vec4_ty}")
         lines.append("          }")
         lines.append("          gpu.barrier")
 
@@ -16624,9 +16642,16 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
         sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
 
-        block_x = 256
-        block_m = 8
-        block_kv = 16
+        # Allow limited tuning via shape_bindings (tuning_db). Defaults preserve the
+        # historical v3 behavior (block_m=8, block_kv=16 => 256 threads).
+        block_m = int(bindings.get("ATTN_FWD_BLOCK_M") or 8)
+        if block_m not in (4, 8):
+            block_m = 8
+        block_x = int(block_m) * 32
+        req_block_kv = int(bindings.get("ATTN_FWD_BLOCK_KV") or 16)
+        if req_block_kv not in (16, 32):
+            req_block_kv = 16
+        block_kv = int(req_block_kv)
         grid_x = (int(q_ctx) + int(block_m) - 1) // int(block_m)
         grid_y = int(z_dim) * int(h_dim)
         launch_override = {"block": [int(block_x), 1, 1], "grid": [int(grid_x), int(grid_y), 1]}
