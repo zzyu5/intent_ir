@@ -583,6 +583,7 @@ def _stabilize_near_threshold_ratio(
             "latency_ms": _median_metric(0, "latency_ms"),
             "capture_ms": _median_metric(0, "capture_ms"),
             "replay_ms": _median_metric(0, "replay_ms"),
+            "replay_ms_total": _median_metric(0, "replay_ms_total"),
         }
     )
     intent_out.update(
@@ -591,6 +592,7 @@ def _stabilize_near_threshold_ratio(
             "latency_ms": _median_metric(1, "latency_ms"),
             "capture_ms": _median_metric(1, "capture_ms"),
             "replay_ms": _median_metric(1, "replay_ms"),
+            "replay_ms_total": _median_metric(1, "replay_ms_total"),
         }
     )
     ratio_new = float(intent_qps / native_qps)
@@ -2525,18 +2527,42 @@ def _bench_kernel(
     ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
     native_latency_ms = float(native_bench["latency_ms"])
     intent_latency_ms = float(intent_bench["latency_ms"])
+    native_replay_total_ms = float(native_bench.get("replay_ms_total") or 0.0)
+    intent_replay_total_ms = float(intent_bench.get("replay_ms_total") or 0.0)
     if graph_enabled:
-        # Extremely small graph replay times can make ratios unstable. Before
-        # skipping, re-measure with higher iters to improve timer resolution.
-        # Also guard against effectively-empty native graph captures where native
-        # replay latency is in sub-microsecond range and ratio becomes meaningless.
-        native_too_fast = native_latency_ms < 0.001
-        if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
-            boosted_iters = max(int(iters) * 10, 2000)
+        # Extremely small graph replay totals can make ratios unstable. Before skipping,
+        # re-measure with higher iters to improve timer resolution. Use total replay
+        # time (iters * per-iter) rather than per-iter latency: boosting iters does
+        # not change `latency_ms`, only `replay_ms_total`.
+        min_total_ms = 2.0
+        target_total_ms = 10.0
+        max_total = float(max(native_replay_total_ms, intent_replay_total_ms))
+        min_total = float(min(native_replay_total_ms, intent_replay_total_ms))
+        native_empty = native_replay_total_ms < 0.001
+        intent_empty = intent_replay_total_ms < 0.001
+        if native_empty or intent_empty or min_total < float(min_total_ms):
+            # Scale iters to hit a stable wall-clock budget, but keep an upper bound
+            # to avoid runaway on empty/degenerate graphs.
+            if max_total > 0.0:
+                scale = int(math.ceil(float(target_total_ms) / float(max_total)))
+                boosted_iters = max(int(iters) * max(1, scale), 2000)
+            else:
+                boosted_iters = max(int(iters) * 10, 2000)
+            boosted_iters = min(int(boosted_iters), 20000)
             if boosted_iters != int(iters):
                 try:
-                    native_bench_boost = _bench_graph(native_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
-                    intent_bench_boost = _bench_graph(intent_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
+                    native_bench_boost = _bench_graph(
+                        native_fn,
+                        warmup=max(1, int(warmup)),
+                        iters=boosted_iters,
+                        repeats=max(2, int(repeats)),
+                    )
+                    intent_bench_boost = _bench_graph(
+                        intent_fn,
+                        warmup=max(1, int(warmup)),
+                        iters=boosted_iters,
+                        repeats=max(2, int(repeats)),
+                    )
                     qps_native = float(native_bench_boost["qps"])
                     qps_intentir = float(intent_bench_boost["qps"])
                     ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
@@ -2544,12 +2570,18 @@ def _bench_kernel(
                     intent_latency_ms = float(intent_bench_boost["latency_ms"])
                     native_bench = native_bench_boost
                     intent_bench = intent_bench_boost
+                    native_replay_total_ms = float(native_bench.get("replay_ms_total") or 0.0)
+                    intent_replay_total_ms = float(intent_bench.get("replay_ms_total") or 0.0)
                     row["retimed_iters"] = int(boosted_iters)
                 except Exception:
                     # Keep original measurements and fall through to skip decision.
                     pass
-            native_too_fast = native_latency_ms < 0.001
-            if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
+
+            max_total = float(max(native_replay_total_ms, intent_replay_total_ms))
+            min_total = float(min(native_replay_total_ms, intent_replay_total_ms))
+            native_empty = native_replay_total_ms < 0.001
+            intent_empty = intent_replay_total_ms < 0.001
+            if native_empty or intent_empty or min_total < float(min_total_ms):
                 row.update(
                     {
                         "qps_native": float(qps_native),
@@ -2561,11 +2593,13 @@ def _bench_kernel(
                         "capture_ms_intentir": float(intent_bench["capture_ms"]),
                         "replay_ms_native": float(native_bench["replay_ms"]),
                         "replay_ms_intentir": float(intent_bench["replay_ms"]),
+                        "replay_ms_total_native": float(native_replay_total_ms),
+                        "replay_ms_total_intentir": float(intent_replay_total_ms),
                         "reason_code": "measurement_unreliable",
                         "reason_detail": (
                             "graph replay below reliable timer resolution "
-                            f"(native_ms={native_latency_ms:.6f}, intentir_ms={intent_latency_ms:.6f}, "
-                            "native_min=0.001000, max_min=0.010000)"
+                            f"(native_total_ms={native_replay_total_ms:.6f}, intentir_total_ms={intent_replay_total_ms:.6f}, "
+                            f"min_total_ms={float(min_total_ms):.6f})"
                         ),
                         "skip_reason": "below_timer_resolution",
                         "count_in_denominator": False,
@@ -2609,6 +2643,8 @@ def _bench_kernel(
             "capture_ms_intentir": float(intent_bench["capture_ms"]),
             "replay_ms_native": float(native_bench["replay_ms"]),
             "replay_ms_intentir": float(intent_bench["replay_ms"]),
+            "replay_ms_total_native": float(native_bench.get("replay_ms_total") or 0.0),
+            "replay_ms_total_intentir": float(intent_bench.get("replay_ms_total") or 0.0),
             "reason_code": ("ok" if ratio >= float(threshold) else "gpu_perf_below_threshold"),
             "reason_detail": (
                 f"qps_ratio={ratio:.4f} threshold={float(threshold):.4f}"
