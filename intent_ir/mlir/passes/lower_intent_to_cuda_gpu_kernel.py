@@ -8748,6 +8748,15 @@ def lower_intent_to_cuda_gpu_kernel(
 
         ept = int((int(red_n) + int(block_threads) - 1) // int(block_threads))
         unroll_tile = bool(int(red_n) <= 2048 and int(ept) <= 8)
+        softmax_vec4_enabled = bool(
+            intent_name == "ai_bench_softmax"
+            and int(bindings.get("SOFTMAX_VEC4") or 0) == 1
+            and int(block_threads) == 256
+            and int(ept) == 4
+            and bool(unroll_tile)
+        )
+        if softmax_vec4_enabled:
+            kernel_kind = "row_softmax_axis1_vec4_v2"
         # Cache exp(x-max) in shared memory only for the generic (non-unrolled)
         # path; the unrolled path keeps EPT values in registers.
         use_exp_shmem_cache = bool((not unroll_tile) and int(red_n) <= 2048)
@@ -8771,6 +8780,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %c16 = arith.constant 16 : i32")
         lines.append("      %c8 = arith.constant 8 : i32")
         lines.append("      %c4 = arith.constant 4 : i32")
+        if softmax_vec4_enabled:
+            lines.append("      %c3 = arith.constant 3 : i32")
         lines.append("      %c2 = arith.constant 2 : i32")
         lines.append("      %c1 = arith.constant 1 : i32")
         lines.append(f"      %cWarps = arith.constant {int(warps)} : index")
@@ -8794,43 +8805,119 @@ def lower_intent_to_cuda_gpu_kernel(
         tile_exps: list[str] = []
         max_seed = "%partial_max"
         if unroll_tile:
-            # EPT register tile: v[i] per lane, no exp shmem cache required.
-            max_cur_local = "%neg_inf"
-            # Ragged optimization: for the first (red_n // block_threads) tiles,
-            # all lanes are in-bounds and we can eliminate per-element bounds
-            # checks. Only the remainder tile needs `ci < N` predicates.
-            full_tiles = int(int(red_n) // int(block_threads))
-            rem = int(int(red_n) - int(full_tiles) * int(block_threads))
-            for i in range(int(ept)):
-                off = int(i) * int(block_threads)
-                if int(i) == 0:
-                    ci = "%tid"
+            if softmax_vec4_enabled:
+                # ai_bench_softmax is a "ragged" power-of-two softmax: C=781 is padded
+                # to 1024 elements. Use a vec4 load/store mapping to reduce global
+                # memory instruction count: one thread handles 4 contiguous columns.
+                vec_width = 4
+                full_elems = int((int(red_n) // int(vec_width)) * int(vec_width))
+                tail_elems = int(int(red_n) - int(full_elems))
+                cV = "%cV_sm_v4"
+                cFull = "%cFull_sm_v4"
+                ci_base = "%ci_base_sm_v4"
+                pred_full = "%pred_full_sm_v4"
+                pred_tail = "%pred_tail_sm_v4"
+                idx_base = "%idx_base_sm_v4"
+                vvec = "%vvec_sm_v4"
+                lines.append(f"        {cV} = arith.constant {int(vec_width)} : index")
+                lines.append(f"        {cFull} = arith.constant {int(full_elems)} : index")
+                lines.append(f"        {ci_base} = arith.muli %tid, {cV} : index")
+                lines.append(f"        {pred_full} = arith.cmpi ult, {ci_base}, {cFull} : index")
+                if tail_elems > 0:
+                    lines.append(f"        {pred_tail} = arith.cmpi eq, {ci_base}, {cFull} : index")
                 else:
-                    c_off = f"%cOff_t{i}"
-                    ci = f"%ci_t{i}"
-                    lines.append(f"        {c_off} = arith.constant {int(off)} : index")
-                    lines.append(f"        {ci} = arith.addi %tid, {c_off} : index")
-                idx = f"%idx_t{i}"
-                v = f"%v_t{i}"
-                tmax = f"%tmax_t{i}"
-                lines.append(f"        {idx} = arith.addi %base, {ci} : index")
-                if int(i) < int(full_tiles):
-                    lines.append(f"        {v} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
-                    tile_entries.append(("", str(idx), str(v)))
+                    lines.append(f"        {pred_tail} = arith.constant false")
+                lines.append(f"        {idx_base} = arith.addi %base, {ci_base} : index")
+
+                # Load 4 contiguous f32 values via vector.load on full tiles; for the
+                # tail (at most 3 elements), load scalars under `pred_tail`.
+                vty = "vector<4xf32>"
+                lines.append(f"        {vvec} = scf.if {pred_full} -> ({vty}) {{")
+                lines.append(f"          %v = vector.load {arg_ssa[inp_name]}[{idx_base}] : {in_memref}, {vty}")
+                lines.append(f"          scf.yield %v : {vty}")
+                lines.append("        } else {")
+                if tail_elems > 0:
+                    tails: list[str] = []
+                    for lane in range(int(vec_width)):
+                        if lane < int(tail_elems):
+                            tv = f"%tv_sm_v4_{lane}"
+                            lines.append(f"          {tv} = scf.if {pred_tail} -> (f32) {{")
+                            if lane == 0:
+                                idx = idx_base
+                            else:
+                                c_lane = f"%cLane_sm_v4_{lane}"
+                                idx = f"%idx_sm_v4_{lane}"
+                                lines.append(f"            {c_lane} = arith.constant {int(lane)} : index")
+                                lines.append(f"            {idx} = arith.addi {idx_base}, {c_lane} : index")
+                            lines.append(f"            %x = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                            lines.append("            scf.yield %x : f32")
+                            lines.append("          } else {")
+                            lines.append("            scf.yield %neg_inf : f32")
+                            lines.append("          }")
+                            tails.append(tv)
+                        else:
+                            tails.append("%neg_inf")
+                    lines.append(f"          %v_tail = vector.from_elements {', '.join(tails)} : {vty}")
+                    lines.append(f"          scf.yield %v_tail : {vty}")
                 else:
-                    pred = f"%pred_t{i}"
-                    xv = f"%xv_t{i}"
-                    lines.append(f"        {pred} = arith.cmpi ult, {ci}, %cN : index")
-                    lines.append(f"        {v} = scf.if {pred} -> (f32) {{")
-                    lines.append(f"          {xv} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
-                    lines.append(f"          scf.yield {xv} : f32")
-                    lines.append("        } else {")
-                    lines.append("          scf.yield %neg_inf : f32")
-                    lines.append("        }")
-                    tile_entries.append((str(pred), str(idx), str(v)))
-                lines.append(f"        {tmax} = arith.maximumf {max_cur_local}, {v}{fm} : f32")
-                max_cur_local = str(tmax)
-            max_seed = str(max_cur_local)
+                    lines.append(f"          %v_tail = vector.splat %neg_inf : {vty}")
+                    lines.append(f"          scf.yield %v_tail : {vty}")
+                lines.append("        }")
+
+                v0 = "%v_sm_v4_0"
+                v1 = "%v_sm_v4_1"
+                v2 = "%v_sm_v4_2"
+                v3 = "%v_sm_v4_3"
+                lines.append(f"        {v0} = vector.extractelement {vvec}[%c0_i32] : {vty}")
+                lines.append(f"        {v1} = vector.extractelement {vvec}[%c1] : {vty}")
+                lines.append(f"        {v2} = vector.extractelement {vvec}[%c2] : {vty}")
+                lines.append(f"        {v3} = vector.extractelement {vvec}[%c3] : {vty}")
+                tile_entries.extend([("", "", v0), ("", "", v1), ("", "", v2), ("", "", v3)])
+                tmax0 = "%tmax_sm_v4_0"
+                tmax1 = "%tmax_sm_v4_1"
+                tmax2 = "%tmax_sm_v4_2"
+                lines.append(f"        {tmax0} = arith.maximumf {v0}, {v1}{fm} : f32")
+                lines.append(f"        {tmax1} = arith.maximumf {tmax0}, {v2}{fm} : f32")
+                lines.append(f"        {tmax2} = arith.maximumf {tmax1}, {v3}{fm} : f32")
+                max_seed = tmax2
+            else:
+                # EPT register tile: v[i] per lane, no exp shmem cache required.
+                max_cur_local = "%neg_inf"
+                # Ragged optimization: for the first (red_n // block_threads) tiles,
+                # all lanes are in-bounds and we can eliminate per-element bounds
+                # checks. Only the remainder tile needs `ci < N` predicates.
+                full_tiles = int(int(red_n) // int(block_threads))
+                rem = int(int(red_n) - int(full_tiles) * int(block_threads))
+                for i in range(int(ept)):
+                    off = int(i) * int(block_threads)
+                    if int(i) == 0:
+                        ci = "%tid"
+                    else:
+                        c_off = f"%cOff_t{i}"
+                        ci = f"%ci_t{i}"
+                        lines.append(f"        {c_off} = arith.constant {int(off)} : index")
+                        lines.append(f"        {ci} = arith.addi %tid, {c_off} : index")
+                    idx = f"%idx_t{i}"
+                    v = f"%v_t{i}"
+                    tmax = f"%tmax_t{i}"
+                    lines.append(f"        {idx} = arith.addi %base, {ci} : index")
+                    if int(i) < int(full_tiles):
+                        lines.append(f"        {v} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                        tile_entries.append(("", str(idx), str(v)))
+                    else:
+                        pred = f"%pred_t{i}"
+                        xv = f"%xv_t{i}"
+                        lines.append(f"        {pred} = arith.cmpi ult, {ci}, %cN : index")
+                        lines.append(f"        {v} = scf.if {pred} -> (f32) {{")
+                        lines.append(f"          {xv} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                        lines.append(f"          scf.yield {xv} : f32")
+                        lines.append("        } else {")
+                        lines.append("          scf.yield %neg_inf : f32")
+                        lines.append("        }")
+                        tile_entries.append((str(pred), str(idx), str(v)))
+                    lines.append(f"        {tmax} = arith.maximumf {max_cur_local}, {v}{fm} : f32")
+                    max_cur_local = str(tmax)
+                max_seed = str(max_cur_local)
         else:
             lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
             lines.append("        %partial_max = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %init_max) -> (f32) {")
@@ -8886,30 +8973,86 @@ def lower_intent_to_cuda_gpu_kernel(
         # Compute per-lane partial sum.
         sum_seed = "%partial_sum"
         if unroll_tile:
-            sum_cur_local = "%c0f"
-            for i, (pred, _idx, v) in enumerate(tile_entries):
-                e = f"%e_t{i}"
-                xc = f"%xc_t{i}"
-                xcl2 = f"%xcl2_t{i}"
-                ev = f"%ev_t{i}"
-                tsum = f"%tsum_t{i}"
-                if str(pred).strip():
-                    lines.append(f"        {e} = scf.if {pred} -> (f32) {{")
+            if softmax_vec4_enabled:
+                # Use `pred_full_sm_v4/pred_tail_sm_v4` to avoid computing exp() for
+                # out-of-bounds elements (C is ragged vs 4-wide vectors).
+                pred_full = "%pred_full_sm_v4"
+                pred_tail = "%pred_tail_sm_v4"
+                v0 = "%v_sm_v4_0"
+                v1 = "%v_sm_v4_1"
+                v2 = "%v_sm_v4_2"
+                v3 = "%v_sm_v4_3"
+                e0 = "%e_sm_v4_0"
+                e1 = "%e_sm_v4_1"
+                e2 = "%e_sm_v4_2"
+                e3 = "%e_sm_v4_3"
+                tail_elems = int(int(red_n) - (int(red_n) // 4) * 4)
+
+                lines.append(f"        {e0}, {e1}, {e2}, {e3} = scf.if {pred_full} -> (f32, f32, f32, f32) {{")
+                for lane, v in enumerate([v0, v1, v2, v3]):
+                    xc = f"%xc_sm_v4_{lane}"
+                    xcl2 = f"%xcl2_sm_v4_{lane}"
                     lines.append(f"          {xc} = arith.subf {v}, %maxv{fm} : f32")
                     lines.append(f"          {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
-                    lines.append(f"          {ev} = math.exp2 {xcl2}{fm} : f32")
-                    lines.append(f"          scf.yield {ev} : f32")
-                    lines.append("        } else {")
-                    lines.append("          scf.yield %c0f : f32")
-                    lines.append("        }")
-                else:
-                    lines.append(f"        {xc} = arith.subf {v}, %maxv{fm} : f32")
-                    lines.append(f"        {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
-                    lines.append(f"        {e} = math.exp2 {xcl2}{fm} : f32")
-                lines.append(f"        {tsum} = arith.addf {sum_cur_local}, {e}{fm} : f32")
-                sum_cur_local = str(tsum)
-                tile_exps.append(str(e))
-            sum_seed = str(sum_cur_local)
+                    lines.append(f"          %ev_sm_v4_{lane} = math.exp2 {xcl2}{fm} : f32")
+                lines.append(
+                    "          scf.yield "
+                    + ", ".join([f"%ev_sm_v4_{i}" for i in range(4)])
+                    + " : f32, f32, f32, f32"
+                )
+                lines.append("        } else {")
+                # Tail path: compute only the remainder lanes under `pred_tail`.
+                tail_es: list[str] = []
+                for lane, v in enumerate([v0, v1, v2, v3]):
+                    if lane < int(tail_elems) and int(tail_elems) > 0:
+                        et = f"%et_sm_v4_{lane}"
+                        xc = f"%xc_t_sm_v4_{lane}"
+                        xcl2 = f"%xcl2_t_sm_v4_{lane}"
+                        ev = f"%ev_t_sm_v4_{lane}"
+                        lines.append(f"          {et} = scf.if {pred_tail} -> (f32) {{")
+                        lines.append(f"            {xc} = arith.subf {v}, %maxv{fm} : f32")
+                        lines.append(f"            {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
+                        lines.append(f"            {ev} = math.exp2 {xcl2}{fm} : f32")
+                        lines.append(f"            scf.yield {ev} : f32")
+                        lines.append("          } else {")
+                        lines.append("            scf.yield %c0f : f32")
+                        lines.append("          }")
+                        tail_es.append(et)
+                    else:
+                        tail_es.append("%c0f")
+                lines.append("          scf.yield " + ", ".join(tail_es) + " : f32, f32, f32, f32")
+                lines.append("        }")
+
+                lines.append(f"        %sum_sm_v4_01 = arith.addf {e0}, {e1}{fm} : f32")
+                lines.append(f"        %sum_sm_v4_23 = arith.addf {e2}, {e3}{fm} : f32")
+                lines.append(f"        %partial_sum = arith.addf %sum_sm_v4_01, %sum_sm_v4_23{fm} : f32")
+                tile_exps.extend([e0, e1, e2, e3])
+                sum_seed = "%partial_sum"
+            else:
+                sum_cur_local = "%c0f"
+                for i, (pred, _idx, v) in enumerate(tile_entries):
+                    e = f"%e_t{i}"
+                    xc = f"%xc_t{i}"
+                    xcl2 = f"%xcl2_t{i}"
+                    ev = f"%ev_t{i}"
+                    tsum = f"%tsum_t{i}"
+                    if str(pred).strip():
+                        lines.append(f"        {e} = scf.if {pred} -> (f32) {{")
+                        lines.append(f"          {xc} = arith.subf {v}, %maxv{fm} : f32")
+                        lines.append(f"          {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
+                        lines.append(f"          {ev} = math.exp2 {xcl2}{fm} : f32")
+                        lines.append(f"          scf.yield {ev} : f32")
+                        lines.append("        } else {")
+                        lines.append("          scf.yield %c0f : f32")
+                        lines.append("        }")
+                    else:
+                        lines.append(f"        {xc} = arith.subf {v}, %maxv{fm} : f32")
+                        lines.append(f"        {xcl2} = arith.mulf {xc}, %cLOG2E{fm} : f32")
+                        lines.append(f"        {e} = math.exp2 {xcl2}{fm} : f32")
+                    lines.append(f"        {tsum} = arith.addf {sum_cur_local}, {e}{fm} : f32")
+                    sum_cur_local = str(tsum)
+                    tile_exps.append(str(e))
+                sum_seed = str(sum_cur_local)
         else:
             lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
             lines.append("          %idx = arith.addi %base, %j : index")
@@ -8967,16 +9110,53 @@ def lower_intent_to_cuda_gpu_kernel(
 
         # final output
         if unroll_tile:
-            for i, (pred, idx, _v) in enumerate(tile_entries):
-                e = tile_exps[int(i)]
-                if str(pred).strip():
-                    lines.append(f"        scf.if {pred} {{")
-                    lines.append(f"          %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
-                    lines.append(f"          memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
-                    lines.append("        }")
-                else:
-                    lines.append(f"        %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
-                    lines.append(f"        memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+            if softmax_vec4_enabled:
+                pred_full = "%pred_full_sm_v4"
+                pred_tail = "%pred_tail_sm_v4"
+                idx_base = "%idx_base_sm_v4"
+                vty = "vector<4xf32>"
+                e0, e1, e2, e3 = tile_exps
+                tail_elems = int(int(red_n) - (int(red_n) // 4) * 4)
+
+                lines.append(f"        scf.if {pred_full} {{")
+                lines.append(f"          %o_sm_v4_0 = arith.mulf {e0}, %inv{fm} : f32")
+                lines.append(f"          %o_sm_v4_1 = arith.mulf {e1}, %inv{fm} : f32")
+                lines.append(f"          %o_sm_v4_2 = arith.mulf {e2}, %inv{fm} : f32")
+                lines.append(f"          %o_sm_v4_3 = arith.mulf {e3}, %inv{fm} : f32")
+                lines.append(
+                    f"          %ov_sm_v4 = vector.from_elements %o_sm_v4_0, %o_sm_v4_1, %o_sm_v4_2, %o_sm_v4_3 : {vty}"
+                )
+                lines.append(
+                    f"          vector.store %ov_sm_v4, {arg_ssa[out_name2]}[{idx_base}] : {out_memref}, {vty}"
+                )
+                lines.append("        } else {")
+                if tail_elems > 0:
+                    lines.append(f"          scf.if {pred_tail} {{")
+                    # Only store the tail elements (at most 3).
+                    for lane in range(int(tail_elems)):
+                        if lane == 0:
+                            idx = idx_base
+                        else:
+                            c_lane = f"%cLane_store_sm_v4_{lane}"
+                            idx = f"%idx_store_sm_v4_{lane}"
+                            lines.append(f"            {c_lane} = arith.constant {int(lane)} : index")
+                            lines.append(f"            {idx} = arith.addi {idx_base}, {c_lane} : index")
+                        o = f"%o_tail_sm_v4_{lane}"
+                        lines.append(f"            {o} = arith.mulf {tile_exps[int(lane)]}, %inv{fm} : f32")
+                        lines.append(f"            memref.store {o}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+                    lines.append("          }")
+                lines.append("        }")
+            else:
+                for i, (pred, idx, _v) in enumerate(tile_entries):
+                    e = tile_exps[int(i)]
+                    if str(pred).strip():
+                        lines.append(f"        scf.if {pred} {{")
+                        lines.append(f"          %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
+                        lines.append(f"          memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+                        lines.append("        }")
+                    else:
+                        lines.append(f"        %o_t{i} = arith.mulf {e}, %inv{fm} : f32")
+                        lines.append(f"        memref.store %o_t{i}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
         else:
             lines.append("        scf.for %j = %tid to %cN step %bdim {")
             lines.append("          %idx = arith.addi %base, %j : index")
