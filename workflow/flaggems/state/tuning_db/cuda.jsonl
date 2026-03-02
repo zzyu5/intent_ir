@@ -6,13 +6,13 @@
 
 # Attention kernel_kind selection (arch-specific)
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm90","bindings":{"ATTN_BLOCK_KV":64},"kernel_kind":"attn2d_causal_softmax_v6","note":"sweep: sm90 v6(bkv64) ratio~0.94 @ Q=64,KV=64,HD=64"}
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm120","bindings":{"ATTN_BLOCK_KV":64},"kernel_kind":"attn2d_causal_softmax_v6","note":"sweep: sm120 v6(bkv64) ratio~0.67 @ Q=64,KV=64,HD=64"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm120","bindings":{"ATTN_BLOCK_KV":64,"ATTN_SCORE_WARPS":4},"kernel_kind":"attn2d_causal_softmax_v6","note":"sweep: sm120a v6(bkv64,score_warps=4) ratio~0.83 @ Q=64,KV=64,HD=64"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm90","bindings":{},"kernel_kind":"attn2d_causal_softmax_v4","note":"sweep: sm90 v4 best (ratio~0.91 @ Q=16,KV=16,HD=16)"}
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm120","bindings":{},"kernel_kind":"attn2d_causal_softmax_v4","note":"sweep: sm120 v4 best (ratio~1.24 @ Q=16,KV=16,HD=16)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm120","bindings":{"ATTN_BLOCK_M":4,"ATTN_BLOCK_KV":32},"kernel_kind":"attn2d_causal_softmax_v4","note":"sweep: sm120a v4(BM4,BKV32) ratio~0.98 @ Q=64,KV=64,HD=64"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"_attn_fwd","arch":"sm90","bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32},"kernel_kind":"attn_fwd_tiled_v3","note":"sweep: sm90 BM8 BKV32 ratio~0.93 @ Q=64,KV=64,HD=64"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"_attn_fwd","arch":"sm120","bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32},"kernel_kind":"attn_fwd_tiled_v3","note":"sweep: sm120 BM8 BKV32 ratio~0.86 @ Q=64,KV=64,HD=64"}
 
 # TensorCore matmul (WMMA TF32, global-load) focus tuning
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm89","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32},"kernel_kind":"matmul_mma_tf32_global_v1","note":"wmma tf32 global-load (local sm89 ratio>1.0)"}
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm90","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":128},"kernel_kind":"matmul_mma_tf32_global_v1","note":"wmma tf32 global-load (H100 sm90 ratio~0.895)"}
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm120","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy (5090D sm120a ratio~1.00 @ M256,N512,K256)"} 
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm90","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":128,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy (H100 sm90 ratio~1.05 @ M256,N512,K256)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm120","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy (5090D sm120a ratio~1.00 @ M256,N512,K256)"}
