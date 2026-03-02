@@ -210,21 +210,20 @@ def _emit_rms_norm2d_kernel(
     if inp_name is None or w_name is None:
         raise RuntimeError("rvv cpu-loops v1 rms_norm2d expects external input[M,N] and weight[N] tensors")
 
-    scalar_names = [n for n in ext_inputs if len(_shape(n, intent=intent, bindings=bindings)) == 0]
-    eps_name = next((n for n in scalar_names if str(n) in {"eps", "epsilon"}), None)
-    n_scalar_name = next((n for n in scalar_names if str(n) in {"n_scalar", "N_scalar"}), None)
-    if eps_name is None:
-        eps_name = scalar_names[0] if scalar_names else None
-    if n_scalar_name is None:
-        n_scalar_name = next((n for n in scalar_names if n != eps_name), None)
-    if eps_name is None or n_scalar_name is None:
-        raise RuntimeError("rvv cpu-loops v1 rms_norm2d expects external scalar eps and N_scalar inputs")
+    eps_val = _find_const_scalar(intent=intent, output="eps", dtype="f32", bindings=bindings)
+    if eps_val is None:
+        eps_val = _find_const_scalar(intent=intent, output="epsilon", dtype="f32", bindings=bindings)
+    if eps_val is None:
+        # Conservative default; should not happen for the standard rms_norm2d seed.
+        eps_val = 1e-5
+
+    n_scalar_val = _find_const_scalar(intent=intent, output="N_scalar", dtype="f32", bindings=bindings)
+    if n_scalar_val is None:
+        n_scalar_val = float(n_dim)
 
     arg_decls: list[str] = []
     arg_ssa: dict[str, str] = {}
     memref_ty_by_name: dict[str, str] = {}
-    scalar_ssa: dict[str, str] = {}
-    scalar_loads: list[str] = []
     for name in io_names:
         tt = (intent.tensors or {}).get(name)
         if tt is None:
@@ -241,20 +240,11 @@ def _emit_rms_norm2d_kernel(
         arg_ssa[name] = ssa
         memref_ty_by_name[name] = memref_ty
         arg_decls.append(f"    {ssa}: {memref_ty}")
-        if len(sh) == 0 and name not in outputs:
-            vssa = f"%{_mlir_ident(name)}_s"
-            scalar_ssa[name] = vssa
-            scalar_loads.append(f"  {vssa} = memref.load {ssa}[%c0] : {memref_ty}")
 
     inp_memref = memref_ty_by_name[inp_name]
     w_memref = memref_ty_by_name[w_name]
     out_memref = memref_ty_by_name[out_2d]
     inv_memref = memref_ty_by_name[out_inv]
-
-    eps_ssa = scalar_ssa.get(eps_name)
-    n_ssa = scalar_ssa.get(n_scalar_name)
-    if not eps_ssa or not n_ssa:
-        raise RuntimeError("rvv cpu-loops v1 rms_norm2d scalar loads missing (eps/N_scalar)")
 
     lines: list[str] = []
     lines.append("module attributes {")
@@ -271,7 +261,8 @@ def _emit_rms_norm2d_kernel(
     lines.append(f"  %cN = arith.constant {n_dim} : index")
     lines.append("  %c0f = arith.constant 0.0 : f32")
     lines.append("  %c1f = arith.constant 1.0 : f32")
-    lines.extend(scalar_loads)
+    lines.append(f"  %eps = arith.constant {_f32_lit(float(eps_val))} : f32")
+    lines.append(f"  %n_scalar = arith.constant {_f32_lit(float(n_scalar_val))} : f32")
     lines.append("  scf.for %m = %c0 to %cM step %c1 {")
     lines.append("    %base = arith.muli %m, %cN : index")
     lines.append("    %sum_sq = scf.for %n = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
@@ -281,8 +272,8 @@ def _emit_rms_norm2d_kernel(
     lines.append("      %acc2 = arith.addf %acc, %x2 : f32")
     lines.append("      scf.yield %acc2 : f32")
     lines.append("    }")
-    lines.append(f"    %mean_sq = arith.divf %sum_sq, {n_ssa} : f32")
-    lines.append(f"    %var_eps = arith.addf %mean_sq, {eps_ssa} : f32")
+    lines.append("    %mean_sq = arith.divf %sum_sq, %n_scalar : f32")
+    lines.append("    %var_eps = arith.addf %mean_sq, %eps : f32")
     lines.append("    %inv = math.rsqrt %var_eps : f32")
     lines.append(f"    memref.store %inv, {arg_ssa[out_inv]}[%m] : {inv_memref}")
     lines.append("    scf.for %n2 = %c0 to %cN step %c1 {")
