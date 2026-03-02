@@ -5892,6 +5892,7 @@ def lower_intent_to_cuda_gpu_kernel(
         allowed_by_intent: dict[str, set[str]] = {
             "_attn_fwd": {"attn_fwd_tiled_v3", "attn_fwd_softmax_v2", "attn_fwd_softmax_v1"},
             "flash_attention2d": {
+                "attn2d_causal_softmax_mma_tf32_v1",
                 "attn2d_causal_softmax_v5",
                 "attn2d_causal_softmax_v4",
                 "attn2d_causal_softmax_v3",
@@ -5931,6 +5932,13 @@ def lower_intent_to_cuda_gpu_kernel(
                     f"intentir_kernel_kind_override={kernel_kind_override!r} requires flash_attention2d matcher; "
                     "got no attn2d_v1 pattern match"
                 )
+            if kernel_kind_override == "attn2d_causal_softmax_mma_tf32_v1":
+                if intent_name != "flash_attention2d":
+                    raise RuntimeError(
+                        "attn2d_causal_softmax_mma_tf32_v1 override is only supported for flash_attention2d"
+                    )
+                if int(attn2d_v1.get("HEAD_DIM") or 0) != 64:
+                    raise RuntimeError("attn2d_causal_softmax_mma_tf32_v1 requires HEAD_DIM==64")
             if kernel_kind_override == "attn2d_causal_softmax_v5":
                 if intent_name != "flash_attention2d":
                     raise RuntimeError("attn2d_causal_softmax_v5 override is only supported for flash_attention2d")
@@ -13383,6 +13391,457 @@ def lower_intent_to_cuda_gpu_kernel(
         )
         for l in body_lines:
             lines.append("  " + l)
+        lines.append("        }")
+        lines.append("      }")
+    elif (
+        attn2d_v1 is not None
+        and intent_name == "flash_attention2d"
+        and int(attn2d_v1.get("HEAD_DIM") or 0) == 64
+        and (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_mma_tf32_v1")
+    ):
+        # Perf-first: TensorCore (WMMA TF32) flash attention, using tile-online
+        # softmax over KV tiles. This targets large-GPU perf (sm90/sm120) where
+        # scalar+shuffle reductions become the bottleneck.
+        #
+        # Constraints:
+        # - HEAD_DIM == 64 (matches triton-native canonical shapes)
+        # - KV tiling fixed to 16 to align with WMMA 16x16 tiles
+        kernel_kind = "attn2d_causal_softmax_mma_tf32_v1"
+        q_name = str(attn2d_v1["Q"])
+        k_name = str(attn2d_v1["K"])
+        v_name = str(attn2d_v1["V"])
+        out_name2 = str(attn2d_v1["out"])
+        sm_scale_name = str(attn2d_v1["sm_scale"])
+        q_ctx = int(attn2d_v1["Q_CTX"])
+        kv_ctx = int(attn2d_v1["KV_CTX"])
+        hd = int(attn2d_v1["HEAD_DIM"])
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        v_memref = str(arg_specs[v_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
+
+        block_m = 64
+        block_kv = 16
+        warps = 16
+        threads = int(warps) * 32
+        grid_x = (int(q_ctx) + int(block_m) - 1) // int(block_m)
+        launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), 1, 1]}
+        cuda_real_mlir_attention_cfg = {
+            "block_x": int(threads),
+            "block_m": int(block_m),
+            "block_kv": int(block_kv),
+            "wmma": "tf32",
+            "score_tile": [int(block_m), int(block_kv)],
+        }
+
+        sh_base = _mlir_ident(kernel_name)
+        sh_q_sym = f"__intentir_sh_{sh_base}_q_f32"
+        sh_acc_sym = f"__intentir_sh_{sh_base}_acc_f32"
+        sh_score_sym = f"__intentir_sh_{sh_base}_score_f32"
+        sh_kt_sym = f"__intentir_sh_{sh_base}_kt_f32"
+        sh_v_sym = f"__intentir_sh_{sh_base}_v_f32"
+        sh_m_sym = f"__intentir_sh_{sh_base}_m_f32"
+        sh_l_sym = f"__intentir_sh_{sh_base}_l_f32"
+        sh_alpha_sym = f"__intentir_sh_{sh_base}_alpha_f32"
+
+        q_sh_ty = f"memref<{int(block_m)}x{int(hd)}xf32, 3>"
+        acc_sh_ty = f"memref<{int(block_m)}x{int(hd)}xf32, 3>"
+        score_sh_ty = f"memref<{int(block_m)}x{int(block_kv)}xf32, 3>"
+        kt_sh_ty = f"memref<{int(hd)}x{int(block_kv)}xf32, 3>"
+        v_sh_ty = f"memref<{int(block_kv)}x{int(hd)}xf32, 3>"
+        ml_sh_ty = f"memref<{int(block_m)}xf32, 3>"
+
+        extra_shared_globals = [
+            (sh_alpha_sym, ml_sh_ty),
+            (sh_l_sym, ml_sh_ty),
+            (sh_m_sym, ml_sh_ty),
+            (sh_v_sym, v_sh_ty),
+            (sh_kt_sym, kt_sh_ty),
+            (sh_score_sym, score_sh_ty),
+            (sh_acc_sym, acc_sh_ty),
+            (sh_q_sym, q_sh_ty),
+        ]
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c4 = arith.constant 4 : index")
+        lines.append("      %c8 = arith.constant 8 : index")
+        lines.append("      %c16 = arith.constant 16 : index")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append(f"      %cBM = arith.constant {int(block_m)} : index")
+        lines.append(f"      %cBK = arith.constant {int(block_kv)} : index")
+        lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+        lines.append(f"      %cQ = arith.constant {int(q_ctx)} : index")
+        lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
+        lines.append(f"      %cThreads = arith.constant {int(threads)} : index")
+        lines.append(f"      %cQElems = arith.constant {int(block_m) * int(hd)} : index")
+        lines.append(f"      %cAccElems = arith.constant {int(block_m) * int(hd)} : index")
+        lines.append(f"      %cKTElems = arith.constant {int(hd) * int(block_kv)} : index")
+        lines.append(f"      %cVElems = arith.constant {int(block_kv) * int(hd)} : index")
+
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+        lines.append(f"      %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
+        lines.append(f"      %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+
+        lines.append(f"      %Qsh = memref.get_global @{sh_q_sym} : {q_sh_ty}")
+        lines.append(f"      %Accsh = memref.get_global @{sh_acc_sym} : {acc_sh_ty}")
+        lines.append(f"      %Scoresh = memref.get_global @{sh_score_sym} : {score_sh_ty}")
+        lines.append(f"      %Ktsh = memref.get_global @{sh_kt_sym} : {kt_sh_ty}")
+        lines.append(f"      %Vsh = memref.get_global @{sh_v_sym} : {v_sh_ty}")
+        lines.append(f"      %msh = memref.get_global @{sh_m_sym} : {ml_sh_ty}")
+        lines.append(f"      %lsh = memref.get_global @{sh_l_sym} : {ml_sh_ty}")
+        lines.append(f"      %alphash = memref.get_global @{sh_alpha_sym} : {ml_sh_ty}")
+
+        lines.append("      %q0 = arith.muli %bid, %cBM : index")
+
+        # Initialize m/l/alpha.
+        lines.append("      scf.for %i = %tid to %cBM step %cThreads {")
+        lines.append("        memref.store %neg_inf, %msh[%i] : " + ml_sh_ty)
+        lines.append("        memref.store %c0f, %lsh[%i] : " + ml_sh_ty)
+        lines.append("        memref.store %c1f, %alphash[%i] : " + ml_sh_ty)
+        lines.append("      }")
+
+        # Load Q block to shared (out-of-range rows are zero-filled).
+        lines.append("      scf.for %qi = %tid to %cQElems step %cThreads {")
+        lines.append("        %qr = arith.divui %qi, %cHD : index")
+        lines.append("        %qd = arith.remui %qi, %cHD : index")
+        lines.append("        %qg = arith.addi %q0, %qr : index")
+        lines.append("        %pred_q = arith.cmpi ult, %qg, %cQ : index")
+        lines.append("        %qv = scf.if %pred_q -> (f32) {")
+        lines.append("          %q_mul = arith.muli %qg, %cHD : index")
+        lines.append("          %q_idx = arith.addi %q_mul, %qd : index")
+        lines.append(f"          %q_val = memref.load {arg_ssa[q_name]}[%q_idx] : {q_memref}")
+        lines.append("          scf.yield %q_val : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        lines.append("        memref.store %qv, %Qsh[%qr, %qd] : " + q_sh_ty)
+        lines.append("      }")
+
+        # Initialize accumulator to zeros.
+        lines.append("      scf.for %ai = %tid to %cAccElems step %cThreads {")
+        lines.append("        %ar = arith.divui %ai, %cHD : index")
+        lines.append("        %ad = arith.remui %ai, %cHD : index")
+        lines.append("        memref.store %c0f, %Accsh[%ar, %ad] : " + acc_sh_ty)
+        lines.append("      }")
+
+        lines.append("      gpu.barrier")
+
+        # KV tile loop (tile-online softmax).
+        lines.append("      scf.for %tile0 = %c0 to %cKV step %cBK {")
+        # Load K^T tile to shared: [D, BK]
+        lines.append("        scf.for %ki = %tid to %cKTElems step %cThreads {")
+        lines.append("          %kd = arith.divui %ki, %cBK : index")
+        lines.append("          %kt = arith.remui %ki, %cBK : index")
+        lines.append("          %kv = arith.addi %tile0, %kt : index")
+        lines.append("          %pred_kv = arith.cmpi ult, %kv, %cKV : index")
+        lines.append("          %kvv = scf.if %pred_kv -> (f32) {")
+        lines.append("            %k_mul = arith.muli %kv, %cHD : index")
+        lines.append("            %k_idx = arith.addi %k_mul, %kd : index")
+        lines.append(f"            %k_val = memref.load {arg_ssa[k_name]}[%k_idx] : {k_memref}")
+        lines.append("            scf.yield %k_val : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lines.append("          memref.store %kvv, %Ktsh[%kd, %kt] : " + kt_sh_ty)
+        lines.append("        }")
+        # Load V tile to shared: [BK, D]
+        lines.append("        scf.for %vi = %tid to %cVElems step %cThreads {")
+        lines.append("          %vt = arith.divui %vi, %cHD : index")
+        lines.append("          %vd = arith.remui %vi, %cHD : index")
+        lines.append("          %kv2 = arith.addi %tile0, %vt : index")
+        lines.append("          %pred_kv2 = arith.cmpi ult, %kv2, %cKV : index")
+        lines.append("          %vv = scf.if %pred_kv2 -> (f32) {")
+        lines.append("            %v_mul = arith.muli %kv2, %cHD : index")
+        lines.append("            %v_idx = arith.addi %v_mul, %vd : index")
+        lines.append(f"            %v_val = memref.load {arg_ssa[v_name]}[%v_idx] : {v_memref}")
+        lines.append("            scf.yield %v_val : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lines.append("          memref.store %vv, %Vsh[%vt, %vd] : " + v_sh_ty)
+        lines.append("        }")
+
+        lines.append("        gpu.barrier")
+
+        # Compute scores = Q @ K^T (WMMA TF32), store dot products in %Scoresh.
+        lines.append("        %warp = arith.divui %tid, %c32 : index")
+        lines.append("        %pred_score_warp = arith.cmpi ult, %warp, %c4 : index")
+        lines.append("        scf.if %pred_score_warp {")
+        lines.append("          %row_w = arith.muli %warp, %c16 : index")
+        lines.append("          %acc0 = gpu.subgroup_mma_constant_matrix %c0f : !gpu.mma_matrix<16x16xf32, \"COp\">")
+        lines.append("          %kk0 = arith.constant 0 : index")
+        lines.append(
+            "          %A0 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk0] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B0 = gpu.subgroup_mma_load_matrix %Ktsh[%kk0, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc1 = gpu.subgroup_mma_compute %A0, %B0, %acc0 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk8 = arith.constant 8 : index")
+        lines.append(
+            "          %A1 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk8] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B1 = gpu.subgroup_mma_load_matrix %Ktsh[%kk8, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc2 = gpu.subgroup_mma_compute %A1, %B1, %acc1 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk16 = arith.constant 16 : index")
+        lines.append(
+            "          %A2 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk16] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B2 = gpu.subgroup_mma_load_matrix %Ktsh[%kk16, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc3 = gpu.subgroup_mma_compute %A2, %B2, %acc2 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk24 = arith.constant 24 : index")
+        lines.append(
+            "          %A3 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk24] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B3 = gpu.subgroup_mma_load_matrix %Ktsh[%kk24, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc4 = gpu.subgroup_mma_compute %A3, %B3, %acc3 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk32 = arith.constant 32 : index")
+        lines.append(
+            "          %A4 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk32] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B4 = gpu.subgroup_mma_load_matrix %Ktsh[%kk32, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc5 = gpu.subgroup_mma_compute %A4, %B4, %acc4 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk40 = arith.constant 40 : index")
+        lines.append(
+            "          %A5 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk40] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B5 = gpu.subgroup_mma_load_matrix %Ktsh[%kk40, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc6 = gpu.subgroup_mma_compute %A5, %B5, %acc5 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk48 = arith.constant 48 : index")
+        lines.append(
+            "          %A6 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk48] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B6 = gpu.subgroup_mma_load_matrix %Ktsh[%kk48, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc7 = gpu.subgroup_mma_compute %A6, %B6, %acc6 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("          %kk56 = arith.constant 56 : index")
+        lines.append(
+            "          %A7 = gpu.subgroup_mma_load_matrix %Qsh[%row_w, %kk56] "
+            "{leadDimension = 64 : index} : "
+            "memref<64x64xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "          %B7 = gpu.subgroup_mma_load_matrix %Ktsh[%kk56, %c0] "
+            "{leadDimension = 16 : index} : "
+            "memref<64x16xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "          %acc8 = gpu.subgroup_mma_compute %A7, %B7, %acc7 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append(
+            "          gpu.subgroup_mma_store_matrix %acc8, %Scoresh[%row_w, %c0] "
+            "{leadDimension = 16 : index} : !gpu.mma_matrix<16x16xf32, \"COp\">, memref<64x16xf32, 3>"
+        )
+        lines.append("        }")
+
+        lines.append("        gpu.barrier")
+
+        # Softmax: compute (m/l) per row and write probs back into %Scoresh.
+        lines.append("        %pred_row = arith.cmpi ult, %tid, %cBM : index")
+        lines.append("        scf.if %pred_row {")
+        lines.append("          %row = arith.addi %tid, %c0 : index")
+        lines.append("          %q = arith.addi %q0, %row : index")
+        lines.append("          %pred_q2 = arith.cmpi ult, %q, %cQ : index")
+        lines.append("          %m_old = memref.load %msh[%row] : " + ml_sh_ty)
+        lines.append("          %l_old = memref.load %lsh[%row] : " + ml_sh_ty)
+        lines.append("          %m_tile = scf.for %t = %c0 to %cBK step %c1 iter_args(%mx = %neg_inf) -> (f32) {")
+        lines.append("            %kv3 = arith.addi %tile0, %t : index")
+        lines.append("            %pred_kv3 = arith.cmpi ult, %kv3, %cKV : index")
+        lines.append("            %pred_causal = arith.cmpi ule, %kv3, %q : index")
+        lines.append("            %pred_att0 = arith.andi %pred_kv3, %pred_causal : i1")
+        lines.append("            %pred_att = arith.andi %pred_att0, %pred_q2 : i1")
+        lines.append("            %s = scf.if %pred_att -> (f32) {")
+        lines.append("              %dot = memref.load %Scoresh[%row, %t] : " + score_sh_ty)
+        lines.append("              %score = arith.mulf %dot, %sm2" + fm + " : f32")
+        lines.append("              scf.yield %score : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %neg_inf : f32")
+        lines.append("            }")
+        lines.append("            %mx2 = arith.maximumf %mx, %s" + fm + " : f32")
+        lines.append("            scf.yield %mx2 : f32")
+        lines.append("          }")
+        lines.append("          %m_new = arith.maximumf %m_old, %m_tile" + fm + " : f32")
+        lines.append("          %delta_m = arith.subf %m_old, %m_new" + fm + " : f32")
+        lines.append("          %alpha = math.exp2 %delta_m : f32")
+        lines.append("          %l_scaled = arith.mulf %l_old, %alpha" + fm + " : f32")
+        lines.append("          memref.store %m_new, %msh[%row] : " + ml_sh_ty)
+        lines.append("          memref.store %alpha, %alphash[%row] : " + ml_sh_ty)
+        lines.append("          %sum = scf.for %t2 = %c0 to %cBK step %c1 iter_args(%s0 = %c0f) -> (f32) {")
+        lines.append("            %kv4 = arith.addi %tile0, %t2 : index")
+        lines.append("            %pred_kv4 = arith.cmpi ult, %kv4, %cKV : index")
+        lines.append("            %pred_causal2 = arith.cmpi ule, %kv4, %q : index")
+        lines.append("            %pred_att1 = arith.andi %pred_kv4, %pred_causal2 : i1")
+        lines.append("            %pred_att2 = arith.andi %pred_att1, %pred_q2 : i1")
+        lines.append("            %p = scf.if %pred_att2 -> (f32) {")
+        lines.append("              %dot2 = memref.load %Scoresh[%row, %t2] : " + score_sh_ty)
+        lines.append("              %score2 = arith.mulf %dot2, %sm2" + fm + " : f32")
+        lines.append("              %shift = arith.subf %score2, %m_new" + fm + " : f32")
+        lines.append("              %pv = math.exp2 %shift : f32")
+        lines.append("              scf.yield %pv : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append("            memref.store %p, %Scoresh[%row, %t2] : " + score_sh_ty)
+        lines.append("            %s1 = arith.addf %s0, %p" + fm + " : f32")
+        lines.append("            scf.yield %s1 : f32")
+        lines.append("          }")
+        lines.append("          %l_new = arith.addf %l_scaled, %sum" + fm + " : f32")
+        lines.append("          memref.store %l_new, %lsh[%row] : " + ml_sh_ty)
+        lines.append("        }")
+
+        lines.append("        gpu.barrier")
+
+        # Scale accumulator rows by alpha (acc *= alpha).
+        lines.append("        scf.for %si = %tid to %cAccElems step %cThreads {")
+        lines.append("          %sr = arith.divui %si, %cHD : index")
+        lines.append("          %sd = arith.remui %si, %cHD : index")
+        lines.append("          %a = memref.load %alphash[%sr] : " + ml_sh_ty)
+        lines.append("          %x = memref.load %Accsh[%sr, %sd] : " + acc_sh_ty)
+        lines.append("          %y = arith.mulf %x, %a" + fm + " : f32")
+        lines.append("          memref.store %y, %Accsh[%sr, %sd] : " + acc_sh_ty)
+        lines.append("        }")
+
+        lines.append("        gpu.barrier")
+
+        # Accumulate Acc += P @ V (WMMA TF32), where P is in %Scoresh.
+        lines.append("        %warp2 = arith.divui %tid, %c32 : index")
+        lines.append("        %warp_m = arith.divui %warp2, %c4 : index")
+        lines.append("        %warp_n = arith.remui %warp2, %c4 : index")
+        lines.append("        %row_w2 = arith.muli %warp_m, %c16 : index")
+        lines.append("        %col_w2 = arith.muli %warp_n, %c16 : index")
+        lines.append(
+            "        %accP0 = gpu.subgroup_mma_load_matrix %Accsh[%row_w2, %col_w2] "
+            "{leadDimension = 64 : index} : memref<64x64xf32, 3> -> !gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("        %k0 = arith.constant 0 : index")
+        lines.append(
+            "        %PA0 = gpu.subgroup_mma_load_matrix %Scoresh[%row_w2, %k0] "
+            "{leadDimension = 16 : index} : memref<64x16xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "        %VB0 = gpu.subgroup_mma_load_matrix %Vsh[%k0, %col_w2] "
+            "{leadDimension = 64 : index} : memref<16x64xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "        %accP1 = gpu.subgroup_mma_compute %PA0, %VB0, %accP0 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append("        %k8 = arith.constant 8 : index")
+        lines.append(
+            "        %PA1 = gpu.subgroup_mma_load_matrix %Scoresh[%row_w2, %k8] "
+            "{leadDimension = 16 : index} : memref<64x16xf32, 3> -> !gpu.mma_matrix<16x8xf32, \"AOp\">"
+        )
+        lines.append(
+            "        %VB1 = gpu.subgroup_mma_load_matrix %Vsh[%k8, %col_w2] "
+            "{leadDimension = 64 : index} : memref<16x64xf32, 3> -> !gpu.mma_matrix<8x16xf32, \"BOp\">"
+        )
+        lines.append(
+            "        %accP2 = gpu.subgroup_mma_compute %PA1, %VB1, %accP1 : "
+            "!gpu.mma_matrix<16x8xf32, \"AOp\">, !gpu.mma_matrix<8x16xf32, \"BOp\"> -> "
+            "!gpu.mma_matrix<16x16xf32, \"COp\">"
+        )
+        lines.append(
+            "        gpu.subgroup_mma_store_matrix %accP2, %Accsh[%row_w2, %col_w2] "
+            "{leadDimension = 64 : index} : !gpu.mma_matrix<16x16xf32, \"COp\">, memref<64x64xf32, 3>"
+        )
+
+        lines.append("        gpu.barrier")
+        lines.append("        scf.yield")
+        lines.append("      }")
+
+        # Write output: out[q, d] = acc[q, d] / l[q]
+        lines.append("      scf.for %oi = %tid to %cAccElems step %cThreads {")
+        lines.append("        %or = arith.divui %oi, %cHD : index")
+        lines.append("        %od = arith.remui %oi, %cHD : index")
+        lines.append("        %q_out = arith.addi %q0, %or : index")
+        lines.append("        %pred_q_out = arith.cmpi ult, %q_out, %cQ : index")
+        lines.append("        scf.if %pred_q_out {")
+        lines.append("          %l = memref.load %lsh[%or] : " + ml_sh_ty)
+        lines.append("          %nz = arith.cmpf one, %l, %c0f : f32")
+        lines.append("          %l_safe = arith.select %nz, %l, %c1f : f32")
+        lines.append("          %accv = memref.load %Accsh[%or, %od] : " + acc_sh_ty)
+        lines.append("          %outv = arith.divf %accv, %l_safe" + fm + " : f32")
+        lines.append("          %mul_o = arith.muli %q_out, %cHD : index")
+        lines.append("          %idx_o = arith.addi %mul_o, %od : index")
+        lines.append(f"          memref.store %outv, {arg_ssa[out_name2]}[%idx_o] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif (
