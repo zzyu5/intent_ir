@@ -8868,10 +8868,10 @@ def lower_intent_to_cuda_gpu_kernel(
                 v1 = "%v_sm_v4_1"
                 v2 = "%v_sm_v4_2"
                 v3 = "%v_sm_v4_3"
-                lines.append(f"        {v0} = vector.extractelement {vvec}[%c0_i32] : {vty}")
-                lines.append(f"        {v1} = vector.extractelement {vvec}[%c1] : {vty}")
-                lines.append(f"        {v2} = vector.extractelement {vvec}[%c2] : {vty}")
-                lines.append(f"        {v3} = vector.extractelement {vvec}[%c3] : {vty}")
+                lines.append(f"        {v0} = vector.extractelement {vvec}[%c0_i32 : i32] : {vty}")
+                lines.append(f"        {v1} = vector.extractelement {vvec}[%c1 : i32] : {vty}")
+                lines.append(f"        {v2} = vector.extractelement {vvec}[%c2 : i32] : {vty}")
+                lines.append(f"        {v3} = vector.extractelement {vvec}[%c3 : i32] : {vty}")
                 tile_entries.extend([("", "", v0), ("", "", v1), ("", "", v2), ("", "", v3)])
                 tmax0 = "%tmax_sm_v4_0"
                 tmax1 = "%tmax_sm_v4_1"
