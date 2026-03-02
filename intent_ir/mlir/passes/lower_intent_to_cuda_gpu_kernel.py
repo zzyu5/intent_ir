@@ -5885,6 +5885,61 @@ def lower_intent_to_cuda_gpu_kernel(
     shared_global_memref_ty: str | None = None
     cuda_real_mlir_attention_cfg: dict[str, Any] | None = None
     cuda_real_mlir_matmul_cfg: dict[str, Any] | None = None
+    kernel_kind_override = str((module.meta or {}).get("intentir_kernel_kind_override") or "").strip()
+    kernel_kind_override_enabled = False
+    if kernel_kind_override:
+        allowed_by_intent: dict[str, set[str]] = {
+            "_attn_fwd": {"attn_fwd_tiled_v3", "attn_fwd_softmax_v2", "attn_fwd_softmax_v1"},
+            "flash_attention2d": {
+                "attn2d_causal_softmax_v5",
+                "attn2d_causal_softmax_v4",
+                "attn2d_causal_softmax_v3",
+                "attn2d_causal_softmax_v2",
+                "attn2d_causal_softmax_v1",
+            },
+            "ai_bench_matmul": {"matmul_tile_v2", "matmul_tile_v1"},
+            "matmul_fused_epilogue2d": {"matmul_tile_v2", "matmul_tile_v1"},
+        }
+        allowed = allowed_by_intent.get(intent_name)
+        if allowed is None:
+            supported = ", ".join(sorted(allowed_by_intent))
+            raise RuntimeError(
+                f"intentir_kernel_kind_override is set for unsupported kernel={intent_name!r}: "
+                f"override={kernel_kind_override!r}; supported_kernels=[{supported}]"
+            )
+        if kernel_kind_override not in allowed:
+            raise RuntimeError(
+                f"invalid intentir_kernel_kind_override for kernel={intent_name!r}: "
+                f"override={kernel_kind_override!r}; allowed={sorted(allowed)}"
+            )
+        if intent_name == "_attn_fwd" and attn_fwd_v1 is None:
+            raise RuntimeError(
+                f"intentir_kernel_kind_override={kernel_kind_override!r} requires _attn_fwd matcher; "
+                "got no attn_fwd_v1 pattern match"
+            )
+        if intent_name == "flash_attention2d":
+            if attn2d_v1 is None:
+                raise RuntimeError(
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires flash_attention2d matcher; "
+                    "got no attn2d_v1 pattern match"
+                )
+            if kernel_kind_override == "attn2d_causal_softmax_v5" and int(attn2d_v1.get("HEAD_DIM") or 0) != 64:
+                raise RuntimeError("attn2d_causal_softmax_v5 requires HEAD_DIM==64")
+        if intent_name in {"ai_bench_matmul", "matmul_fused_epilogue2d"}:
+            if matmul_v1 is None:
+                raise RuntimeError(
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires matmul matcher; "
+                    "got no matmul_v1 pattern match"
+                )
+            if kernel_kind_override == "matmul_tile_v2":
+                bm = int(matmul_v1.get("BM") or 0)
+                bn = int(matmul_v1.get("BN") or 0)
+                if (bn % 4) != 0 or (bm * (bn // 4)) != 256:
+                    raise RuntimeError(
+                        "matmul_tile_v2 override requires BN%4==0 and BM*(BN/4)==256; "
+                        f"got BM={bm} BN={bn}"
+                    )
+        kernel_kind_override_enabled = True
     lines: list[str] = []
     lines.append("module attributes {")
     lines.append("  gpu.container_module,")
@@ -6502,6 +6557,10 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
     elif (
         matmul_v1 is not None
+        and (
+            (kernel_kind_override_enabled and kernel_kind_override == "matmul_tile_v2")
+            or (not kernel_kind_override_enabled)
+        )
         and int(matmul_v1.get("BN") or 0) % 4 == 0
         and int(matmul_v1.get("BM") or 0) * (int(matmul_v1.get("BN") or 0) // 4) == 256
     ):
@@ -12934,11 +12993,17 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
     elif (
             attn2d_v1 is not None
-            and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
             and intent_name == "flash_attention2d"
             and int(attn2d_v1.get("HEAD_DIM") or 0) == 64
-            and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
-            and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V3", default=False)
+            and (
+                (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v5")
+                or (
+                    (not kernel_kind_override_enabled)
+                    and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
+                    and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
+                    and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V3", default=False)
+                )
+            )
         ):
             # Perf-first: flash_attention2d is a min-ratio offender in the Triton-native
             # perf lane. Use a multi-query per CTA implementation that reuses K/V tiles
@@ -13246,10 +13311,16 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("      }")
     elif (
         attn2d_v1 is not None
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
         and intent_name == "flash_attention2d"
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V3", default=False)
+        and (
+            (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v4")
+            or (
+                (not kernel_kind_override_enabled)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V3", default=False)
+            )
+        )
     ):
         # Perf-first: flash_attention2d is a min-ratio offender in the Triton-native
         # perf lane. Use a multi-query per CTA implementation (8 warps / CTA) that
@@ -13697,9 +13768,15 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
     elif (
         attn2d_v1 is not None
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
         and intent_name == "flash_attention2d"
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
+        and (
+            (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v3")
+            or (
+                (not kernel_kind_override_enabled)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_FLASH_ATTN_V2", default=False)
+            )
+        )
     ):
         # Perf-first: flash_attention2d is a min-ratio offender in the Triton-native
         # perf lane. Avoid redundant scalar softmax math across lanes by computing
@@ -14865,7 +14942,13 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          scf.yield %pos_next : index")
         lines.append("        }")
         lines.append("      }")
-    elif attn2d_v1 is not None and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False):
+    elif (
+        attn2d_v1 is not None
+        and (
+            (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v2")
+            or ((not kernel_kind_override_enabled) and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False))
+        )
+    ):
         kernel_kind = "attn2d_causal_softmax_v2"
         q_name = str(attn2d_v1["Q"])
         k_name = str(attn2d_v1["K"])
@@ -15144,7 +15227,10 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          memref.store {out1}, {arg_ssa[out_name2]}[{idx_o1}] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
-    elif _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False) and attn2d_v1 is not None:
+    elif attn2d_v1 is not None and (
+        (kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v1")
+        or ((not kernel_kind_override_enabled) and _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", default=False))
+    ):
         kernel_kind = "attn2d_causal_softmax_v1"
         q_name = str(attn2d_v1["Q"])
         k_name = str(attn2d_v1["K"])
@@ -15347,8 +15433,14 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
     elif (
         attn_fwd_v1 is not None
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", default=False)
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V2", default=False)
+        and (
+            (kernel_kind_override_enabled and kernel_kind_override == "attn_fwd_tiled_v3")
+            or (
+                (not kernel_kind_override_enabled)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", default=False)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V2", default=False)
+            )
+        )
     ):
         # Perf-first: `_attn_fwd` is the min-ratio offender in the Triton-native lane.
         #
@@ -15718,8 +15810,14 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
     elif (
         attn_fwd_v1 is not None
-        and _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V2", default=False)
-        and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", default=False)
+        and (
+            (kernel_kind_override_enabled and kernel_kind_override == "attn_fwd_softmax_v2")
+            or (
+                (not kernel_kind_override_enabled)
+                and _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V2", default=False)
+                and not _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", default=False)
+            )
+        )
     ):
         kernel_kind = "attn_fwd_softmax_v2"
         q_name = str(attn_fwd_v1["Q"])
@@ -15981,7 +16079,10 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          memref.store {out1}, {arg_ssa[out_name2]}[{idx_o1}] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
-    elif _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", default=False) and attn_fwd_v1 is not None:
+    elif attn_fwd_v1 is not None and (
+        (kernel_kind_override_enabled and kernel_kind_override == "attn_fwd_softmax_v1")
+        or ((not kernel_kind_override_enabled) and _env_flag("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", default=False))
+    ):
         kernel_kind = "attn_fwd_softmax_v1"
         q_name = str(attn_fwd_v1["Q"])
         k_name = str(attn_fwd_v1["K"])
