@@ -96,7 +96,7 @@ def apply_tuning_db(module: IntentMLIRModule, *, backend: str | None = None, **_
         cand = db.get((kernel, arch))
         if isinstance(cand, TuningDBEntry):
             entry = cand
-    if entry is not None and bool(entry.bindings):
+    if entry is not None and (bool(entry.bindings) or bool(entry.kernel_kind)):
         tuning_source = "tuning_db"
         for k, v in dict(entry.bindings).items():
             key = str(k).strip()
