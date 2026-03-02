@@ -441,7 +441,7 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
     if rewrite_exp2:
         # Prefer the NVVM intrinsic directly to avoid out-of-line wrappers in PTX
         # (function calls are extremely costly in tight loops like attention softmax).
-        out = out.replace("@llvm.exp2.f32(", "@llvm.nvvm.ex2.approx.f(")
+        out = out.replace("@llvm.exp2.f32(", "@llvm.nvvm.ex2.approx.ftz.f(")
         out = re.sub(r"^.*declare float @llvm.exp2.f32\(float\).*\n", "", out, flags=re.MULTILINE)
     if rewrite_log:
         out = out.replace("@llvm.log.f32(", "@intentir_nvvm_logf_approx(")
@@ -513,9 +513,9 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
     helper_blocks: list[str] = []
     if (
         (rewrite_exp or rewrite_exp2 or rewrite_pow or rewrite_erf)
-        and "declare float @llvm.nvvm.ex2.approx.f(float)" not in out
+        and "declare float @llvm.nvvm.ex2.approx.ftz.f(float)" not in out
     ):
-        helper_blocks.append("declare float @llvm.nvvm.ex2.approx.f(float)")
+        helper_blocks.append("declare float @llvm.nvvm.ex2.approx.ftz.f(float)")
     if (rewrite_log or rewrite_pow) and "@llvm.nvvm.lg2.approx.f(" not in out:
         helper_blocks.append("declare float @llvm.nvvm.lg2.approx.f(float)")
     if (rewrite_acos or rewrite_atan or rewrite_pow or rewrite_erf) and "@llvm.fabs.f32(" not in out:
@@ -534,7 +534,7 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
                     "entry:",
                     "  %c_log2e = bitcast i32 1069066811 to float",
                     "  %scaled = fmul float %x, %c_log2e",
-                    "  %r = call float @llvm.nvvm.ex2.approx.f(float %scaled)",
+                    "  %r = call float @llvm.nvvm.ex2.approx.ftz.f(float %scaled)",
                     "  ret float %r",
                     "}",
                 ]
@@ -589,7 +589,7 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
                     "  %ax = call float @llvm.fabs.f32(float %x)",
                     "  %lg = call float @llvm.nvvm.lg2.approx.f(float %ax)",
                     "  %s = fmul float %lg, %y",
-                    "  %mag = call float @llvm.nvvm.ex2.approx.f(float %s)",
+                    "  %mag = call float @llvm.nvvm.ex2.approx.ftz.f(float %s)",
                     "  %yi = fptosi float %y to i32",
                     "  %yf = sitofp i32 %yi to float",
                     "  %is_int = fcmp oeq float %y, %yf",
@@ -639,7 +639,7 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
                     "  %xx = fmul float %ax, %ax",
                     "  %neg_xx = fneg float %xx",
                     "  %scaled = fmul float %neg_xx, %c_log2e",
-                    "  %expv = call float @llvm.nvvm.ex2.approx.f(float %scaled)",
+                    "  %expv = call float @llvm.nvvm.ex2.approx.ftz.f(float %scaled)",
                     "  %tau = fmul float %poly, %expv",
                     "  %core = fsub float %one, %tau",
                     "  %neg = fcmp olt float %x, %zero",

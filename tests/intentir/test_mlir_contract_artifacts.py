@@ -491,7 +491,7 @@ def test_compile_llvm_ir_to_cuda_ptx_rewrites_math_intrinsics_for_nvptx(monkeypa
     assert "@intentir_nvvm_logf_approx(" in ll_text
     assert "define internal float @intentir_nvvm_expf_approx(float %x)" in ll_text
     assert "define internal float @intentir_nvvm_logf_approx(float %x)" in ll_text
-    assert "@llvm.nvvm.ex2.approx.f(" in ll_text
+    assert "@llvm.nvvm.ex2.approx.ftz.f(" in ll_text
     assert "@llvm.nvvm.lg2.approx.f(" in ll_text
     assert out_path.is_file()
 
