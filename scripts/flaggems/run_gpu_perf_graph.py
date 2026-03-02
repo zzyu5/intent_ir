@@ -2900,6 +2900,12 @@ def main() -> None:
         default=(ROOT / "artifacts" / "flaggems_matrix" / "daily" / datetime.now(timezone.utc).strftime("%Y%m%d") / "gpu_perf_graph"),
     )
     ap.add_argument("--family", action="append", default=[])
+    ap.add_argument(
+        "--kernel",
+        action="append",
+        default=[],
+        help="Optional kernel alias filter (repeatable). Limits both execution and denominator to the selected kernels.",
+    )
     ap.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--family-kernel-chunk-size", type=int, default=12)
     ap.add_argument("--threshold", type=float, default=0.80)
@@ -2988,6 +2994,32 @@ def main() -> None:
         raise SystemExit(f"unknown family name(s): {', '.join(unknown)}")
     if not families:
         raise SystemExit("no families selected")
+
+    requested_kernels_raw = [str(x).strip() for x in list(args.kernel or []) if str(x).strip()]
+    if requested_kernels_raw:
+        requested_kernels: list[str] = []
+        seen: set[str] = set()
+        for k in requested_kernels_raw:
+            if k in seen:
+                continue
+            seen.add(k)
+            requested_kernels.append(k)
+
+        found: set[str] = set()
+        for fam in families:
+            bucket = by_family.get(str(fam)) if isinstance(by_family, dict) else None
+            kernels0 = []
+            if isinstance(bucket, dict):
+                kernels0 = [str(x).strip() for x in list(bucket.get("kernels") or []) if str(x).strip()]
+            kset = set(kernels0)
+            selected = [k for k in requested_kernels if k in kset]
+            found.update(selected)
+            if isinstance(bucket, dict):
+                bucket["kernels"] = selected
+
+        missing = [k for k in requested_kernels if k not in found]
+        if missing:
+            raise SystemExit(f"unknown kernel name(s): {', '.join(missing)}")
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)

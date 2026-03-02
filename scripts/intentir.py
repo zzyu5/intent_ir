@@ -181,6 +181,9 @@ def _cmd_suite(args: argparse.Namespace) -> int:
         for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
             if str(kernel).strip():
                 cmd.extend(["--gate-exclude-kernel", str(kernel)])
+        for kernel in list(args.kernel or []):
+            if str(kernel).strip():
+                cmd.extend(["--kernel", str(kernel)])
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
@@ -222,6 +225,9 @@ def _cmd_suite(args: argparse.Namespace) -> int:
         for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
             if str(kernel).strip():
                 cmd.extend(["--gate-exclude-kernel", str(kernel)])
+        for kernel in list(args.kernel or []):
+            if str(kernel).strip():
+                cmd.extend(["--kernel", str(kernel)])
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
