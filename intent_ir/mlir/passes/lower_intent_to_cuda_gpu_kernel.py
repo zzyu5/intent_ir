@@ -8837,11 +8837,10 @@ def lower_intent_to_cuda_gpu_kernel(
             o = int(off)
             sh = f"%wm_sh_{o}"
             ok = f"%wm_ok_{o}"
-            sel = f"%wm_sel_{o}"
             nxt = f"%wm_{o}"
-            lines.append(f"        {sh}, {ok} = gpu.shuffle down {max_cur}, %c{o}, %c32 : f32")
-            lines.append(f"        {sel} = arith.select {ok}, {sh}, {max_cur} : f32")
-            lines.append(f"        {nxt} = arith.maximumf {max_cur}, {sel}{fm} : f32")
+            # Use XOR shuffle so all lanes participate without select/predicate glue.
+            lines.append(f"        {sh}, {ok} = gpu.shuffle xor {max_cur}, %c{o}, %c32 : f32")
+            lines.append(f"        {nxt} = arith.maximumf {max_cur}, {sh}{fm} : f32")
             max_cur = nxt
         wm_final = str(max_cur)
         lines.append("        %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
@@ -8863,11 +8862,9 @@ def lower_intent_to_cuda_gpu_kernel(
             o = int(off)
             sh = f"%bm_sh_{o}"
             ok = f"%bm_ok_{o}"
-            sel = f"%bm_sel_{o}"
             nxt = f"%bm_{o}"
-            lines.append(f"          {sh}, {ok} = gpu.shuffle down {bm_cur}, %c{o}, %c32 : f32")
-            lines.append(f"          {sel} = arith.select {ok}, {sh}, {bm_cur} : f32")
-            lines.append(f"          {nxt} = arith.maximumf {bm_cur}, {sel}{fm} : f32")
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {bm_cur}, %c{o}, %c32 : f32")
+            lines.append(f"          {nxt} = arith.maximumf {bm_cur}, {sh}{fm} : f32")
             bm_cur = nxt
         bm_final = str(bm_cur)
         lines.append("          scf.if %is_lane0 {")
@@ -8919,11 +8916,9 @@ def lower_intent_to_cuda_gpu_kernel(
             o = int(off)
             sh = f"%ws_sh_{o}"
             ok = f"%ws_ok_{o}"
-            sel = f"%ws_sel_{o}"
             nxt = f"%ws_{o}"
-            lines.append(f"        {sh}, {ok} = gpu.shuffle down {sum_cur}, %c{o}, %c32 : f32")
-            lines.append(f"        {sel} = arith.select {ok}, {sh}, %c0f : f32")
-            lines.append(f"        {nxt} = arith.addf {sum_cur}, {sel}{fm} : f32")
+            lines.append(f"        {sh}, {ok} = gpu.shuffle xor {sum_cur}, %c{o}, %c32 : f32")
+            lines.append(f"        {nxt} = arith.addf {sum_cur}, {sh}{fm} : f32")
             sum_cur = nxt
         ws_final = str(sum_cur)
         lines.append("        scf.if %is_lane0 {")
@@ -8943,11 +8938,9 @@ def lower_intent_to_cuda_gpu_kernel(
             o = int(off)
             sh = f"%bs_sh_{o}"
             ok = f"%bs_ok_{o}"
-            sel = f"%bs_sel_{o}"
             nxt = f"%bs_{o}"
-            lines.append(f"          {sh}, {ok} = gpu.shuffle down {bs_cur}, %c{o}, %c32 : f32")
-            lines.append(f"          {sel} = arith.select {ok}, {sh}, %c0f : f32")
-            lines.append(f"          {nxt} = arith.addf {bs_cur}, {sel}{fm} : f32")
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {bs_cur}, %c{o}, %c32 : f32")
+            lines.append(f"          {nxt} = arith.addf {bs_cur}, {sh}{fm} : f32")
             bs_cur = nxt
         bs_final = str(bs_cur)
         lines.append("          scf.if %is_lane0 {")
