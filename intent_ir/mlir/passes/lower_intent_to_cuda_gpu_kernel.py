@@ -7937,6 +7937,158 @@ def lower_intent_to_cuda_gpu_kernel(
         _store_one("%gm1", acc1_out)
         _store_one("%gm2", acc2_out)
         _store_one("%gm3", acc3_out)
+    elif (
+        mlp2d_v1 is not None
+        and int(mlp2d_v1.get("N") or 0) == 32
+        and int(mlp2d_v1.get("K") or 0) == 32
+        and int(mlp2d_v1.get("H") or 0) == 32
+    ):
+        # Small-shape fast path: one CTA per M row (32 CTAs for the canonical
+        # 32x32x32x32 MLP), to avoid the single-CTA underutilization of
+        # `mlp2d_fused_v1` (BM=BN=32).
+        kernel_kind = "mlp2d_row_fused_v2"
+        a_name = str(mlp2d_v1["A"])
+        w1_name = str(mlp2d_v1["W1"])
+        b1_name = str(mlp2d_v1["b1"])
+        w2_name = str(mlp2d_v1["W2"])
+        b2_name = str(mlp2d_v1["b2"])
+        out_name2 = str(mlp2d_v1["out"])
+
+        m_dim = int(mlp2d_v1["M"])
+        n_dim = int(mlp2d_v1["N"])
+        k_dim = int(mlp2d_v1["K"])
+        h_dim = int(mlp2d_v1["H"])
+        if m_dim <= 0 or n_dim <= 0 or k_dim <= 0 or h_dim <= 0:
+            raise RuntimeError(f"invalid mlp2d dims: M={m_dim} N={n_dim} K={k_dim} H={h_dim}")
+
+        for nm in (a_name, w1_name, b1_name, w2_name, b2_name, out_name2):
+            if nm not in arg_specs:
+                raise RuntimeError(f"mlp2d missing tensor in arg_specs: {nm}")
+        for nm in (a_name, w1_name, b1_name, w2_name, b2_name, out_name2):
+            if str(arg_specs[str(nm)].get("memref_elem_ty")) != "f32":
+                raise RuntimeError(f"mlp2d expects f32 tensor for {nm}")
+
+        a_memref = str(arg_specs[a_name]["memref"])
+        w1_memref = str(arg_specs[w1_name]["memref"])
+        b1_memref = str(arg_specs[b1_name]["memref"])
+        w2_memref = str(arg_specs[w2_name]["memref"])
+        b2_memref = str(arg_specs[b2_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        block_warps = 4
+        block_x = int(block_warps) * 32  # 128 threads
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(m_dim), 1, 1]}
+
+        # Shared layout: A_row(K) | hidden(H) | partial_out(block_warps*N)
+        off_a = 0
+        off_hidden = int(off_a + k_dim)
+        off_partial = int(off_hidden + h_dim)
+        sh_elems = int(off_partial + int(block_warps) * int(n_dim))
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c8 = arith.constant 8 : index")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append(f"      %cM = arith.constant {int(m_dim)} : index")
+        lines.append(f"      %cN = arith.constant {int(n_dim)} : index")
+        lines.append(f"      %cK = arith.constant {int(k_dim)} : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cOffHidden = arith.constant {int(off_hidden)} : index")
+        lines.append(f"      %cOffPartial = arith.constant {int(off_partial)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+
+        lines.append("      %lane = arith.remui %tid, %c32 : index")
+        lines.append("      %warp = arith.divui %tid, %c32 : index")
+
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+
+        # Load A row to shared (warp0 lanes load 1 element each).
+        lines.append("        %pred_a = arith.cmpi ult, %tid, %cK : index")
+        lines.append("        scf.if %pred_a {")
+        lines.append("          %a_base = arith.muli %bid, %cK : index")
+        lines.append("          %a_idx = arith.addi %a_base, %tid : index")
+        lines.append(f"          %a = memref.load {arg_ssa[a_name]}[%a_idx] : {a_memref}")
+        lines.append(f"          memref.store %a, %sh[%tid] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+
+        # hidden[h] = relu(sum_k A[k] * W1[k,h] + b1[h]) (warp0 only).
+        lines.append("        %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("        %pred_h = arith.cmpi ult, %lane, %cH : index")
+        lines.append("        %do_h = arith.andi %is_warp0, %pred_h : i1")
+        lines.append("        scf.if %do_h {")
+        lines.append("          %h_acc = scf.for %k = %c0 to %cK step %c1 iter_args(%acc = %c0f) -> (f32) {")
+        lines.append(f"            %a_k = memref.load %sh[%k] : {shared_global_memref_ty}")
+        lines.append("            %w1_mul = arith.muli %k, %cH : index")
+        lines.append("            %w1_idx = arith.addi %w1_mul, %lane : index")
+        lines.append(f"            %w1 = memref.load {arg_ssa[w1_name]}[%w1_idx] : {w1_memref}")
+        lines.append("            %prod = arith.mulf %a_k, %w1 : f32")
+        lines.append("            %acc2 = arith.addf %acc, %prod : f32")
+        lines.append("            scf.yield %acc2 : f32")
+        lines.append("          }")
+        lines.append(f"          %b1 = memref.load {arg_ssa[b1_name]}[%lane] : {b1_memref}")
+        lines.append("          %hb = arith.addf %h_acc, %b1 : f32")
+        lines.append("          %h_relu = arith.maximumf %hb, %c0f : f32")
+        lines.append("          %h_idx = arith.addi %cOffHidden, %lane : index")
+        lines.append(f"          memref.store %h_relu, %sh[%h_idx] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+
+        # partial_out[warp, n] = sum_{h in segment} hidden[h] * W2[h,n]
+        lines.append("        %pred_n = arith.cmpi ult, %lane, %cN : index")
+        lines.append("        scf.if %pred_n {")
+        lines.append("          %h0 = arith.muli %warp, %c8 : index")
+        lines.append("          %h1 = arith.addi %h0, %c8 : index")
+        lines.append("          %h1_in = arith.cmpi ult, %h1, %cH : index")
+        lines.append("          %hend = arith.select %h1_in, %h1, %cH : index")
+        lines.append("          %p = scf.for %h = %h0 to %hend step %c1 iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("            %h_sh = arith.addi %cOffHidden, %h : index")
+        lines.append(f"            %hv = memref.load %sh[%h_sh] : {shared_global_memref_ty}")
+        lines.append("            %w2_mul = arith.muli %h, %cN : index")
+        lines.append("            %w2_idx = arith.addi %w2_mul, %lane : index")
+        lines.append(f"            %w2 = memref.load {arg_ssa[w2_name]}[%w2_idx] : {w2_memref}")
+        lines.append("            %prod2 = arith.mulf %hv, %w2 : f32")
+        lines.append("            %acc2 = arith.addf %acc, %prod2 : f32")
+        lines.append("            scf.yield %acc2 : f32")
+        lines.append("          }")
+        lines.append("          %warp_mul = arith.muli %warp, %cN : index")
+        lines.append("          %pbase0 = arith.addi %cOffPartial, %warp_mul : index")
+        lines.append("          %pidx = arith.addi %pbase0, %lane : index")
+        lines.append(f"          memref.store %p, %sh[%pidx] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+
+        # out[n] = sum_w partial_out[w,n] + b2[n] (warp0 only).
+        lines.append("        %do_out = arith.andi %is_warp0, %pred_n : i1")
+        lines.append("        scf.if %do_out {")
+        lines.append("          %p0_idx = arith.addi %cOffPartial, %lane : index")
+        lines.append(f"          %p0 = memref.load %sh[%p0_idx] : {shared_global_memref_ty}")
+        lines.append("          %p1_base = arith.addi %cOffPartial, %cN : index")
+        lines.append("          %p1_idx = arith.addi %p1_base, %lane : index")
+        lines.append(f"          %p1 = memref.load %sh[%p1_idx] : {shared_global_memref_ty}")
+        lines.append("          %p2_base = arith.addi %p1_base, %cN : index")
+        lines.append("          %p2_idx = arith.addi %p2_base, %lane : index")
+        lines.append(f"          %p2 = memref.load %sh[%p2_idx] : {shared_global_memref_ty}")
+        lines.append("          %p3_base = arith.addi %p2_base, %cN : index")
+        lines.append("          %p3_idx = arith.addi %p3_base, %lane : index")
+        lines.append(f"          %p3 = memref.load %sh[%p3_idx] : {shared_global_memref_ty}")
+        lines.append("          %s01 = arith.addf %p0, %p1 : f32")
+        lines.append("          %s23 = arith.addf %p2, %p3 : f32")
+        lines.append("          %sum = arith.addf %s01, %s23 : f32")
+        lines.append(f"          %b2 = memref.load {arg_ssa[b2_name]}[%lane] : {b2_memref}")
+        lines.append("          %outv = arith.addf %sum, %b2 : f32")
+        lines.append("          %out_base = arith.muli %bid, %cN : index")
+        lines.append("          %out_idx = arith.addi %out_base, %lane : index")
+        lines.append(f"          memref.store %outv, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
     elif mlp2d_v1 is not None:
         kernel_kind = "mlp2d_fused_v1"
         a_name = str(mlp2d_v1["A"])
@@ -8572,7 +8724,10 @@ def lower_intent_to_cuda_gpu_kernel(
             # Empirically, Triton-native softmax uses far fewer than 1024 threads
             # (e.g. 4 warps). Keep thread count moderate and let each lane handle
             # multiple elements via the `%j = %tid .. step %bdim` loop.
-            block_threads = 256
+            if red_n <= 256:
+                block_threads = 64
+            else:
+                block_threads = 128
         else:
             block_threads = 256
         if (int(block_threads) % 32) != 0:
