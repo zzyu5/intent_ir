@@ -5905,6 +5905,7 @@ def lower_intent_to_cuda_gpu_kernel(
             },
             "masked_attention2d": {
                 "attn2d_causal_softmax_v10",
+                "attn2d_causal_softmax_v14",
                 "attn2d_causal_softmax_v11",
                 "attn2d_causal_softmax_v12",
                 "attn2d_causal_softmax_v4",
@@ -5990,6 +5991,11 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError("attn2d_causal_softmax_v12 override is only supported for masked_attention2d")
                 if int(attn2d_v1.get("HEAD_DIM") or 0) != 16:
                     raise RuntimeError("attn2d_causal_softmax_v12 requires HEAD_DIM==16")
+            if kernel_kind_override == "attn2d_causal_softmax_v14":
+                if intent_name != "masked_attention2d":
+                    raise RuntimeError("attn2d_causal_softmax_v14 override is only supported for masked_attention2d")
+                if int(attn2d_v1.get("HEAD_DIM") or 0) != 16:
+                    raise RuntimeError("attn2d_causal_softmax_v14 requires HEAD_DIM==16")
             if kernel_kind_override == "attn2d_causal_softmax_v10":
                 if intent_name != "masked_attention2d":
                     raise RuntimeError("attn2d_causal_softmax_v10 override is only supported for masked_attention2d")
@@ -17117,6 +17123,315 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          }")
         lines.append("          %out_idx = arith.addi %base_q, %lane : index")
         lines.append(f"          memref.store %outv, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif attn2d_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v14":
+        # Perf-first: masked_attention2d is a tiny micro-kernel (canonical Q=16, KV=16, HD=16)
+        # where shuffle/loop overhead matters on large GPUs. Use one warp and parallelize
+        # dot(Q,K) over 4 groups and 8 KV keys per tile (32 threads total).
+        kernel_kind = "attn2d_causal_softmax_v14"
+        q_name = str(attn2d_v1["Q"])
+        k_name = str(attn2d_v1["K"])
+        v_name = str(attn2d_v1["V"])
+        out_name2 = str(attn2d_v1["out"])
+        sm_scale_name = str(attn2d_v1["sm_scale"])
+        q_ctx = int(attn2d_v1["Q_CTX"])
+        kv_ctx = int(attn2d_v1["KV_CTX"])
+        hd = int(attn2d_v1["HEAD_DIM"])
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        v_memref = str(arg_specs[v_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
+
+        if int(hd) != 16:
+            raise RuntimeError("attn2d_causal_softmax_v14 requires HEAD_DIM==16")
+
+        block_x = 32
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
+        cuda_real_mlir_attention_cfg = {
+            "block_x": int(block_x),
+            "warps": 1,
+            "head_dim": int(hd),
+            "kv_tile": 8,
+            "dot_groups": 4,
+            "scores_shared": False,
+            "softmax_two_pass": False,
+            "barrier": "none",
+        }
+
+        def _dot_allreduce_sum_xor_8_16(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c8_i32", "%c16_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                nxt = _fresh("sum")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c32_i32 : f32")
+                lines.append(f"{indent}{nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        def _warp_allreduce_sum_xor_32(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c16_i32", "%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                nxt = _fresh("sum")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c32_i32 : f32")
+                lines.append(f"{indent}{nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        def _warp_allreduce_max_xor_32(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c16_i32", "%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                nxt = _fresh("mx")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c32_i32 : f32")
+                lines.append(f"{indent}{nxt} = arith.maximumf {cur}, {sh}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c2 = arith.constant 2 : index")
+        lines.append("      %c3 = arith.constant 3 : index")
+        lines.append("      %c4 = arith.constant 4 : index")
+        lines.append("      %c5 = arith.constant 5 : index")
+        lines.append("      %c6 = arith.constant 6 : index")
+        lines.append("      %c7 = arith.constant 7 : index")
+        lines.append("      %c8 = arith.constant 8 : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+        lines.append("      %c0_i32 = arith.constant 0 : i32")
+        lines.append("      %c1_i32 = arith.constant 1 : i32")
+        lines.append("      %c2_i32 = arith.constant 2 : i32")
+        lines.append("      %c3_i32 = arith.constant 3 : i32")
+        lines.append("      %c4_i32 = arith.constant 4 : i32")
+        lines.append("      %c5_i32 = arith.constant 5 : i32")
+        lines.append("      %c6_i32 = arith.constant 6 : i32")
+        lines.append("      %c7_i32 = arith.constant 7 : i32")
+        lines.append("      %c8_i32 = arith.constant 8 : i32")
+        lines.append("      %c16_i32 = arith.constant 16 : i32")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+
+        lines.append(f"      %cQ = arith.constant {int(q_ctx)} : index")
+        lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
+        lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cQ : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("        %pred_d = arith.cmpi ult, %tid, %cHD : index")
+        lines.append("        %pred_leader = arith.cmpi ult, %tid, %c8 : index")
+
+        lines.append("        %key = arith.remui %tid, %c8 : index")
+        lines.append("        %group = arith.divui %tid, %c8 : index")
+
+        lines.append("        %d0 = arith.muli %group, %c4 : index")
+        lines.append("        %d1 = arith.addi %d0, %c1 : index")
+        lines.append("        %d2 = arith.addi %d1, %c1 : index")
+        lines.append("        %d3 = arith.addi %d2, %c1 : index")
+
+        # Load Q fragment once per thread group.
+        lines.append("        %base_q = arith.muli %bid, %cHD : index")
+        q0 = _fresh("q0")
+        q1 = _fresh("q1")
+        q2 = _fresh("q2")
+        q3 = _fresh("q3")
+        q0_idx = _fresh("q0_idx")
+        q1_idx = _fresh("q1_idx")
+        q2_idx = _fresh("q2_idx")
+        q3_idx = _fresh("q3_idx")
+        lines.append(f"        {q0_idx} = arith.addi %base_q, %d0 : index")
+        lines.append(f"        {q1_idx} = arith.addi %base_q, %d1 : index")
+        lines.append(f"        {q2_idx} = arith.addi %base_q, %d2 : index")
+        lines.append(f"        {q3_idx} = arith.addi %base_q, %d3 : index")
+        lines.append(f"        {q0} = memref.load {arg_ssa[q_name]}[{q0_idx}] : {q_memref}")
+        lines.append(f"        {q1} = memref.load {arg_ssa[q_name]}[{q1_idx}] : {q_memref}")
+        lines.append(f"        {q2} = memref.load {arg_ssa[q_name]}[{q2_idx}] : {q_memref}")
+        lines.append(f"        {q3} = memref.load {arg_ssa[q_name]}[{q3_idx}] : {q_memref}")
+
+        # Precompute scale for exp2 domain.
+        lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
+        lines.append(f"        %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+
+        # kv_end = min(KV, bid+1) for causal attention.
+        lines.append("        %kv_end0 = arith.addi %bid, %c1 : index")
+        lines.append("        %p_kv_end = arith.cmpi ule, %kv_end0, %cKV : index")
+        lines.append("        %kv_end = arith.select %p_kv_end, %kv_end0, %cKV : index")
+
+        m_out = _fresh("m_out")
+        l_out = _fresh("l_out")
+        acc_out = _fresh("acc_out")
+        lines.append(
+            f"        {m_out}, {l_out}, {acc_out} = scf.for %kv_base = %c0 to %kv_end step %c8 "
+            "iter_args(%m = %neg_inf, %l = %c0f, %acc = %c0f) -> (f32, f32, f32) {"
+        )
+        m0 = _fresh("m0")
+        m0_ok = _fresh("ok")
+        l0 = _fresh("l0")
+        l0_ok = _fresh("ok")
+        lines.append(f"          {m0}, {m0_ok} = gpu.shuffle idx %m, %c0_i32, %c32_i32 : f32")
+        lines.append(f"          {l0}, {l0_ok} = gpu.shuffle idx %l, %c0_i32, %c32_i32 : f32")
+
+        lines.append("          %kv = arith.addi %kv_base, %key : index")
+        pred_kv = _fresh("pred_kv")
+        lines.append(f"          {pred_kv} = arith.cmpi ult, %kv, %kv_end : index")
+
+        partial = _fresh("partial")
+        lines.append(f"          {partial} = scf.if {pred_kv} -> (f32) {{")
+        lines.append("            %base_k = arith.muli %kv, %cHD : index")
+        k0 = _fresh("k0")
+        k1 = _fresh("k1")
+        k2 = _fresh("k2")
+        k3 = _fresh("k3")
+        k0_idx = _fresh("k0_idx")
+        k1_idx = _fresh("k1_idx")
+        k2_idx = _fresh("k2_idx")
+        k3_idx = _fresh("k3_idx")
+        lines.append(f"            {k0_idx} = arith.addi %base_k, %d0 : index")
+        lines.append(f"            {k1_idx} = arith.addi %base_k, %d1 : index")
+        lines.append(f"            {k2_idx} = arith.addi %base_k, %d2 : index")
+        lines.append(f"            {k3_idx} = arith.addi %base_k, %d3 : index")
+        lines.append(f"            {k0} = memref.load {arg_ssa[k_name]}[{k0_idx}] : {k_memref}")
+        lines.append(f"            {k1} = memref.load {arg_ssa[k_name]}[{k1_idx}] : {k_memref}")
+        lines.append(f"            {k2} = memref.load {arg_ssa[k_name]}[{k2_idx}] : {k_memref}")
+        lines.append(f"            {k3} = memref.load {arg_ssa[k_name]}[{k3_idx}] : {k_memref}")
+        p0 = _fresh("p0")
+        p1 = _fresh("p1")
+        p2 = _fresh("p2")
+        p3 = _fresh("p3")
+        lines.append(f"            {p0} = llvm.intr.fma({q0}, {k0}, %c0f) : (f32, f32, f32) -> f32")
+        lines.append(f"            {p1} = llvm.intr.fma({q1}, {k1}, {p0}) : (f32, f32, f32) -> f32")
+        lines.append(f"            {p2} = llvm.intr.fma({q2}, {k2}, {p1}) : (f32, f32, f32) -> f32")
+        lines.append(f"            {p3} = llvm.intr.fma({q3}, {k3}, {p2}) : (f32, f32, f32) -> f32")
+        lines.append(f"            scf.yield {p3} : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+
+        dot = _dot_allreduce_sum_xor_8_16(partial, indent="          ")
+        score = _fresh("score")
+        lines.append(f"          {score} = arith.mulf {dot}, %sm2{fm} : f32")
+        pred_score = _fresh("pred_score")
+        lines.append(f"          {pred_score} = arith.andi %pred_leader, {pred_kv} : i1")
+        score_sel = _fresh("score_sel")
+        lines.append(f"          {score_sel} = arith.select {pred_score}, {score}, %neg_inf : f32")
+        tile_max = _warp_allreduce_max_xor_32(score_sel, indent="          ")
+
+        m_new = _fresh("m_new")
+        lines.append(f"          {m_new} = arith.maximumf {m0}, {tile_max}{fm} : f32")
+        delta = _fresh("delta")
+        lines.append(f"          {delta} = arith.subf {m0}, {m_new}{fm} : f32")
+        alpha = _fresh("alpha")
+        lines.append(f"          {alpha} = math.exp2 {delta} : f32")
+
+        exp_sel = _fresh("exp_sel")
+        lines.append(f"          {exp_sel} = scf.if {pred_score} -> (f32) {{")
+        shift = _fresh("shift")
+        expv = _fresh("expv")
+        lines.append(f"            {shift} = arith.subf {score}, {m_new}{fm} : f32")
+        lines.append(f"            {expv} = math.exp2 {shift} : f32")
+        lines.append(f"            scf.yield {expv} : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+
+        sum_tile = _warp_allreduce_sum_xor_32(exp_sel, indent="          ")
+        l_scaled = _fresh("l_scaled")
+        l_new = _fresh("l_new")
+        lines.append(f"          {l_scaled} = arith.mulf {l0}, {alpha}{fm} : f32")
+        lines.append(f"          {l_new} = arith.addf {l_scaled}, {sum_tile}{fm} : f32")
+
+        m_next = _fresh("m_next")
+        l_next = _fresh("l_next")
+        lines.append(f"          {m_next} = scf.if %is0 -> (f32) {{")
+        lines.append(f"            scf.yield {m_new} : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %m : f32")
+        lines.append("          }")
+        lines.append(f"          {l_next} = scf.if %is0 -> (f32) {{")
+        lines.append(f"            scf.yield {l_new} : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %l : f32")
+        lines.append("          }")
+
+        acc_scaled = _fresh("acc_scaled")
+        lines.append(f"          {acc_scaled} = scf.if %pred_d -> (f32) {{")
+        acc_mul = _fresh("acc_mul")
+        lines.append(f"            {acc_mul} = arith.mulf %acc, {alpha}{fm} : f32")
+        lines.append(f"            scf.yield {acc_mul} : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %acc : f32")
+        lines.append("          }")
+
+        acc_next = _fresh("acc_next")
+        lines.append(f"          {acc_next} = scf.if %pred_d -> (f32) {{")
+        acc_cur = str(acc_scaled)
+        tile_keys: list[tuple[str, str]] = [
+            ("%c0", "%c0_i32"),
+            ("%c1", "%c1_i32"),
+            ("%c2", "%c2_i32"),
+            ("%c3", "%c3_i32"),
+            ("%c4", "%c4_i32"),
+            ("%c5", "%c5_i32"),
+            ("%c6", "%c6_i32"),
+            ("%c7", "%c7_i32"),
+        ]
+        for kv_off, src_lane_i32 in tile_keys:
+            kv_g = _fresh("kv_g")
+            pred_kv_g = _fresh("pred_kv_g")
+            lines.append(f"            {kv_g} = arith.addi %kv_base, {kv_off} : index")
+            lines.append(f"            {pred_kv_g} = arith.cmpi ult, {kv_g}, %kv_end : index")
+            acc_upd = _fresh("acc_upd")
+            lines.append(f"            {acc_upd} = scf.if {pred_kv_g} -> (f32) {{")
+            exp_g = _fresh("exp_g")
+            ok = _fresh("ok")
+            lines.append(f"              {exp_g}, {ok} = gpu.shuffle idx {exp_sel}, {src_lane_i32}, %c32_i32 : f32")
+            base_v = _fresh("base_v")
+            idx_v = _fresh("idx_v")
+            v_load = _fresh("v_load")
+            lines.append(f"              {base_v} = arith.muli {kv_g}, %cHD : index")
+            lines.append(f"              {idx_v} = arith.addi {base_v}, %tid : index")
+            lines.append(f"              {v_load} = memref.load {arg_ssa[v_name]}[{idx_v}] : {v_memref}")
+            acc_new = _fresh("acc_new")
+            lines.append(
+                f"              {acc_new} = llvm.intr.fma({exp_g}, {v_load}, {acc_cur}) : (f32, f32, f32) -> f32"
+            )
+            lines.append(f"              scf.yield {acc_new} : f32")
+            lines.append("            } else {")
+            lines.append(f"              scf.yield {acc_cur} : f32")
+            lines.append("            }")
+            acc_cur = str(acc_upd)
+
+        lines.append(f"            scf.yield {acc_cur} : f32")
+        lines.append("          } else {")
+        lines.append(f"            scf.yield {acc_scaled} : f32")
+        lines.append("          }")
+
+        lines.append(f"          scf.yield {m_next}, {l_next}, {acc_next} : f32, f32, f32")
+        lines.append("        }")
+
+        l_all = _fresh("l_all")
+        l_all_ok = _fresh("ok")
+        lines.append(f"        {l_all}, {l_all_ok} = gpu.shuffle idx {l_out}, %c0_i32, %c32_i32 : f32")
+        nz = _fresh("nz")
+        l_safe = _fresh("l_safe")
+        outv = _fresh("outv")
+        lines.append(f"        {nz} = arith.cmpf one, {l_all}, %c0f : f32")
+        lines.append(f"        {l_safe} = arith.select {nz}, {l_all}, %c1f : f32")
+        lines.append(f"        {outv} = arith.divf {acc_out}, {l_safe}{fm} : f32")
+        lines.append("        scf.if %pred_d {")
+        out_idx = _fresh("out_idx")
+        lines.append(f"          {out_idx} = arith.addi %base_q, %tid : index")
+        lines.append(f"          memref.store {outv}, {arg_ssa[out_name2]}[{out_idx}] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif (
