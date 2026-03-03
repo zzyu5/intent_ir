@@ -1,5 +1,16 @@
 #include "intentir_driver.h"
 
+static int intentir_write_bytes(const char* path, const void* src, size_t bytes) {
+  FILE* f = fopen(path, "wb");
+  if (!f) {
+    perror(path);
+    return 0;
+  }
+  size_t got = fwrite(src, 1, bytes, f);
+  fclose(f);
+  return got == bytes;
+}
+
 static int intentir_compare_i32(const char* name, const int32_t* got, const int32_t* ref, size_t n) {
   size_t worst_i = 0;
   int mismatch = 0;
@@ -74,6 +85,8 @@ int intentir_alloc_and_load_inputs(IntentirBufferDesc* inputs, size_t n) {
 }
 
 int intentir_compare_outputs_with_refs(const IntentirBufferDesc* outputs, size_t n, float atol, float rtol) {
+  const char* dump_env = getenv("INTENTIR_DUMP_MISMATCH_OUTPUTS");
+  const int dump = (dump_env && *dump_env && atoi(dump_env) != 0);
   int ok_all = 1;
   for (size_t i = 0; i < n; ++i) {
     const IntentirBufferDesc* b = &outputs[i];
@@ -109,6 +122,12 @@ int intentir_compare_outputs_with_refs(const IntentirBufferDesc* outputs, size_t
         break;
     }
     if (!ok) ok_all = 0;
+    if (!ok && dump) {
+      char out_path[512];
+      snprintf(out_path, sizeof(out_path), "%s_got.bin", b->name);
+      // Best-effort dump for debugging; never fail the run on dump errors.
+      (void)intentir_write_bytes(out_path, *b->ptr, b->bytes);
+    }
     free(ref);
   }
   return ok_all;

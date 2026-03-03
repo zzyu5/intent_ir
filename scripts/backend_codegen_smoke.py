@@ -100,7 +100,7 @@ def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native"
         if p == "flaggems":
             return "flaggems_triton_full_pipeline"
         if p == "native":
-            return "full_pipeline_verify"
+            return "triton_full_pipeline"
         raise ValueError(f"unsupported triton provider: {triton_provider}")
     if frontend == "tilelang":
         return "tilelang_full_pipeline"
@@ -666,6 +666,19 @@ def run_one(
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
     report_path = artifact_root / f"{kernel}.json"
     baseline_npz_path = artifact_root / f"{kernel}.baseline.npz"
+    if (
+        artifact_dir is None
+        and (not report_path.exists())
+        and str(frontend) == "triton"
+        and str(triton_provider) == "native"
+        and str(artifact_rel) == "triton_full_pipeline"
+    ):
+        legacy_root = (ROOT / "artifacts" / "full_pipeline_verify").resolve()
+        legacy_report = legacy_root / f"{kernel}.json"
+        if legacy_report.exists():
+            artifact_root = legacy_root
+            report_path = legacy_report
+            baseline_npz_path = legacy_root / f"{kernel}.baseline.npz"
     if not report_path.exists():
         raise FileNotFoundError(f"missing artifact report: {report_path}")
     if not baseline_npz_path.exists():

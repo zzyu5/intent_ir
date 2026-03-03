@@ -443,7 +443,7 @@ def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native"
         if p == "flaggems":
             return "flaggems_triton_full_pipeline"
         if p == "native":
-            return "full_pipeline_verify"
+            return "triton_full_pipeline"
         raise ValueError(f"unsupported triton provider: {triton_provider}")
     if frontend == "tilelang":
         return "tilelang_full_pipeline"
@@ -943,6 +943,18 @@ def run_remote(
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
     report_path = artifact_root / f"{kernel}.json"
     if not report_path.exists():
+        # Backward compatibility: older triton-native runs wrote to artifacts/full_pipeline_verify/.
+        if (
+            artifact_dir is None
+            and frontend == "triton"
+            and str(triton_provider) == "native"
+            and str(artifact_rel) == "triton_full_pipeline"
+        ):
+            legacy_root = (ROOT / "artifacts" / "full_pipeline_verify").resolve()
+            legacy_report = legacy_root / f"{kernel}.json"
+            if legacy_report.exists():
+                artifact_root = legacy_root
+                report_path = legacy_report
         if frontend == "triton" and str(triton_provider) == "flaggems":
             cmd_hint = f"python scripts/triton/flaggems_full_pipeline_verify.py --kernel {kernel}"
         else:
@@ -1665,6 +1677,9 @@ def run_remote(
                     env_prefix += f"GOMP_CPU_AFFINITY={str(gomp_cpu_affinity)} "
             if bool(profile_ops):
                 env_prefix += "INTENTIR_PROFILE_OPS=1 "
+            dump_mismatch = str(os.getenv("INTENTIR_DUMP_MISMATCH_OUTPUTS", "") or "").strip()
+            if dump_mismatch:
+                env_prefix += f"INTENTIR_DUMP_MISMATCH_OUTPUTS={shlex.quote(dump_mismatch)} "
 
             cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"
             if int(bench_iters_run) > 0:
