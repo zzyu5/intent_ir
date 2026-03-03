@@ -1642,7 +1642,7 @@ def _emit_elementwise_kernel(
             computed[out] = v
             continue
 
-        if name in {"add", "sub", "mul", "div", "max", "min"}:
+        if name in {"add", "sub", "mul", "div", "max", "min", "remainder"}:
             if len(ins) != 2 or not out:
                 raise RuntimeError(f"invalid binary op: {name} inputs={ins} output={out!r}")
             in0_tt = (intent.tensors or {}).get(str(ins[0]))
@@ -1669,10 +1669,15 @@ def _emit_elementwise_kernel(
                     lines.append(f"    {v} = arith.divf {a}, {b} : f32")
                 elif name == "max":
                     lines.append(f"    {v} = arith.maximumf {a}, {b} : f32")
-                else:
+                elif name == "min":
                     lines.append(f"    {v} = arith.minimumf {a}, {b} : f32")
+                else:
+                    lines.append(f"    {v} = arith.remf {a}, {b} : f32")
             elif in0_ty in {"i8", "i32"} and name in {"max", "min"}:
                 iop = "maxui" if name == "max" else "minui"
+                lines.append(f"    {v} = arith.{iop} {a}, {b} : {in0_ty}")
+            elif in0_ty in {"i8", "i32"} and name in {"add", "sub", "mul", "div"}:
+                iop = {"add": "addi", "sub": "subi", "mul": "muli", "div": "divsi"}[name]
                 lines.append(f"    {v} = arith.{iop} {a}, {b} : {in0_ty}")
             else:
                 raise RuntimeError(f"rvv cpu-loops v1 unsupported binary op: {name} dtype={in0_ty}")
@@ -2269,6 +2274,90 @@ def _emit_row_reduce_kernel(
     lines.append("        scf.yield %y : f32")
     lines.append("      }")
     lines.append(f"      memref.store %acc, %{_mlir_ident(out_name)}[%m] : {out_memref_ty}")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_row_mean_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    """
+    Implements `row_mean`: out[m] = sum(inp[m, :]) / N.
+    """
+
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 row_mean expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 row_mean supports only f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 row_mean expects rank-1 output, got {out_shape}")
+    m_dim = int(out_shape[0])
+    if m_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+    inp_name = ""
+    n_dim = 0
+    for name in ext_inputs:
+        tt = (intent.tensors or {}).get(str(name))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(str(name), intent=intent, bindings=bindings)
+        if len(shp) == 2 and int(shp[0]) == int(m_dim) and int(shp[1]) > 0:
+            inp_name = str(name)
+            n_dim = int(shp[1])
+            break
+    if not inp_name:
+        raise RuntimeError("rvv cpu-loops v1 row_mean expects external f32 input [M,N]")
+    if n_dim <= 0:
+        raise RuntimeError(f"rvv cpu-loops v1 row_mean expects N>0, got N={n_dim}")
+
+    total = int(m_dim * n_dim)
+    in_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = f"memref<{m_dim}xf32>"
+
+    n_lit = _f32_lit(float(n_dim))
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(
+        f"  func.func @{_mlir_ident(kernel_name)}(%{_mlir_ident(inp_name)}: {in_memref_ty}, %{_mlir_ident(out_name)}: {out_memref_ty}) {{"
+    )
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append("    %init = arith.constant 0.0 : f32")
+    lines.append(f"    %nf = arith.constant {n_lit} : f32")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %base = arith.muli %m, %cN : index")
+    lines.append("      %acc = scf.for %n = %c0 to %cN step %c1 iter_args(%x = %init) -> (f32) {")
+    lines.append("        %idx = arith.addi %base, %n : index")
+    lines.append(f"        %v = memref.load %{_mlir_ident(inp_name)}[%idx] : {in_memref_ty}")
+    lines.append("        %y = arith.addf %x, %v : f32")
+    lines.append("        scf.yield %y : f32")
+    lines.append("      }")
+    lines.append("      %mean = arith.divf %acc, %nf : f32")
+    lines.append(f"      memref.store %mean, %{_mlir_ident(out_name)}[%m] : {out_memref_ty}")
     lines.append("    }")
     lines.append("    return")
     lines.append("  }")
@@ -5508,6 +5597,9 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "any_kernel_dim":
         module_text = _emit_row_reduce_any_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_row_reduce_any_axis1_v1"
+    elif kernel_name == "row_mean":
+        module_text = _emit_row_mean_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_row_mean_axis1_v1"
     elif kernel_name in {"ai_bench_matmul", "matmul_relu2d", "matmul_bias_relu2d", "matmul_fused_epilogue2d"}:
         relu = kernel_name in {"matmul_relu2d", "matmul_bias_relu2d"}
         require_bias = kernel_name in {"matmul_bias_relu2d", "matmul_fused_epilogue2d"}
