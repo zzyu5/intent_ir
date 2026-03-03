@@ -4014,6 +4014,729 @@ def _emit_ai_bench_warp_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _emit_attention2d_causal_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+    block_kv: int,
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 attention2d expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 attention2d expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 attention2d expects rank-2 output, got out_shape={out_shape}")
+    q_ctx, head_dim = (int(out_shape[0]), int(out_shape[1]))
+    if q_ctx <= 0 or head_dim <= 0:
+        raise RuntimeError(f"rvv cpu-loops v1 attention2d invalid out_shape={out_shape}")
+
+    tensors = dict(intent.tensors or {})
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+
+    rank2_f32: list[tuple[str, list[int]]] = []
+    scalar_f32: list[str] = []
+    for nm in list(ext_inputs):
+        tt = tensors.get(str(nm))
+        if tt is None:
+            continue
+        dt = _dtype(getattr(tt, "dtype", "f32"))
+        shp = _shape(str(nm), intent=intent, bindings=bindings)
+        if dt == "f32" and len(shp) == 0:
+            scalar_f32.append(str(nm))
+        if dt == "f32" and len(shp) == 2 and int(shp[1]) == int(head_dim):
+            rank2_f32.append((str(nm), list(shp)))
+
+    q_candidates = [nm for nm, shp in rank2_f32 if list(shp) == list(out_shape)]
+    q_name = ""
+    if q_candidates:
+        for nm in q_candidates:
+            n = str(nm).strip().lower()
+            if n in {"q", "query"} or n.startswith("q_") or n.startswith("qptr") or "query" in n:
+                q_name = str(nm)
+                break
+        if not q_name:
+            for nm in q_candidates:
+                n = str(nm).strip().lower()
+                if (n == "q") or ("q" in n and "kv" not in n):
+                    q_name = str(nm)
+                    break
+    if not q_name and len(q_candidates) == 1:
+        q_name = str(q_candidates[0])
+    if not q_name:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 attention2d failed to infer Q tensor for kernel={kernel_name!r} (candidates={q_candidates})"
+        )
+    kv_candidates = [(nm, shp) for nm, shp in rank2_f32 if nm != q_name]
+    groups: dict[tuple[int, int], list[str]] = {}
+    for nm, shp in kv_candidates:
+        if len(shp) != 2:
+            continue
+        groups.setdefault((int(shp[0]), int(shp[1])), []).append(str(nm))
+    kv_shape = None
+    kv_names: list[str] = []
+    for sh, names in groups.items():
+        if len(names) >= 2:
+            kv_shape = list(sh)
+            kv_names = list(names[:2])
+            break
+    if kv_shape is None or len(kv_names) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 attention2d failed to infer K/V tensors for kernel={kernel_name!r}")
+    kv_ctx = int(kv_shape[0])
+    if kv_ctx <= 0:
+        raise RuntimeError(f"rvv cpu-loops v1 attention2d invalid KV_CTX={kv_ctx}")
+
+    # Assign K/V by name heuristic.
+    k_name = next((n for n in kv_names if "k" in str(n).lower()), kv_names[0])
+    v_name = next((n for n in kv_names if ("v" in str(n).lower()) and str(n) != str(k_name)), "")
+    if not v_name:
+        v_name = kv_names[1] if kv_names[0] == k_name else kv_names[0]
+
+    sm_scale_name = ""
+    for nm in scalar_f32:
+        if "sm_scale" in str(nm).lower() or str(nm).lower() in {"scale", "sm_scale", "smscale"}:
+            sm_scale_name = str(nm)
+            break
+    if not sm_scale_name and scalar_f32:
+        sm_scale_name = str(scalar_f32[0])
+
+    arg_decls: list[str] = []
+    memref_ty_by_name: dict[str, str] = {}
+    for name in list(io_names):
+        tt = tensors.get(str(name))
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        sh = _shape(str(name), intent=intent, bindings=bindings)
+        numel = 1
+        for d in sh:
+            numel *= int(d)
+        memref_ty = f"memref<{int(numel)}x{elem_ty}>"
+        memref_ty_by_name[str(name)] = memref_ty
+        arg_decls.append(f"%{_mlir_ident(name)}: {memref_ty}")
+
+    q_memref_ty = memref_ty_by_name[q_name]
+    k_memref_ty = memref_ty_by_name[k_name]
+    v_memref_ty = memref_ty_by_name[v_name]
+    out_memref_ty = memref_ty_by_name[out_name]
+    sm_scale_memref_ty = memref_ty_by_name.get(str(sm_scale_name), "")
+
+    acc_memref_ty = f"memref<{int(head_dim)}xf32>"
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cQ = arith.constant {q_ctx} : index")
+    lines.append(f"    %cKV = arith.constant {kv_ctx} : index")
+    lines.append(f"    %cHD = arith.constant {head_dim} : index")
+    lines.append(f"    %cBlockKV = arith.constant {int(block_kv)} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %neg_inf = arith.constant 0xFF800000 : f32")
+    if sm_scale_name:
+        lines.append(f"    %sm = memref.load %{_mlir_ident(sm_scale_name)}[%c0] : {sm_scale_memref_ty}")
+    else:
+        import math as _math  # noqa: PLC0415
+
+        sm = 1.0 / _math.sqrt(float(head_dim))
+        lines.append(f"    %sm = arith.constant {_f32_lit(float(sm))} : f32")
+    lines.append(f"    %acc = memref.alloca() : {acc_memref_ty}")
+    lines.append("    scf.for %q = %c0 to %cQ step %c1 {")
+    lines.append("      %q_base = arith.muli %q, %cHD : index")
+    lines.append("      scf.for %d0 = %c0 to %cHD step %c1 {")
+    lines.append(f"        memref.store %c0f, %acc[%d0] : {acc_memref_ty}")
+    lines.append("      }")
+    # kv_end = min(KV_CTX, q+1) for causal attention.
+    lines.append("      %q1 = arith.addi %q, %c1 : index")
+    lines.append("      %p_kvend = arith.cmpi ule, %q1, %cKV : index")
+    lines.append("      %kv_end = arith.select %p_kvend, %q1, %cKV : index")
+    lines.append(
+        "      %m_out, %l_out = scf.for %tile = %c0 to %kv_end step %cBlockKV "
+        "iter_args(%m_i = %neg_inf, %l_i = %c0f) -> (f32, f32) {"
+    )
+    lines.append("        %tile_end0 = arith.addi %tile, %cBlockKV : index")
+    lines.append("        %p_tile_end = arith.cmpi ule, %tile_end0, %kv_end : index")
+    lines.append("        %tile_end = arith.select %p_tile_end, %tile_end0, %kv_end : index")
+    # Pass1: max score in tile.
+    lines.append("        %m_tile = scf.for %kv = %tile to %tile_end step %c1 iter_args(%mx = %neg_inf) -> (f32) {")
+    lines.append("          %k_base1 = arith.muli %kv, %cHD : index")
+    lines.append("          %dot1 = scf.for %d1 = %c0 to %cHD step %c1 iter_args(%s1 = %c0f) -> (f32) {")
+    lines.append("            %q_idx1 = arith.addi %q_base, %d1 : index")
+    lines.append("            %k_idx1 = arith.addi %k_base1, %d1 : index")
+    lines.append(f"            %qv1 = memref.load %{_mlir_ident(q_name)}[%q_idx1] : {q_memref_ty}")
+    lines.append(f"            %kvv1 = memref.load %{_mlir_ident(k_name)}[%k_idx1] : {k_memref_ty}")
+    lines.append("            %p0 = arith.mulf %qv1, %kvv1 : f32")
+    lines.append("            %s2 = arith.addf %s1, %p0 : f32")
+    lines.append("            scf.yield %s2 : f32")
+    lines.append("          }")
+    lines.append("          %score1 = arith.mulf %dot1, %sm : f32")
+    lines.append("          %mx2 = arith.maximumf %mx, %score1 : f32")
+    lines.append("          scf.yield %mx2 : f32")
+    lines.append("        }")
+    # m_new, alpha, scale l/acc
+    lines.append("        %m_new = arith.maximumf %m_i, %m_tile : f32")
+    lines.append("        %delta = arith.subf %m_i, %m_new : f32")
+    lines.append("        %alpha = math.exp %delta : f32")
+    lines.append("        %l_scaled = arith.mulf %l_i, %alpha : f32")
+    lines.append("        scf.for %d2 = %c0 to %cHD step %c1 {")
+    lines.append(f"          %old = memref.load %acc[%d2] : {acc_memref_ty}")
+    lines.append("          %scaled = arith.mulf %old, %alpha : f32")
+    lines.append(f"          memref.store %scaled, %acc[%d2] : {acc_memref_ty}")
+    lines.append("        }")
+    # Pass2: sum p and accumulate acc.
+    lines.append("        %sum_p = scf.for %kv2 = %tile to %tile_end step %c1 iter_args(%sp = %c0f) -> (f32) {")
+    lines.append("          %k_base2 = arith.muli %kv2, %cHD : index")
+    lines.append("          %dot2 = scf.for %d3 = %c0 to %cHD step %c1 iter_args(%s3 = %c0f) -> (f32) {")
+    lines.append("            %q_idx2 = arith.addi %q_base, %d3 : index")
+    lines.append("            %k_idx2 = arith.addi %k_base2, %d3 : index")
+    lines.append(f"            %qv2 = memref.load %{_mlir_ident(q_name)}[%q_idx2] : {q_memref_ty}")
+    lines.append(f"            %kvv2 = memref.load %{_mlir_ident(k_name)}[%k_idx2] : {k_memref_ty}")
+    lines.append("            %p1 = arith.mulf %qv2, %kvv2 : f32")
+    lines.append("            %s4 = arith.addf %s3, %p1 : f32")
+    lines.append("            scf.yield %s4 : f32")
+    lines.append("          }")
+    lines.append("          %score2 = arith.mulf %dot2, %sm : f32")
+    lines.append("          %shift = arith.subf %score2, %m_new : f32")
+    lines.append("          %p2 = math.exp %shift : f32")
+    lines.append("          %sp2 = arith.addf %sp, %p2 : f32")
+    lines.append("          %v_base2 = arith.muli %kv2, %cHD : index")
+    lines.append("          scf.for %d4 = %c0 to %cHD step %c1 {")
+    lines.append("            %v_idx = arith.addi %v_base2, %d4 : index")
+    lines.append(f"            %vv = memref.load %{_mlir_ident(v_name)}[%v_idx] : {v_memref_ty}")
+    lines.append(f"            %cur = memref.load %acc[%d4] : {acc_memref_ty}")
+    lines.append("            %pv = arith.mulf %p2, %vv : f32")
+    lines.append("            %nxt = arith.addf %cur, %pv : f32")
+    lines.append(f"            memref.store %nxt, %acc[%d4] : {acc_memref_ty}")
+    lines.append("          }")
+    lines.append("          scf.yield %sp2 : f32")
+    lines.append("        }")
+    lines.append("        %l_next = arith.addf %l_scaled, %sum_p : f32")
+    lines.append("        scf.yield %m_new, %l_next : f32, f32")
+    lines.append("      }")
+    # Write output: acc / l_out.
+    lines.append("      scf.for %d5 = %c0 to %cHD step %c1 {")
+    lines.append(f"        %av = memref.load %acc[%d5] : {acc_memref_ty}")
+    lines.append("        %outv = arith.divf %av, %l_out : f32")
+    lines.append("        %o_idx = arith.addi %q_base, %d5 : index")
+    lines.append(f"        memref.store %outv, %{_mlir_ident(out_name)}[%o_idx] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_attn_fwd_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 _attn_fwd expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 _attn_fwd expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 4:
+        raise RuntimeError(f"rvv cpu-loops v1 _attn_fwd expects rank-4 output, got out_shape={out_shape}")
+    z_dim, q_heads, q_ctx, head_dim = map(int, out_shape)
+    if z_dim != 1 or q_heads != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 _attn_fwd supports only Z=q_numhead=1, got Z={z_dim} heads={q_heads}")
+    kv_ctx = int(bindings.get("KV_CTX") or 0)
+    kv_heads = int(bindings.get("kv_numhead") or 1)
+    if kv_heads != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 _attn_fwd supports only kv_numhead=1, got kv_numhead={kv_heads}")
+
+    tensors = dict(intent.tensors or {})
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+
+    # Infer Q/K/V/scalars by shape (ignore attn_mask and other metadata).
+    q_name = ""
+    k_name = ""
+    v_name = ""
+    sm_scale_name = ""
+    q_candidates: list[str] = []
+    for nm in ext_inputs:
+        tt = tensors.get(str(nm))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(str(nm), intent=intent, bindings=bindings)
+        if list(shp) == list(out_shape):
+            q_candidates.append(str(nm))
+    if q_candidates:
+        for nm in q_candidates:
+            n = str(nm).strip().lower()
+            if n in {"q", "query"} or n.startswith("q_") or n.startswith("qptr") or "query" in n:
+                q_name = str(nm)
+                break
+        if not q_name:
+            for nm in q_candidates:
+                n = str(nm).strip().lower()
+                if (n == "q") or ("q" in n and "kv" not in n):
+                    q_name = str(nm)
+                    break
+    if not q_name and len(q_candidates) == 1:
+        q_name = str(q_candidates[0])
+
+    # Find scalar sm_scale.
+    for nm in ext_inputs:
+        tt = tensors.get(str(nm))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(str(nm), intent=intent, bindings=bindings)
+        if len(shp) == 0 and ("sm_scale" in str(nm).lower() or str(nm).lower() in {"scale", "sm_scale", "smscale"}):
+            sm_scale_name = str(nm)
+            break
+
+    # Find K/V: rank-4 f32 with last dim == head_dim and third dim == KV_CTX (if known).
+    rank4_f32: list[tuple[str, list[int]]] = []
+    for nm in ext_inputs:
+        tt = tensors.get(str(nm))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        if str(nm) == q_name:
+            continue
+        shp = _shape(str(nm), intent=intent, bindings=bindings)
+        if len(shp) == 4 and int(shp[-1]) == int(head_dim):
+            rank4_f32.append((str(nm), list(shp)))
+    groups: dict[tuple[int, int, int, int], list[str]] = {}
+    for nm, shp in rank4_f32:
+        groups.setdefault(tuple(int(x) for x in shp), []).append(nm)
+    for shp, names in groups.items():
+        if len(names) < 2:
+            continue
+        if kv_ctx > 0 and int(shp[2]) != int(kv_ctx):
+            continue
+        k_name = next((n for n in names if "k" in str(n).lower()), names[0])
+        v_name = next((n for n in names if ("v" in str(n).lower()) and str(n) != str(k_name)), "")
+        if not v_name:
+            v_name = names[1] if names[0] == k_name else names[0]
+        if kv_ctx <= 0:
+            kv_ctx = int(shp[2])
+        break
+    if not q_name or not k_name or not v_name:
+        raise RuntimeError(f"rvv cpu-loops v1 _attn_fwd failed to infer Q/K/V tensors for kernel={kernel_name!r}")
+    if kv_ctx <= 0:
+        raise RuntimeError("rvv cpu-loops v1 _attn_fwd missing KV_CTX")
+
+    if not sm_scale_name:
+        for nm in ext_inputs:
+            tt = tensors.get(str(nm))
+            if tt is None:
+                continue
+            if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+                continue
+            shp = _shape(str(nm), intent=intent, bindings=bindings)
+            if len(shp) == 0:
+                sm_scale_name = str(nm)
+                break
+
+    arg_decls: list[str] = []
+    memref_ty_by_name: dict[str, str] = {}
+    for name in list(io_names):
+        tt = tensors.get(str(name))
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        sh = _shape(str(name), intent=intent, bindings=bindings)
+        numel = 1
+        for d in sh:
+            numel *= int(d)
+        memref_ty = f"memref<{int(numel)}x{elem_ty}>"
+        memref_ty_by_name[str(name)] = memref_ty
+        arg_decls.append(f"%{_mlir_ident(name)}: {memref_ty}")
+
+    q_memref_ty = memref_ty_by_name[q_name]
+    k_memref_ty = memref_ty_by_name[k_name]
+    v_memref_ty = memref_ty_by_name[v_name]
+    out_memref_ty = memref_ty_by_name[out_name]
+    sm_scale_memref_ty = memref_ty_by_name.get(str(sm_scale_name), "")
+
+    acc_memref_ty = f"memref<{int(head_dim)}xf32>"
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cQ = arith.constant {int(q_ctx)} : index")
+    lines.append(f"    %cKV = arith.constant {int(kv_ctx)} : index")
+    lines.append(f"    %cHD = arith.constant {int(head_dim)} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %neg_inf = arith.constant 0xFF800000 : f32")
+    if sm_scale_name:
+        lines.append(f"    %sm = memref.load %{_mlir_ident(sm_scale_name)}[%c0] : {sm_scale_memref_ty}")
+    else:
+        import math as _math  # noqa: PLC0415
+
+        sm = 1.0 / _math.sqrt(float(head_dim))
+        lines.append(f"    %sm = arith.constant {_f32_lit(float(sm))} : f32")
+    lines.append(f"    %acc = memref.alloca() : {acc_memref_ty}")
+    # Only supports single batch/head; flatten indices are row-major.
+    lines.append("    scf.for %q = %c0 to %cQ step %c1 {")
+    lines.append("      %q_base = arith.muli %q, %cHD : index")
+    lines.append("      scf.for %d0 = %c0 to %cHD step %c1 {")
+    lines.append(f"        memref.store %c0f, %acc[%d0] : {acc_memref_ty}")
+    lines.append("      }")
+    # Pass1: max over kv.
+    lines.append("      %mx = scf.for %kv = %c0 to %cKV step %c1 iter_args(%x = %neg_inf) -> (f32) {")
+    lines.append("        %k_base1 = arith.muli %kv, %cHD : index")
+    lines.append("        %dot1 = scf.for %d1 = %c0 to %cHD step %c1 iter_args(%s1 = %c0f) -> (f32) {")
+    lines.append("          %q_idx1 = arith.addi %q_base, %d1 : index")
+    lines.append("          %k_idx1 = arith.addi %k_base1, %d1 : index")
+    lines.append(f"          %qv1 = memref.load %{_mlir_ident(q_name)}[%q_idx1] : {q_memref_ty}")
+    lines.append(f"          %kvv1 = memref.load %{_mlir_ident(k_name)}[%k_idx1] : {k_memref_ty}")
+    lines.append("          %p0 = arith.mulf %qv1, %kvv1 : f32")
+    lines.append("          %s2 = arith.addf %s1, %p0 : f32")
+    lines.append("          scf.yield %s2 : f32")
+    lines.append("        }")
+    lines.append("        %score1 = arith.mulf %dot1, %sm : f32")
+    lines.append("        %x2 = arith.maximumf %x, %score1 : f32")
+    lines.append("        scf.yield %x2 : f32")
+    lines.append("      }")
+    # Pass2: sum exp and accumulate.
+    lines.append("      %sum = scf.for %kv2 = %c0 to %cKV step %c1 iter_args(%sp = %c0f) -> (f32) {")
+    lines.append("        %k_base2 = arith.muli %kv2, %cHD : index")
+    lines.append("        %dot2 = scf.for %d2 = %c0 to %cHD step %c1 iter_args(%s3 = %c0f) -> (f32) {")
+    lines.append("          %q_idx2 = arith.addi %q_base, %d2 : index")
+    lines.append("          %k_idx2 = arith.addi %k_base2, %d2 : index")
+    lines.append(f"          %qv2 = memref.load %{_mlir_ident(q_name)}[%q_idx2] : {q_memref_ty}")
+    lines.append(f"          %kvv2 = memref.load %{_mlir_ident(k_name)}[%k_idx2] : {k_memref_ty}")
+    lines.append("          %p1 = arith.mulf %qv2, %kvv2 : f32")
+    lines.append("          %s4 = arith.addf %s3, %p1 : f32")
+    lines.append("          scf.yield %s4 : f32")
+    lines.append("        }")
+    lines.append("        %score2 = arith.mulf %dot2, %sm : f32")
+    lines.append("        %shift = arith.subf %score2, %mx : f32")
+    lines.append("        %p2 = math.exp %shift : f32")
+    lines.append("        %sp2 = arith.addf %sp, %p2 : f32")
+    lines.append("        %v_base2 = arith.muli %kv2, %cHD : index")
+    lines.append("        scf.for %d3 = %c0 to %cHD step %c1 {")
+    lines.append("          %v_idx = arith.addi %v_base2, %d3 : index")
+    lines.append(f"          %vv = memref.load %{_mlir_ident(v_name)}[%v_idx] : {v_memref_ty}")
+    lines.append(f"          %cur = memref.load %acc[%d3] : {acc_memref_ty}")
+    lines.append("          %pv = arith.mulf %p2, %vv : f32")
+    lines.append("          %nxt = arith.addf %cur, %pv : f32")
+    lines.append(f"          memref.store %nxt, %acc[%d3] : {acc_memref_ty}")
+    lines.append("        }")
+    lines.append("        scf.yield %sp2 : f32")
+    lines.append("      }")
+    lines.append("      scf.for %d4 = %c0 to %cHD step %c1 {")
+    lines.append(f"        %av = memref.load %acc[%d4] : {acc_memref_ty}")
+    lines.append("        %outv = arith.divf %av, %sum : f32")
+    lines.append("        %o_idx = arith.addi %q_base, %d4 : index")
+    lines.append(f"        memref.store %outv, %{_mlir_ident(out_name)}[%o_idx] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_upsample_bicubic2d_aa_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 upsample_bicubic2d_aa expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 upsample_bicubic2d_aa expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 4:
+        raise RuntimeError(f"rvv cpu-loops v1 upsample_bicubic2d_aa expects rank-4 output, got out_shape={out_shape}")
+    n_dim, c_dim, oh_dim, ow_dim = map(int, out_shape)
+    if n_dim <= 0 or c_dim <= 0 or oh_dim <= 0 or ow_dim <= 0:
+        raise RuntimeError(f"rvv cpu-loops v1 upsample_bicubic2d_aa invalid output shape: {out_shape}")
+
+    tensors = dict(intent.tensors or {})
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+
+    # Infer input tensor by shape (N,C,IH,IW) and dtype.
+    in_name = ""
+    ih_dim = 0
+    iw_dim = 0
+    for nm in ext_inputs:
+        tt = tensors.get(str(nm))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(str(nm), intent=intent, bindings=bindings)
+        if len(shp) == 4 and int(shp[0]) == int(n_dim) and int(shp[1]) == int(c_dim):
+            in_name = str(nm)
+            ih_dim = int(shp[2])
+            iw_dim = int(shp[3])
+            break
+    if not in_name or ih_dim <= 0 or iw_dim <= 0:
+        raise RuntimeError("rvv cpu-loops v1 upsample_bicubic2d_aa failed to infer input tensor")
+
+    arg_decls: list[str] = []
+    memref_ty_by_name: dict[str, str] = {}
+    for name in list(io_names):
+        tt = tensors.get(str(name))
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        sh = _shape(str(name), intent=intent, bindings=bindings)
+        numel = 1
+        for d in sh:
+            numel *= int(d)
+        memref_ty = f"memref<{int(numel)}x{elem_ty}>"
+        memref_ty_by_name[str(name)] = memref_ty
+        arg_decls.append(f"%{_mlir_ident(name)}: {memref_ty}")
+
+    in_memref_ty = memref_ty_by_name[in_name]
+    out_memref_ty = memref_ty_by_name[out_name]
+
+    # reciprocal_scale_h/w = IH/OH, IW/OW (runner semantics).
+    rec_h = float(ih_dim) / float(oh_dim) if oh_dim > 0 else 1.0
+    rec_w = float(iw_dim) / float(ow_dim) if ow_dim > 0 else 1.0
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append("    %c2 = arith.constant 2 : index")
+    lines.append("    %c3 = arith.constant 3 : index")
+    lines.append("    %c4 = arith.constant 4 : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append(f"    %cC = arith.constant {c_dim} : index")
+    lines.append(f"    %cIH = arith.constant {ih_dim} : index")
+    lines.append(f"    %cIW = arith.constant {iw_dim} : index")
+    lines.append(f"    %cOH = arith.constant {oh_dim} : index")
+    lines.append(f"    %cOW = arith.constant {ow_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %c1f = arith.constant 1.0 : f32")
+    lines.append("    %c2f = arith.constant 2.0 : f32")
+    lines.append("    %c3f = arith.constant 3.0 : f32")
+    lines.append("    %c4f = arith.constant 4.0 : f32")
+    lines.append("    %c5f = arith.constant 5.0 : f32")
+    lines.append("    %c8f = arith.constant 8.0 : f32")
+    lines.append("    %c0_5 = arith.constant 0.5 : f32")
+    lines.append("    %support = arith.constant 2.0 : f32")
+    lines.append("    %a = arith.constant -0.5 : f32")
+    lines.append("    %a2 = arith.addf %a, %c2f : f32")
+    lines.append("    %a3 = arith.addf %a, %c3f : f32")
+    lines.append(f"    %rec_h = arith.constant {_f32_lit(float(rec_h))} : f32")
+    lines.append(f"    %rec_w = arith.constant {_f32_lit(float(rec_w))} : f32")
+    lines.append(f"    %iw_f = arith.constant {_f32_lit(float(iw_dim))} : f32")
+    lines.append(f"    %ih_f = arith.constant {_f32_lit(float(ih_dim))} : f32")
+
+    lines.append("    %hw_in = arith.muli %cIH, %cIW : index")
+    lines.append("    %hw_out = arith.muli %cOH, %cOW : index")
+    lines.append("    scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("      scf.for %c = %c0 to %cC step %c1 {")
+    lines.append("        %nc = arith.muli %n, %cC : index")
+    lines.append("        %nc2 = arith.addi %nc, %c : index")
+    lines.append("        %in_base = arith.muli %nc2, %hw_in : index")
+    lines.append("        %out_base = arith.muli %nc2, %hw_out : index")
+    lines.append("        scf.for %oh = %c0 to %cOH step %c1 {")
+    lines.append("          %oh_i32 = arith.index_cast %oh : index to i32")
+    lines.append("          %oh_f = arith.sitofp %oh_i32 : i32 to f32")
+    lines.append("          %oh_p = arith.addf %oh_f, %c0_5 : f32")
+    lines.append("          %center_h = arith.mulf %oh_p, %rec_h : f32")
+    lines.append("          %h0 = arith.subf %center_h, %support : f32")
+    lines.append("          %h1 = arith.addf %h0, %c0_5 : f32")
+    lines.append("          %h2 = arith.maximumf %h1, %c0f : f32")
+    lines.append("          %span_h_i32 = arith.fptosi %h2 : f32 to i32")
+    lines.append("          %span_h = arith.index_cast %span_h_i32 : i32 to index")
+    lines.append("          %span_h_f = arith.sitofp %span_h_i32 : i32 to f32")
+    lines.append("          %h3 = arith.addf %center_h, %support : f32")
+    lines.append("          %h4 = arith.addf %h3, %c0_5 : f32")
+    lines.append("          %h5 = arith.minimumf %h4, %ih_f : f32")
+    lines.append("          %h6 = arith.subf %h5, %span_h_f : f32")
+    lines.append("          %span_sz_h_i32 = arith.fptosi %h6 : f32 to i32")
+    lines.append("          %span_sz_h = arith.index_cast %span_sz_h_i32 : i32 to index")
+    lines.append("          %start_minus_center_h = arith.subf %span_h_f, %center_h : f32")
+    lines.append("          %out_row = arith.muli %oh, %cOW : index")
+    lines.append("          scf.for %ow = %c0 to %cOW step %c1 {")
+    lines.append("            %ow_i32 = arith.index_cast %ow : index to i32")
+    lines.append("            %ow_f = arith.sitofp %ow_i32 : i32 to f32")
+    lines.append("            %ow_p = arith.addf %ow_f, %c0_5 : f32")
+    lines.append("            %center_w = arith.mulf %ow_p, %rec_w : f32")
+    lines.append("            %w0 = arith.subf %center_w, %support : f32")
+    lines.append("            %w1 = arith.addf %w0, %c0_5 : f32")
+    lines.append("            %w2 = arith.maximumf %w1, %c0f : f32")
+    lines.append("            %span_w_i32 = arith.fptosi %w2 : f32 to i32")
+    lines.append("            %span_w = arith.index_cast %span_w_i32 : i32 to index")
+    lines.append("            %span_w_f = arith.sitofp %span_w_i32 : i32 to f32")
+    lines.append("            %w3 = arith.addf %center_w, %support : f32")
+    lines.append("            %w4 = arith.addf %w3, %c0_5 : f32")
+    lines.append("            %w5 = arith.minimumf %w4, %iw_f : f32")
+    lines.append("            %w6 = arith.subf %w5, %span_w_f : f32")
+    lines.append("            %span_sz_w_i32 = arith.fptosi %w6 : f32 to i32")
+    lines.append("            %span_sz_w = arith.index_cast %span_sz_w_i32 : i32 to index")
+    lines.append("            %start_minus_center_w = arith.subf %span_w_f, %center_w : f32")
+
+    # weights x0..x4 (raw)
+    for i in range(5):
+        c_idx = "%c0" if i == 0 else ("%c1" if i == 1 else f"%c{i}")
+        lines.append(f"            %px{i} = arith.cmpi ult, {c_idx}, %span_sz_w : index")
+        lines.append(f"            %x{i}_off = arith.constant {_f32_lit(float(i))} : f32")
+        lines.append(f"            %x{i}_t0 = arith.addf %x{i}_off, %start_minus_center_w : f32")
+        lines.append(f"            %x{i}_t1 = arith.addf %x{i}_t0, %c0_5 : f32")
+        lines.append(f"            %wx{i}_abs = math.absf %x{i}_t1 : f32")
+        lines.append(f"            %wx{i}_lt1 = arith.cmpf olt, %wx{i}_abs, %c1f : f32")
+        lines.append(f"            %wx{i}_lt2 = arith.cmpf olt, %wx{i}_abs, %c2f : f32")
+        lines.append(f"            %wx{i}_u0 = arith.mulf %a2, %wx{i}_abs : f32")
+        lines.append(f"            %wx{i}_u1 = arith.subf %wx{i}_u0, %a3 : f32")
+        lines.append(f"            %wx{i}_u2 = arith.mulf %wx{i}_u1, %wx{i}_abs : f32")
+        lines.append(f"            %wx{i}_u3 = arith.mulf %wx{i}_u2, %wx{i}_abs : f32")
+        lines.append(f"            %wx{i}_w1 = arith.addf %wx{i}_u3, %c1f : f32")
+        lines.append(f"            %wx{i}_v0 = arith.subf %wx{i}_abs, %c5f : f32")
+        lines.append(f"            %wx{i}_v1 = arith.mulf %wx{i}_v0, %wx{i}_abs : f32")
+        lines.append(f"            %wx{i}_v2 = arith.addf %wx{i}_v1, %c8f : f32")
+        lines.append(f"            %wx{i}_v3 = arith.mulf %wx{i}_v2, %wx{i}_abs : f32")
+        lines.append(f"            %wx{i}_v4 = arith.subf %wx{i}_v3, %c4f : f32")
+        lines.append(f"            %wx{i}_w2 = arith.mulf %wx{i}_v4, %a : f32")
+        lines.append(f"            %wx{i}_s2 = arith.select %wx{i}_lt2, %wx{i}_w2, %c0f : f32")
+        lines.append(f"            %wx{i}_s1 = arith.select %wx{i}_lt1, %wx{i}_w1, %wx{i}_s2 : f32")
+        lines.append(f"            %xw{i} = arith.select %px{i}, %wx{i}_s1, %c0f : f32")
+
+    lines.append("            %xw_sum0 = arith.addf %xw0, %xw1 : f32")
+    lines.append("            %xw_sum1 = arith.addf %xw_sum0, %xw2 : f32")
+    lines.append("            %xw_sum2 = arith.addf %xw_sum1, %xw3 : f32")
+    lines.append("            %xw_sum = arith.addf %xw_sum2, %xw4 : f32")
+    lines.append("            %xw_nz = arith.cmpf une, %xw_sum, %c0f : f32")
+    lines.append("            %xw_den = arith.select %xw_nz, %xw_sum, %c1f : f32")
+    for i in range(5):
+        lines.append(f"            %wx{i} = arith.divf %xw{i}, %xw_den : f32")
+
+    # weights y0..y4 (raw)
+    for i in range(5):
+        c_idx = "%c0" if i == 0 else ("%c1" if i == 1 else f"%c{i}")
+        lines.append(f"            %py{i} = arith.cmpi ult, {c_idx}, %span_sz_h : index")
+        lines.append(f"            %y{i}_off = arith.constant {_f32_lit(float(i))} : f32")
+        lines.append(f"            %y{i}_t0 = arith.addf %y{i}_off, %start_minus_center_h : f32")
+        lines.append(f"            %y{i}_t1 = arith.addf %y{i}_t0, %c0_5 : f32")
+        lines.append(f"            %wy{i}_abs = math.absf %y{i}_t1 : f32")
+        lines.append(f"            %wy{i}_lt1 = arith.cmpf olt, %wy{i}_abs, %c1f : f32")
+        lines.append(f"            %wy{i}_lt2 = arith.cmpf olt, %wy{i}_abs, %c2f : f32")
+        lines.append(f"            %wy{i}_u0 = arith.mulf %a2, %wy{i}_abs : f32")
+        lines.append(f"            %wy{i}_u1 = arith.subf %wy{i}_u0, %a3 : f32")
+        lines.append(f"            %wy{i}_u2 = arith.mulf %wy{i}_u1, %wy{i}_abs : f32")
+        lines.append(f"            %wy{i}_u3 = arith.mulf %wy{i}_u2, %wy{i}_abs : f32")
+        lines.append(f"            %wy{i}_w1 = arith.addf %wy{i}_u3, %c1f : f32")
+        lines.append(f"            %wy{i}_v0 = arith.subf %wy{i}_abs, %c5f : f32")
+        lines.append(f"            %wy{i}_v1 = arith.mulf %wy{i}_v0, %wy{i}_abs : f32")
+        lines.append(f"            %wy{i}_v2 = arith.addf %wy{i}_v1, %c8f : f32")
+        lines.append(f"            %wy{i}_v3 = arith.mulf %wy{i}_v2, %wy{i}_abs : f32")
+        lines.append(f"            %wy{i}_v4 = arith.subf %wy{i}_v3, %c4f : f32")
+        lines.append(f"            %wy{i}_w2 = arith.mulf %wy{i}_v4, %a : f32")
+        lines.append(f"            %wy{i}_s2 = arith.select %wy{i}_lt2, %wy{i}_w2, %c0f : f32")
+        lines.append(f"            %wy{i}_s1 = arith.select %wy{i}_lt1, %wy{i}_w1, %wy{i}_s2 : f32")
+        lines.append(f"            %yw{i} = arith.select %py{i}, %wy{i}_s1, %c0f : f32")
+
+    lines.append("            %yw_sum0 = arith.addf %yw0, %yw1 : f32")
+    lines.append("            %yw_sum1 = arith.addf %yw_sum0, %yw2 : f32")
+    lines.append("            %yw_sum2 = arith.addf %yw_sum1, %yw3 : f32")
+    lines.append("            %yw_sum = arith.addf %yw_sum2, %yw4 : f32")
+    lines.append("            %yw_nz = arith.cmpf une, %yw_sum, %c0f : f32")
+    lines.append("            %yw_den = arith.select %yw_nz, %yw_sum, %c1f : f32")
+    for i in range(5):
+        lines.append(f"            %wy{i} = arith.divf %yw{i}, %yw_den : f32")
+
+    # Neighborhood indices.
+    for i in range(5):
+        c_idx = "%c0" if i == 0 else ("%c1" if i == 1 else f"%c{i}")
+        lines.append(f"            %ih{i} = arith.addi %span_h, {c_idx} : index")
+        lines.append(f"            %pyh{i} = arith.cmpi ult, %ih{i}, %cIH : index")
+        lines.append(f"            %ih{i}_off = arith.muli %ih{i}, %cIW : index")
+        lines.append(f"            %row{i}_base = arith.addi %in_base, %ih{i}_off : index")
+        lines.append(f"            %iw{i} = arith.addi %span_w, {c_idx} : index")
+        lines.append(f"            %pxw{i} = arith.cmpi ult, %iw{i}, %cIW : index")
+
+    # Load 5x5 neighborhood with guards.
+    for y in range(5):
+        for x in range(5):
+            lines.append(f"            %p{y}{x} = arith.andi %pyh{y}, %pxw{x} : i1")
+            lines.append(f"            %v{y}{x} = scf.if %p{y}{x} -> (f32) {{")
+            lines.append(f"              %idx{y}{x} = arith.addi %row{y}_base, %iw{x} : index")
+            lines.append(f"              %vv{y}{x} = memref.load %{_mlir_ident(in_name)}[%idx{y}{x}] : {in_memref_ty}")
+            lines.append(f"              scf.yield %vv{y}{x} : f32")
+            lines.append("            } else {")
+            lines.append("              scf.yield %c0f : f32")
+            lines.append("            }")
+
+    # dataY = sum_x valYx * wxX
+    for y in range(5):
+        lines.append(f"            %d{y}0 = arith.mulf %v{y}0, %wx0 : f32")
+        lines.append(f"            %d{y}1 = arith.mulf %v{y}1, %wx1 : f32")
+        lines.append(f"            %d{y}2 = arith.mulf %v{y}2, %wx2 : f32")
+        lines.append(f"            %d{y}3 = arith.mulf %v{y}3, %wx3 : f32")
+        lines.append(f"            %d{y}4 = arith.mulf %v{y}4, %wx4 : f32")
+        lines.append(f"            %d{y}_s0 = arith.addf %d{y}0, %d{y}1 : f32")
+        lines.append(f"            %d{y}_s1 = arith.addf %d{y}_s0, %d{y}2 : f32")
+        lines.append(f"            %d{y}_s2 = arith.addf %d{y}_s1, %d{y}3 : f32")
+        lines.append(f"            %data{y} = arith.addf %d{y}_s2, %d{y}4 : f32")
+
+    # result = sum_y dataY * wyY
+    lines.append("            %r0 = arith.mulf %data0, %wy0 : f32")
+    lines.append("            %r1 = arith.mulf %data1, %wy1 : f32")
+    lines.append("            %r2 = arith.mulf %data2, %wy2 : f32")
+    lines.append("            %r3 = arith.mulf %data3, %wy3 : f32")
+    lines.append("            %r4 = arith.mulf %data4, %wy4 : f32")
+    lines.append("            %r_s0 = arith.addf %r0, %r1 : f32")
+    lines.append("            %r_s1 = arith.addf %r_s0, %r2 : f32")
+    lines.append("            %r_s2 = arith.addf %r_s1, %r3 : f32")
+    lines.append("            %res = arith.addf %r_s2, %r4 : f32")
+    lines.append("            %out_off = arith.addi %out_row, %ow : index")
+    lines.append("            %out_idx = arith.addi %out_base, %out_off : index")
+    lines.append(f"            memref.store %res, %{_mlir_ident(out_name)}[%out_idx] : {out_memref_ty}")
+
+    lines.append("          }")  # ow
+    lines.append("        }")  # oh
+    lines.append("      }")  # c
+    lines.append("    }")  # n
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def _maybe_rewrite_relu2d_where_pattern(intent: IntentFunction) -> IntentFunction:
     """
     Canonicalize a common relu2d lowering pattern in expanded intents:
@@ -4186,6 +4909,18 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "log_softmax2d":
         module_text = _emit_log_softmax2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_log_softmax2d_v1"
+    elif kernel_name == "flash_attention2d":
+        module_text = _emit_attention2d_causal_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings, block_kv=32)
+        kind = "cpu_loops_flash_attention2d_v1"
+    elif kernel_name == "masked_attention2d":
+        module_text = _emit_attention2d_causal_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings, block_kv=64)
+        kind = "cpu_loops_masked_attention2d_v1"
+    elif kernel_name == "_attn_fwd":
+        module_text = _emit_attn_fwd_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_attn_fwd_v1"
+    elif kernel_name == "upsample_bicubic2d_aa":
+        module_text = _emit_upsample_bicubic2d_aa_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_upsample_bicubic2d_aa_v1"
     elif kernel_name == "ai_bench_softmax":
         module_text = _emit_row_softmax2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings, require_mask=False)
         kind = "cpu_loops_row_softmax2d_v1"
