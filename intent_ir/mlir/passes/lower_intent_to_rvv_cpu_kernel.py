@@ -65,11 +65,13 @@ def _dtype(dt: str) -> str:
         return "i8"
     if s in {"u8", "i8"}:
         return "i8"
+    if s in {"i16"}:
+        return "i16"
     if s in {"i32"}:
         return "i32"
     if s in {"i64"}:
         return "i64"
-    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32/bool/u8/i8/i32/i64, got dtype={dt!r}")
+    raise RuntimeError(f"rvv cpu-loops v1 supports only f16/f32/bool/u8/i8/i16/i32/i64, got dtype={dt!r}")
 
 
 def _shape(name: str, *, intent: IntentFunction, bindings: Mapping[str, Any]) -> list[int]:
@@ -3275,6 +3277,743 @@ def _emit_log_softmax2d_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _emit_ai_bench_rope_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_rope expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 4:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope expects rank-4 output, got {out_shape}")
+    seq_len, batch, head_num, head_dim = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]), int(out_shape[3]))
+    if seq_len <= 0 or batch <= 0 or head_num <= 0 or head_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+    if (head_dim % 2) != 0:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope expects even HEAD_DIM, got HEAD_DIM={head_dim}")
+    half = head_dim // 2
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    rope_ops = [op for op in ops if str(getattr(op, "op", "")).strip() == "rope"]
+    if len(rope_ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope expects exactly 1 rope op, got {len(rope_ops)}")
+    op0 = rope_ops[0]
+    op0_out = str(getattr(op0, "output", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    if op0_out != str(out_name) or len(op0_ins) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope invalid rope op: inputs={op0_ins} output={op0_out!r}")
+    x_name, cos_name, sin_name = op0_ins
+
+    x_tt = (intent.tensors or {}).get(x_name)
+    cos_tt = (intent.tensors or {}).get(cos_name)
+    sin_tt = (intent.tensors or {}).get(sin_name)
+    if x_tt is None or cos_tt is None or sin_tt is None:
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_rope missing tensor specs for inputs")
+    for nm, tt in [(x_name, x_tt), (cos_name, cos_tt), (sin_name, sin_tt)]:
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope expects f32 tensors, got {nm} dtype={getattr(tt, 'dtype', '')}")
+
+    x_shape = _shape(x_name, intent=intent, bindings=bindings)
+    cos_shape = _shape(cos_name, intent=intent, bindings=bindings)
+    sin_shape = _shape(sin_name, intent=intent, bindings=bindings)
+    if list(x_shape) != list(out_shape):
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_rope expects input shape==output shape, got x={x_shape} out={out_shape}")
+    if cos_shape != [seq_len, half] or sin_shape != [seq_len, half]:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 ai_bench_rope expects cos/sin shape [SEQ,HEAD_DIM/2]=[{seq_len},{half}], "
+            f"got cos={cos_shape} sin={sin_shape}"
+        )
+
+    io_names = _io_arg_order(intent)
+    total_x = int(seq_len * batch * head_num * head_dim)
+    total_cs = int(seq_len * half)
+    total_out = total_x
+
+    arg_types: dict[str, str] = {
+        x_name: f"memref<{total_x}xf32>",
+        cos_name: f"memref<{total_cs}xf32>",
+        sin_name: f"memref<{total_cs}xf32>",
+        out_name: f"memref<{total_out}xf32>",
+    }
+    for n in list(io_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 ai_bench_rope: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in io_names]
+
+    x_memref = arg_types[x_name]
+    cs_memref = arg_types[cos_name]
+    out_memref = arg_types[out_name]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cSEQ = arith.constant {seq_len} : index")
+    lines.append(f"    %cB = arith.constant {batch} : index")
+    lines.append(f"    %cH = arith.constant {head_num} : index")
+    lines.append(f"    %cD = arith.constant {head_dim} : index")
+    lines.append(f"    %cHalf = arith.constant {half} : index")
+    lines.append("    scf.for %s = %c0 to %cSEQ step %c1 {")
+    lines.append("      %sB = arith.muli %s, %cB : index")
+    lines.append("      %cos_base = arith.muli %s, %cHalf : index")
+    lines.append("      scf.for %b = %c0 to %cB step %c1 {")
+    lines.append("        %sb = arith.addi %sB, %b : index")
+    lines.append("        %sbH = arith.muli %sb, %cH : index")
+    lines.append("        scf.for %h = %c0 to %cH step %c1 {")
+    lines.append("          %sbh = arith.addi %sbH, %h : index")
+    lines.append("          %base = arith.muli %sbh, %cD : index")
+    lines.append("          scf.for %d = %c0 to %cHalf step %c1 {")
+    lines.append("            %cs_i = arith.addi %cos_base, %d : index")
+    lines.append(f"            %c = memref.load %{_mlir_ident(cos_name)}[%cs_i] : {cs_memref}")
+    lines.append(f"            %sn = memref.load %{_mlir_ident(sin_name)}[%cs_i] : {cs_memref}")
+    lines.append("            %x1_i = arith.addi %base, %d : index")
+    lines.append("            %d2 = arith.addi %d, %cHalf : index")
+    lines.append("            %x2_i = arith.addi %base, %d2 : index")
+    lines.append(f"            %x1 = memref.load %{_mlir_ident(x_name)}[%x1_i] : {x_memref}")
+    lines.append(f"            %x2 = memref.load %{_mlir_ident(x_name)}[%x2_i] : {x_memref}")
+    lines.append("            %x1c = arith.mulf %x1, %c : f32")
+    lines.append("            %x2s = arith.mulf %x2, %sn : f32")
+    lines.append("            %y1 = arith.subf %x1c, %x2s : f32")
+    lines.append("            %x1s = arith.mulf %x1, %sn : f32")
+    lines.append("            %x2c = arith.mulf %x2, %c : f32")
+    lines.append("            %y2 = arith.addf %x1s, %x2c : f32")
+    lines.append(f"            memref.store %y1, %{_mlir_ident(out_name)}[%x1_i] : {out_memref}")
+    lines.append(f"            memref.store %y2, %{_mlir_ident(out_name)}[%x2_i] : {out_memref}")
+    lines.append("          }")
+    lines.append("        }")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_ai_bench_dropout_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_dropout expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_dropout expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_dropout expects rank-1 output, got {out_shape}")
+    n = int(out_shape[0])
+    if n < 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_dropout expects exactly 1 op, got {len(ops)}")
+    op0 = ops[0]
+    op0_name = str(getattr(op0, "op", "")).strip()
+    op0_out = str(getattr(op0, "output", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    if op0_name != "dropout" or op0_out != str(out_name) or len(op0_ins) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_dropout invalid dropout op: inputs={op0_ins} output={op0_out!r}")
+    x_name, p_name, seed_name = op0_ins
+
+    x_tt = (intent.tensors or {}).get(x_name)
+    p_tt = (intent.tensors or {}).get(p_name)
+    seed_tt = (intent.tensors or {}).get(seed_name)
+    if x_tt is None or p_tt is None or seed_tt is None:
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_dropout missing tensor specs for inputs")
+    if _dtype(getattr(x_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_dropout expects f32 x")
+    if _dtype(getattr(p_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_dropout expects f32 p")
+    if _dtype(getattr(seed_tt, "dtype", "i32")) != "i32":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_dropout expects i32 seed")
+    x_shape = _shape(x_name, intent=intent, bindings=bindings)
+    p_shape = _shape(p_name, intent=intent, bindings=bindings)
+    seed_shape = _shape(seed_name, intent=intent, bindings=bindings)
+    if x_shape != [n]:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_dropout expects x shape [n_elements]=[{n}], got {x_shape}")
+    if p_shape != [] or seed_shape != []:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_dropout expects scalar p/seed, got p={p_shape} seed={seed_shape}")
+
+    io_names = _io_arg_order(intent)
+    arg_types: dict[str, str] = {
+        x_name: f"memref<{n}xf32>",
+        out_name: f"memref<{n}xf32>",
+        p_name: "memref<1xf32>",
+        seed_name: "memref<1xi32>",
+    }
+    for nm in list(io_names):
+        if nm not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 ai_bench_dropout: unexpected IO tensor {nm!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(nm)}: {arg_types[nm]}" for nm in io_names]
+
+    x_memref = arg_types[x_name]
+    out_memref = arg_types[out_name]
+
+    # Match Triton's tl.rand(seed, offsets) semantics (Philox + uint_to_uniform_float).
+    # Constants are specified in signed-i32 form (same two's-complement bits).
+    KEY_A = -1640531527  # 0x9E3779B9 as signed i32
+    KEY_B = -1150833019  # 0xBB67AE85 as signed i32
+    ROUND_A_U64 = 3528531795  # 0xD2511F53
+    ROUND_B_U64 = 3449720151  # 0xCD9E8D57
+    SCALE = 4.6566127342e-10
+    n_rounds = 10
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append("  func.func private @__intentir_philox_u32(%seed: i32, %offset: i32) -> i32 {")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cRounds = arith.constant {n_rounds} : index")
+    lines.append("    %c0i32 = arith.constant 0 : i32")
+    lines.append(f"    %keyA = arith.constant {KEY_A} : i32")
+    lines.append(f"    %keyB = arith.constant {KEY_B} : i32")
+    lines.append(f"    %roundA = arith.constant {ROUND_A_U64} : i64")
+    lines.append(f"    %roundB = arith.constant {ROUND_B_U64} : i64")
+    lines.append("    %c32i64 = arith.constant 32 : i64")
+    lines.append(
+        "    %r_c0, %r_c1, %r_c2, %r_c3, %r_k0, %r_k1 = scf.for %r = %c0 to %cRounds step %c1 "
+        "iter_args(%pc0 = %offset, %pc1 = %c0i32, %pc2 = %c0i32, %pc3 = %c0i32, %pk0 = %seed, %pk1 = %c0i32) "
+        "-> (i32, i32, i32, i32, i32, i32) {"
+    )
+    lines.append("      %pc2_u64 = arith.extui %pc2 : i32 to i64")
+    lines.append("      %pc0_u64 = arith.extui %pc0 : i32 to i64")
+    lines.append("      %prodB = arith.muli %pc2_u64, %roundB : i64")
+    lines.append("      %prodA = arith.muli %pc0_u64, %roundA : i64")
+    lines.append("      %hiB64 = arith.shrui %prodB, %c32i64 : i64")
+    lines.append("      %hiA64 = arith.shrui %prodA, %c32i64 : i64")
+    lines.append("      %hiB = arith.trunci %hiB64 : i64 to i32")
+    lines.append("      %hiA = arith.trunci %hiA64 : i64 to i32")
+    lines.append("      %tmp0 = arith.xori %hiB, %pc1 : i32")
+    lines.append("      %nc0 = arith.xori %tmp0, %pk0 : i32")
+    lines.append("      %tmp2 = arith.xori %hiA, %pc3 : i32")
+    lines.append("      %nc2 = arith.xori %tmp2, %pk1 : i32")
+    lines.append("      %nc1 = arith.trunci %prodB : i64 to i32")
+    lines.append("      %nc3 = arith.trunci %prodA : i64 to i32")
+    lines.append("      %nk0 = arith.addi %pk0, %keyA : i32")
+    lines.append("      %nk1 = arith.addi %pk1, %keyB : i32")
+    lines.append("      scf.yield %nc0, %nc1, %nc2, %nc3, %nk0, %nk1 : i32, i32, i32, i32, i32, i32")
+    lines.append("    }")
+    lines.append("    return %r_c0 : i32")
+    lines.append("  }")
+    lines.append("  func.func private @__intentir_uint_to_uniform_float_u32(%x: i32) -> f32 {")
+    lines.append("    %c0i32 = arith.constant 0 : i32")
+    lines.append("    %cMinus1i32 = arith.constant -1 : i32")
+    lines.append("    %neg = arith.cmpi slt, %x, %c0i32 : i32")
+    lines.append("    %x_not = arith.xori %x, %cMinus1i32 : i32")
+    lines.append("    %u = arith.select %neg, %x_not, %x : i32")
+    lines.append("    %u_f = arith.sitofp %u : i32 to f32")
+    lines.append(f"    %scale = arith.constant {_f32_lit(float(SCALE))} : f32")
+    lines.append("    %rnd = arith.mulf %u_f, %scale : f32")
+    lines.append("    return %rnd : f32")
+    lines.append("  }")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cN = arith.constant {n} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %c1f = arith.constant 1.0 : f32")
+    lines.append(f"    %p0 = memref.load %{_mlir_ident(p_name)}[%c0] : memref<1xf32>")
+    lines.append(f"    %seed0 = memref.load %{_mlir_ident(seed_name)}[%c0] : memref<1xi32>")
+    lines.append("    %keep_prob = arith.subf %c1f, %p0 : f32")
+    lines.append("    scf.for %i = %c0 to %cN step %c1 {")
+    lines.append(f"      %xv = memref.load %{_mlir_ident(x_name)}[%i] : {x_memref}")
+    lines.append("      %off = arith.index_cast %i : index to i32")
+    lines.append("      %u32 = func.call @__intentir_philox_u32(%seed0, %off) : (i32, i32) -> i32")
+    lines.append("      %rnd = func.call @__intentir_uint_to_uniform_float_u32(%u32) : (i32) -> f32")
+    lines.append("      %keep = arith.cmpf ogt, %rnd, %p0 : f32")
+    lines.append("      %scaled = arith.divf %xv, %keep_prob : f32")
+    lines.append("      %y = arith.select %keep, %scaled, %c0f : f32")
+    lines.append(f"      memref.store %y, %{_mlir_ident(out_name)}[%i] : {out_memref}")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_ai_bench_correlation_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_correlation expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "i8")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_correlation expects i8 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_correlation expects rank-3 output, got {out_shape}")
+    out_c, h_dim, w_dim = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]))
+    if out_c < 0 or h_dim < 0 or w_dim < 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_correlation expects exactly 1 op, got {len(ops)}")
+    op0 = ops[0]
+    op0_name = str(getattr(op0, "op", "")).strip()
+    op0_out = str(getattr(op0, "output", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    if op0_name != "correlation" or op0_out != str(out_name) or len(op0_ins) != 3:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 ai_bench_correlation invalid op: op={op0_name!r} inputs={op0_ins} output={op0_out!r}"
+        )
+    src0_name, src1_name, out_shift_name = op0_ins
+
+    src0_tt = (intent.tensors or {}).get(src0_name)
+    src1_tt = (intent.tensors or {}).get(src1_name)
+    out_shift_tt = (intent.tensors or {}).get(out_shift_name)
+    if src0_tt is None or src1_tt is None or out_shift_tt is None:
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_correlation missing tensor specs for inputs")
+    if _dtype(getattr(src0_tt, "dtype", "i8")) != "i8" or _dtype(getattr(src1_tt, "dtype", "i8")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_correlation expects i8 src0/src1")
+    if _dtype(getattr(out_shift_tt, "dtype", "i32")) != "i32":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_correlation expects i32 out_shift")
+
+    src0_shape = _shape(src0_name, intent=intent, bindings=bindings)
+    src1_shape = _shape(src1_name, intent=intent, bindings=bindings)
+    if len(src0_shape) != 3 or src0_shape != src1_shape:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 ai_bench_correlation expects src0/src1 rank-3 same shape, got {src0_shape} and {src1_shape}"
+        )
+    in_c, h0, w0 = (int(src0_shape[0]), int(src0_shape[1]), int(src0_shape[2]))
+    if (h0, w0) != (h_dim, w_dim):
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_correlation spatial mismatch: src={(h0, w0)} out={(h_dim, w_dim)}")
+    if out_shift_name and _shape(out_shift_name, intent=intent, bindings=bindings) != []:
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_correlation expects scalar out_shift")
+
+    hw = int(h_dim * w_dim)
+    total_in = int(in_c * hw)
+    total_out = int(out_c * hw)
+    io_names = _io_arg_order(intent)
+    arg_types: dict[str, str] = {
+        src0_name: f"memref<{total_in}xi8>",
+        src1_name: f"memref<{total_in}xi8>",
+        out_shift_name: "memref<1xi32>",
+        out_name: f"memref<{total_out}xi8>",
+    }
+    for nm in list(io_names):
+        if nm not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 ai_bench_correlation: unexpected IO tensor {nm!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(nm)}: {arg_types[nm]}" for nm in io_names]
+
+    src_memref = arg_types[src0_name]
+    out_memref = arg_types[out_name]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cOC = arith.constant {out_c} : index")
+    lines.append(f"    %cIC = arith.constant {in_c} : index")
+    lines.append(f"    %cH = arith.constant {h_dim} : index")
+    lines.append(f"    %cW = arith.constant {w_dim} : index")
+    lines.append(f"    %cHW = arith.constant {hw} : index")
+    lines.append("    %c0i32 = arith.constant 0 : i32")
+    lines.append("    %c0i8 = arith.constant 0 : i8")
+    lines.append(f"    %out_shift0 = memref.load %{_mlir_ident(out_shift_name)}[%c0] : memref<1xi32>")
+    lines.append("    scf.for %oc = %c0 to %cOC step %c1 {")
+    lines.append("      %oc_base = arith.muli %oc, %cHW : index")
+    lines.append("      %oc_nonzero = arith.cmpi ne, %oc, %c0 : index")
+    lines.append("      scf.for %h = %c0 to %cH step %c1 {")
+    lines.append("        %hW = arith.muli %h, %cW : index")
+    lines.append("        scf.for %w = %c0 to %cW step %c1 {")
+    lines.append("          %w_lt_oc = arith.cmpi ult, %w, %oc : index")
+    lines.append("          %skip = arith.andi %oc_nonzero, %w_lt_oc : i1")
+    lines.append("          %out_hw = arith.addi %oc_base, %hW : index")
+    lines.append("          %out_idx = arith.addi %out_hw, %w : index")
+    lines.append("          scf.if %skip {")
+    lines.append(f"            memref.store %c0i8, %{_mlir_ident(out_name)}[%out_idx] : {out_memref}")
+    lines.append("          } else {")
+    lines.append("            %w2 = arith.subi %w, %oc : index")
+    lines.append("            %acc = scf.for %k = %c0 to %cIC step %c1 iter_args(%a = %c0i32) -> (i32) {")
+    lines.append("              %k_base = arith.muli %k, %cHW : index")
+    lines.append("              %in_hw = arith.addi %k_base, %hW : index")
+    lines.append("              %idx0 = arith.addi %in_hw, %w : index")
+    lines.append("              %idx1 = arith.addi %in_hw, %w2 : index")
+    lines.append(f"              %a8 = memref.load %{_mlir_ident(src0_name)}[%idx0] : {src_memref}")
+    lines.append(f"              %b8 = memref.load %{_mlir_ident(src1_name)}[%idx1] : {src_memref}")
+    lines.append("              %a16 = arith.extsi %a8 : i8 to i16")
+    lines.append("              %b16 = arith.extsi %b8 : i8 to i16")
+    lines.append("              %p16 = arith.muli %a16, %b16 : i16")
+    lines.append("              %p32 = arith.extsi %p16 : i16 to i32")
+    lines.append("              %a2 = arith.addi %a, %p32 : i32")
+    lines.append("              scf.yield %a2 : i32")
+    lines.append("            }")
+    lines.append("            %sh = arith.shrsi %acc, %out_shift0 : i32")
+    lines.append("            %o8 = arith.trunci %sh : i32 to i8")
+    lines.append(f"            memref.store %o8, %{_mlir_ident(out_name)}[%out_idx] : {out_memref}")
+    lines.append("          }")
+    lines.append("        }")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_ai_bench_resize_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "i8")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_resize expects i8 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize expects rank-3 output, got {out_shape}")
+    c_dim, oh_dim, ow_dim = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]))
+    if c_dim < 0 or oh_dim < 0 or ow_dim < 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize expects exactly 1 op, got {len(ops)}")
+    op0 = ops[0]
+    op0_name = str(getattr(op0, "op", "")).strip()
+    op0_out = str(getattr(op0, "output", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    attrs = dict(getattr(op0, "attrs", {}) or {})
+    if op0_name != "resize" or op0_out != str(out_name) or len(op0_ins) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize invalid op: op={op0_name!r} inputs={op0_ins} output={op0_out!r}")
+    src_name = str(op0_ins[0])
+    src_tt = (intent.tensors or {}).get(src_name)
+    if src_tt is None:
+        raise RuntimeError(f"missing input tensor spec: {src_name}")
+    if _dtype(getattr(src_tt, "dtype", "i8")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_resize expects i8 src")
+    src_shape = _shape(src_name, intent=intent, bindings=bindings)
+    if len(src_shape) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize expects rank-3 src, got {src_shape}")
+    c0, h_dim, w_dim = (int(src_shape[0]), int(src_shape[1]), int(src_shape[2]))
+    if c0 != int(c_dim):
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize channel mismatch: src C={c0} out C={c_dim}")
+
+    scale_factor = int(attrs.get("scale_factor", 2))
+    mode = str(attrs.get("mode", "")).strip().lower()
+    if scale_factor != 2 or mode != "bilinear":
+        raise RuntimeError(
+            f"rvv cpu-loops v1 ai_bench_resize expects scale_factor=2 bilinear, got scale_factor={scale_factor} mode={mode!r}"
+        )
+    hw_fl = int(attrs.get("hw_fl", 7))
+    if hw_fl <= 0:
+        hw_fl = 7
+    if oh_dim != 2 * h_dim or ow_dim != 2 * w_dim:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_resize expects 2x upsample: src={(h_dim, w_dim)} out={(oh_dim, ow_dim)}")
+
+    factor = int(1 << int(hw_fl))
+    shift1 = int(hw_fl - 1)
+    if shift1 < 0:
+        shift1 = 0
+
+    total_in = int(c_dim * h_dim * w_dim)
+    total_out = int(c_dim * oh_dim * ow_dim)
+    io_names = _io_arg_order(intent)
+    arg_types: dict[str, str] = {
+        src_name: f"memref<{total_in}xi8>",
+        out_name: f"memref<{total_out}xi8>",
+    }
+    for nm in list(io_names):
+        if nm not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 ai_bench_resize: unexpected IO tensor {nm!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(nm)}: {arg_types[nm]}" for nm in io_names]
+
+    in_memref = arg_types[src_name]
+    out_memref = arg_types[out_name]
+
+    hw = int(h_dim * w_dim)
+    ohow = int(oh_dim * ow_dim)
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cC = arith.constant {c_dim} : index")
+    lines.append(f"    %cH = arith.constant {h_dim} : index")
+    lines.append(f"    %cW = arith.constant {w_dim} : index")
+    lines.append(f"    %cOH = arith.constant {oh_dim} : index")
+    lines.append(f"    %cOW = arith.constant {ow_dim} : index")
+    lines.append(f"    %cHW = arith.constant {hw} : index")
+    lines.append(f"    %cOHOW = arith.constant {ohow} : index")
+    lines.append("    %c0i32 = arith.constant 0 : i32")
+    lines.append("    %c1i32 = arith.constant 1 : i32")
+    lines.append(f"    %cHWFl = arith.constant {hw_fl} : i32")
+    lines.append(f"    %cShift1 = arith.constant {shift1} : i32")
+    lines.append(f"    %factor = arith.constant {factor} : i32")
+    lines.append(f"    %cWm1 = arith.constant {w_dim - 1} : i32")
+    lines.append(f"    %cHm1 = arith.constant {h_dim - 1} : i32")
+    lines.append("    scf.for %c = %c0 to %cC step %c1 {")
+    lines.append("      %c_in_base = arith.muli %c, %cHW : index")
+    lines.append("      %c_out_base = arith.muli %c, %cOHOW : index")
+    lines.append("      scf.for %oh = %c0 to %cOH step %c1 {")
+    lines.append("        %oh_i32 = arith.index_cast %oh : index to i32")
+    lines.append("        %input_y = arith.shli %oh_i32, %cShift1 : i32")
+    lines.append("        %y0 = arith.shrsi %input_y, %cHWFl : i32")
+    lines.append("        %y0_sh = arith.shli %y0, %cHWFl : i32")
+    lines.append("        %h1 = arith.subi %input_y, %y0_sh : i32")
+    lines.append("        %h0 = arith.subi %factor, %h1 : i32")
+    lines.append("        %y1_tmp = arith.addi %y0, %c1i32 : i32")
+    lines.append("        %y1_gt = arith.cmpi sgt, %y1_tmp, %cHm1 : i32")
+    lines.append("        %y1 = arith.select %y1_gt, %cHm1, %y1_tmp : i32")
+    lines.append("        %y0_idx = arith.index_cast %y0 : i32 to index")
+    lines.append("        %y1_idx = arith.index_cast %y1 : i32 to index")
+    lines.append("        %y0W = arith.muli %y0_idx, %cW : index")
+    lines.append("        %y1W = arith.muli %y1_idx, %cW : index")
+    lines.append("        %y0_base = arith.addi %c_in_base, %y0W : index")
+    lines.append("        %y1_base = arith.addi %c_in_base, %y1W : index")
+    lines.append("        %out_oh = arith.muli %oh, %cOW : index")
+    lines.append("        scf.for %ow = %c0 to %cOW step %c1 {")
+    lines.append("          %ow_i32 = arith.index_cast %ow : index to i32")
+    lines.append("          %input_x = arith.shli %ow_i32, %cShift1 : i32")
+    lines.append("          %x0 = arith.shrsi %input_x, %cHWFl : i32")
+    lines.append("          %x0_sh = arith.shli %x0, %cHWFl : i32")
+    lines.append("          %w1 = arith.subi %input_x, %x0_sh : i32")
+    lines.append("          %w0 = arith.subi %factor, %w1 : i32")
+    lines.append("          %x1_tmp = arith.addi %x0, %c1i32 : i32")
+    lines.append("          %x1_gt = arith.cmpi sgt, %x1_tmp, %cWm1 : i32")
+    lines.append("          %x1 = arith.select %x1_gt, %cWm1, %x1_tmp : i32")
+    lines.append("          %x0_idx = arith.index_cast %x0 : i32 to index")
+    lines.append("          %x1_idx = arith.index_cast %x1 : i32 to index")
+    lines.append("          %idx00 = arith.addi %y0_base, %x0_idx : index")
+    lines.append("          %idx01 = arith.addi %y0_base, %x1_idx : index")
+    lines.append("          %idx10 = arith.addi %y1_base, %x0_idx : index")
+    lines.append("          %idx11 = arith.addi %y1_base, %x1_idx : index")
+    lines.append(f"          %v00 = memref.load %{_mlir_ident(src_name)}[%idx00] : {in_memref}")
+    lines.append(f"          %v01 = memref.load %{_mlir_ident(src_name)}[%idx01] : {in_memref}")
+    lines.append(f"          %v10 = memref.load %{_mlir_ident(src_name)}[%idx10] : {in_memref}")
+    lines.append(f"          %v11 = memref.load %{_mlir_ident(src_name)}[%idx11] : {in_memref}")
+    lines.append("          %v00_32 = arith.extsi %v00 : i8 to i32")
+    lines.append("          %v01_32 = arith.extsi %v01 : i8 to i32")
+    lines.append("          %v10_32 = arith.extsi %v10 : i8 to i32")
+    lines.append("          %v11_32 = arith.extsi %v11 : i8 to i32")
+    lines.append("          %m00 = arith.muli %v00_32, %w0 : i32")
+    lines.append("          %m01 = arith.muli %v01_32, %w1 : i32")
+    lines.append("          %m10 = arith.muli %v10_32, %w0 : i32")
+    lines.append("          %m11 = arith.muli %v11_32, %w1 : i32")
+    lines.append("          %s1 = arith.addi %m00, %m01 : i32")
+    lines.append("          %s2 = arith.addi %m10, %m11 : i32")
+    lines.append("          %sum1 = arith.shrsi %s1, %cHWFl : i32")
+    lines.append("          %sum2 = arith.shrsi %s2, %cHWFl : i32")
+    lines.append("          %t0 = arith.muli %sum1, %h0 : i32")
+    lines.append("          %t1 = arith.muli %sum2, %h1 : i32")
+    lines.append("          %t = arith.addi %t0, %t1 : i32")
+    lines.append("          %val = arith.shrsi %t, %cHWFl : i32")
+    lines.append("          %o8 = arith.trunci %val : i32 to i8")
+    lines.append("          %out_off = arith.addi %out_oh, %ow : index")
+    lines.append("          %out_idx = arith.addi %c_out_base, %out_off : index")
+    lines.append(f"          memref.store %o8, %{_mlir_ident(out_name)}[%out_idx] : {out_memref}")
+    lines.append("        }")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_ai_bench_warp_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_warp expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "i8")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_warp expects i8 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_warp expects rank-3 output, got {out_shape}")
+    c_dim, h_dim, w_dim = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]))
+    if c_dim < 0 or h_dim < 0 or w_dim < 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_warp expects exactly 1 op, got {len(ops)}")
+    op0 = ops[0]
+    op0_name = str(getattr(op0, "op", "")).strip()
+    op0_out = str(getattr(op0, "output", "")).strip()
+    op0_ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    if op0_name != "warp" or op0_out != str(out_name) or len(op0_ins) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_warp invalid op: op={op0_name!r} inputs={op0_ins} output={op0_out!r}")
+    src_name, offset_name = op0_ins
+
+    src_tt = (intent.tensors or {}).get(src_name)
+    offset_tt = (intent.tensors or {}).get(offset_name)
+    if src_tt is None or offset_tt is None:
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_warp missing tensor specs for inputs")
+    if _dtype(getattr(src_tt, "dtype", "i8")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_warp expects i8 src")
+    if _dtype(getattr(offset_tt, "dtype", "i16")) != "i16":
+        raise RuntimeError("rvv cpu-loops v1 ai_bench_warp expects i16 offset")
+    src_shape = _shape(src_name, intent=intent, bindings=bindings)
+    off_shape = _shape(offset_name, intent=intent, bindings=bindings)
+    if src_shape != [c_dim, h_dim, w_dim]:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_warp expects src shape {out_shape}, got {src_shape}")
+    if off_shape != [h_dim, w_dim]:
+        raise RuntimeError(f"rvv cpu-loops v1 ai_bench_warp expects offset shape [{h_dim},{w_dim}], got {off_shape}")
+
+    total_src = int(c_dim * h_dim * w_dim)
+    total_off = int(h_dim * w_dim)
+    total_out = total_src
+    io_names = _io_arg_order(intent)
+    arg_types: dict[str, str] = {
+        src_name: f"memref<{total_src}xi8>",
+        offset_name: f"memref<{total_off}xi16>",
+        out_name: f"memref<{total_out}xi8>",
+    }
+    for nm in list(io_names):
+        if nm not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 ai_bench_warp: unexpected IO tensor {nm!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(nm)}: {arg_types[nm]}" for nm in io_names]
+
+    src_memref = arg_types[src_name]
+    off_memref = arg_types[offset_name]
+    out_memref = arg_types[out_name]
+
+    hw = int(h_dim * w_dim)
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cC = arith.constant {c_dim} : index")
+    lines.append(f"    %cH = arith.constant {h_dim} : index")
+    lines.append(f"    %cW = arith.constant {w_dim} : index")
+    lines.append(f"    %cHW = arith.constant {hw} : index")
+    lines.append("    %c0i8 = arith.constant 0 : i8")
+    lines.append("    %c0i16 = arith.constant 0 : i16")
+    lines.append("    %c1i8 = arith.constant 1 : i8")
+    lines.append("    %c8i16 = arith.constant 8 : i16")
+    lines.append("    %c0i32 = arith.constant 0 : i32")
+    lines.append(f"    %cWm1i32 = arith.constant {w_dim - 1} : i32")
+    lines.append("    scf.for %h = %c0 to %cH step %c1 {")
+    lines.append("      %hW = arith.muli %h, %cW : index")
+    lines.append("      scf.for %w = %c0 to %cW step %c1 {")
+    lines.append("        %off_i = arith.addi %hW, %w : index")
+    lines.append(f"        %off = memref.load %{_mlir_ident(offset_name)}[%off_i] : {off_memref}")
+    lines.append("        %offset_int = arith.shrsi %off, %c8i16 : i16")
+    lines.append("        %offset_frac_i8 = arith.trunci %off : i16 to i8")
+    lines.append("        %offset_frac = arith.extsi %offset_frac_i8 : i8 to i16")
+    lines.append("        %w_i32 = arith.index_cast %w : index to i32")
+    lines.append("        %w_i8 = arith.trunci %w_i32 : i32 to i8")
+    lines.append("        %offset_int_i8 = arith.trunci %offset_int : i16 to i8")
+    lines.append("        %right_i8 = arith.subi %w_i8, %offset_int_i8 : i8")
+    lines.append("        %left_i8 = arith.subi %right_i8, %c1i8 : i8")
+    lines.append("        %right = arith.extsi %right_i8 : i8 to i16")
+    lines.append("        %left = arith.extsi %left_i8 : i8 to i16")
+    lines.append("        %right_ok = arith.cmpi sge, %right, %c0i16 : i16")
+    lines.append("        %left_ok = arith.cmpi sge, %left, %c0i16 : i16")
+    lines.append("        %right_i32 = arith.extsi %right : i16 to i32")
+    lines.append("        %left_i32 = arith.extsi %left : i16 to i32")
+    lines.append("        %r_lt0 = arith.cmpi slt, %right_i32, %c0i32 : i32")
+    lines.append("        %l_lt0 = arith.cmpi slt, %left_i32, %c0i32 : i32")
+    lines.append("        %r0 = arith.select %r_lt0, %c0i32, %right_i32 : i32")
+    lines.append("        %l0 = arith.select %l_lt0, %c0i32, %left_i32 : i32")
+    lines.append("        %r_gt = arith.cmpi sgt, %r0, %cWm1i32 : i32")
+    lines.append("        %l_gt = arith.cmpi sgt, %l0, %cWm1i32 : i32")
+    lines.append("        %r_cl = arith.select %r_gt, %cWm1i32, %r0 : i32")
+    lines.append("        %l_cl = arith.select %l_gt, %cWm1i32, %l0 : i32")
+    lines.append("        %r_idx = arith.index_cast %r_cl : i32 to index")
+    lines.append("        %l_idx = arith.index_cast %l_cl : i32 to index")
+    lines.append("        scf.for %c = %c0 to %cC step %c1 {")
+    lines.append("          %c_base = arith.muli %c, %cHW : index")
+    lines.append("          %row_base = arith.addi %c_base, %hW : index")
+    lines.append("          %idx_r = arith.addi %row_base, %r_idx : index")
+    lines.append("          %idx_l = arith.addi %row_base, %l_idx : index")
+    lines.append(f"          %rv0 = memref.load %{_mlir_ident(src_name)}[%idx_r] : {src_memref}")
+    lines.append(f"          %lv0 = memref.load %{_mlir_ident(src_name)}[%idx_l] : {src_memref}")
+    lines.append("          %rv = arith.select %right_ok, %rv0, %c0i8 : i8")
+    lines.append("          %lv = arith.select %left_ok, %lv0, %c0i8 : i8")
+    lines.append("          %rv16 = arith.extsi %rv : i8 to i16")
+    lines.append("          %lv16 = arith.extsi %lv : i8 to i16")
+    lines.append("          %rv8 = arith.shli %rv16, %c8i16 : i16")
+    lines.append("          %diff = arith.subi %lv16, %rv16 : i16")
+    lines.append("          %mul = arith.muli %diff, %offset_frac : i16")
+    lines.append("          %acc = arith.addi %rv8, %mul : i16")
+    lines.append("          %out16 = arith.shrsi %acc, %c8i16 : i16")
+    lines.append("          %out8 = arith.trunci %out16 : i16 to i8")
+    lines.append("          %out_idx = arith.addi %row_base, %w : index")
+    lines.append(f"          memref.store %out8, %{_mlir_ident(out_name)}[%out_idx] : {out_memref}")
+    lines.append("        }")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def _maybe_rewrite_relu2d_where_pattern(intent: IntentFunction) -> IntentFunction:
     """
     Canonicalize a common relu2d lowering pattern in expanded intents:
@@ -3502,6 +4241,21 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "ai_bench_layernorm":
         module_text = _emit_layer_norm_persistent_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "layer_norm_rvv_v1"
+    elif kernel_name == "ai_bench_dropout":
+        module_text = _emit_ai_bench_dropout_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_ai_bench_dropout_v1"
+    elif kernel_name == "ai_bench_rope":
+        module_text = _emit_ai_bench_rope_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_ai_bench_rope_v1"
+    elif kernel_name == "ai_bench_correlation":
+        module_text = _emit_ai_bench_correlation_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_ai_bench_correlation_v1"
+    elif kernel_name == "ai_bench_resize":
+        module_text = _emit_ai_bench_resize_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_ai_bench_resize_v1"
+    elif kernel_name == "ai_bench_warp":
+        module_text = _emit_ai_bench_warp_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_ai_bench_warp_v1"
     elif kernel_name == "group_norm_kernel":
         module_text = _emit_group_norm_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "group_norm_rvv_v1"
