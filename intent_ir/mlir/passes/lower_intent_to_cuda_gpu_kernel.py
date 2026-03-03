@@ -5908,6 +5908,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 "attn2d_causal_softmax_v14",
                 "attn2d_causal_softmax_v15",
                 "attn2d_causal_softmax_v16",
+                "attn2d_causal_softmax_v18",
                 "attn2d_causal_softmax_v11",
                 "attn2d_causal_softmax_v12",
                 "attn2d_causal_softmax_v4",
@@ -6018,6 +6019,15 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError("attn2d_causal_softmax_v16 requires Q_CTX==16")
                 if int(attn2d_v1.get("KV_CTX") or 0) != 16:
                     raise RuntimeError("attn2d_causal_softmax_v16 requires KV_CTX==16")
+            if kernel_kind_override == "attn2d_causal_softmax_v18":
+                if intent_name != "masked_attention2d":
+                    raise RuntimeError("attn2d_causal_softmax_v18 override is only supported for masked_attention2d")
+                if int(attn2d_v1.get("HEAD_DIM") or 0) != 16:
+                    raise RuntimeError("attn2d_causal_softmax_v18 requires HEAD_DIM==16")
+                if int(attn2d_v1.get("Q_CTX") or 0) != 16:
+                    raise RuntimeError("attn2d_causal_softmax_v18 requires Q_CTX==16")
+                if int(attn2d_v1.get("KV_CTX") or 0) != 16:
+                    raise RuntimeError("attn2d_causal_softmax_v18 requires KV_CTX==16")
             if kernel_kind_override == "attn2d_causal_softmax_v10":
                 if intent_name != "masked_attention2d":
                     raise RuntimeError("attn2d_causal_softmax_v10 override is only supported for masked_attention2d")
@@ -17962,6 +17972,215 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        scf.if %pred_d {")
         lines.append("          %out_idx = arith.addi %base_q, %lane : index")
         lines.append(f"          memref.store {outv}, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif attn2d_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v18":
+        # Perf-first: tiny masked_attention2d canonical case (Q=16, KV=16, HD=16).
+        # Use 4 warps to compute scores in parallel KV partitions, then have warp0 compute
+        # softmax (exp2) across 16 keys in parallel lanes and accumulate output.
+        kernel_kind = "attn2d_causal_softmax_v18"
+        q_name = str(attn2d_v1["Q"])
+        k_name = str(attn2d_v1["K"])
+        v_name = str(attn2d_v1["V"])
+        out_name2 = str(attn2d_v1["out"])
+        sm_scale_name = str(attn2d_v1["sm_scale"])
+        q_ctx = int(attn2d_v1["Q_CTX"])
+        kv_ctx = int(attn2d_v1["KV_CTX"])
+        hd = int(attn2d_v1["HEAD_DIM"])
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        v_memref = str(arg_specs[v_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
+
+        if int(hd) != 16 or int(q_ctx) != 16 or int(kv_ctx) != 16:
+            raise RuntimeError("attn2d_causal_softmax_v18 requires Q_CTX==16 KV_CTX==16 HEAD_DIM==16")
+
+        warps = 4
+        block_x = int(warps) * 32
+        kv_per_warp = 4
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
+        cuda_real_mlir_attention_cfg = {
+            "block_x": int(block_x),
+            "warps": int(warps),
+            "kv_per_warp": int(kv_per_warp),
+            "head_dim": int(hd),
+            "scores_shared": True,
+            "softmax_parallel": True,
+        }
+
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<16xf32, 3>"
+
+        def _subwarp_allreduce_sum_xor_16(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                sel = _fresh("sel")
+                nxt = _fresh("sum")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c16_i32 : f32")
+                lines.append(f"{indent}{sel} = arith.select {ok}, {sh}, %c0f : f32")
+                lines.append(f"{indent}{nxt} = arith.addf {cur}, {sel}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        def _subwarp_allreduce_max_xor_16(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                sel = _fresh("sel")
+                nxt = _fresh("mx")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c16_i32 : f32")
+                lines.append(f"{indent}{sel} = arith.select {ok}, {sh}, %neg_inf : f32")
+                lines.append(f"{indent}{nxt} = arith.maximumf {cur}, {sel}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        def _shuffle_idx(val_ssa: str, idx_i32_ssa: str, *, indent: str) -> str:
+            sh = _fresh("sh")
+            ok = _fresh("ok")
+            sel = _fresh("sel")
+            lines.append(f"{indent}{sh}, {ok} = gpu.shuffle idx {val_ssa}, {idx_i32_ssa}, %c32_i32 : f32")
+            lines.append(f"{indent}{sel} = arith.select {ok}, {sh}, %c0f : f32")
+            return str(sel)
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %c0_i32 = arith.constant 0 : i32")
+        lines.append("      %c1_i32 = arith.constant 1 : i32")
+        lines.append("      %c2_i32 = arith.constant 2 : i32")
+        lines.append("      %c4_i32 = arith.constant 4 : i32")
+        lines.append("      %c8_i32 = arith.constant 8 : i32")
+        lines.append("      %c16_i32 = arith.constant 16 : i32")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+        lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
+        lines.append(f"      %cKVPerWarp = arith.constant {int(kv_per_warp)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<16xf32, 3>"
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"      %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
+        lines.append(f"      %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+
+        lines.append("      %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("      %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("      %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("      %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("      %pred_d = arith.cmpi ult, %lane, %cHD : index")
+
+        # Load Q vector once per warp (lanes < HD).
+        lines.append("      %base_q = arith.muli %bid, %cHD : index")
+        lines.append("      %qv = scf.if %pred_d -> (f32) {")
+        lines.append("        %q_idx = arith.addi %base_q, %lane : index")
+        lines.append(f"        %q_load = memref.load {arg_ssa[q_name]}[%q_idx] : {q_memref}")
+        lines.append("        scf.yield %q_load : f32")
+        lines.append("      } else {")
+        lines.append("        scf.yield %c0f : f32")
+        lines.append("      }")
+
+        # Each warp computes scores for its KV slice and stores into shared[KV].
+        lines.append("      %kv_start = arith.muli %warp, %cKVPerWarp : index")
+        lines.append("      %kv_end_w = arith.addi %kv_start, %cKVPerWarp : index")
+        lines.append("      scf.for %kv = %kv_start to %kv_end_w step %c1 {")
+        lines.append("        %k_base = arith.muli %kv, %cHD : index")
+        lines.append("        %k_val = scf.if %pred_d -> (f32) {")
+        lines.append("          %k_idx = arith.addi %k_base, %lane : index")
+        lines.append(f"          %k_load = memref.load {arg_ssa[k_name]}[%k_idx] : {k_memref}")
+        lines.append("          scf.yield %k_load : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        lines.append("        %partial = llvm.intr.fma(%qv, %k_val, %c0f) : (f32, f32, f32) -> f32")
+        dot = _subwarp_allreduce_sum_xor_16("%partial", indent="        ")
+        lines.append(f"        %score = arith.mulf {dot}, %sm2{fm} : f32")
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store %score, %sh[%kv] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("      }")
+        lines.append("      gpu.barrier")
+
+        # Warp0: compute softmax over 16 keys in parallel lanes, then output.
+        lines.append("      scf.if %is_warp0 {")
+        pred_k = _fresh("pred_k")
+        score_lane = _fresh("score_lane")
+        pred_causal = _fresh("pred_causal")
+        pred_attend = _fresh("pred_attend")
+        score_sel = _fresh("score_sel")
+        lines.append(f"        {pred_k} = arith.cmpi ult, %lane, %cKV : index")
+        lines.append(f"        {score_lane} = scf.if {pred_k} -> (f32) {{")
+        loaded = _fresh("loaded")
+        lines.append(f"          {loaded} = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append(f"          scf.yield {loaded} : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %neg_inf : f32")
+        lines.append("        }")
+        lines.append(f"        {pred_causal} = arith.cmpi ule, %lane, %bid : index")
+        lines.append(f"        {pred_attend} = arith.andi {pred_k}, {pred_causal} : i1")
+        lines.append(f"        {score_sel} = arith.select {pred_attend}, {score_lane}, %neg_inf : f32")
+
+        mx = _subwarp_allreduce_max_xor_16(score_sel, indent="        ")
+        shift = _fresh("shift")
+        lines.append(f"        {shift} = arith.subf {score_sel}, {mx}{fm} : f32")
+        expv = _fresh("expv")
+        lines.append(f"        {expv} = scf.if {pred_attend} -> (f32) {{")
+        ev = _fresh("ev")
+        lines.append(f"          {ev} = math.exp2 {shift} : f32")
+        lines.append(f"          scf.yield {ev} : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+
+        sumv = _subwarp_allreduce_sum_xor_16(expv, indent="        ")
+        sum_nz = _fresh("sum_nz")
+        sum_safe = _fresh("sum_safe")
+        inv_sum = _fresh("inv_sum")
+        prob = _fresh("prob")
+        lines.append(f"        {sum_nz} = arith.cmpf one, {sumv}, %c0f : f32")
+        lines.append(f"        {sum_safe} = arith.select {sum_nz}, {sumv}, %c1f : f32")
+        lines.append(f"        {inv_sum} = arith.divf %c1f, {sum_safe}{fm} : f32")
+        lines.append(f"        {prob} = arith.mulf {expv}, {inv_sum}{fm} : f32")
+
+        acc_out = _fresh("acc_out")
+        lines.append(
+            f"        {acc_out} = scf.for %kv = %c0 to %cKV step %c1 iter_args(%acc = %c0f) -> (f32) {{"
+        )
+        kv_i32 = _fresh("kv_i32")
+        lines.append(f"          {kv_i32} = arith.index_cast %kv : index to i32")
+        p_kv = _shuffle_idx(prob, kv_i32, indent="          ")
+        base_v = _fresh("base_v")
+        v_idx = _fresh("v_idx")
+        v_val = _fresh("v_val")
+        acc_next = _fresh("acc_next")
+        lines.append(f"          {acc_next} = scf.if %pred_d -> (f32) {{")
+        lines.append(f"            {base_v} = arith.muli %kv, %cHD : index")
+        lines.append(f"            {v_idx} = arith.addi {base_v}, %lane : index")
+        lines.append(f"            {v_val} = memref.load {arg_ssa[v_name]}[{v_idx}] : {v_memref}")
+        acc2 = _fresh("acc2")
+        lines.append(
+            f"            {acc2} = llvm.intr.fma({p_kv}, {v_val}, %acc) : (f32, f32, f32) -> f32"
+        )
+        lines.append(f"            scf.yield {acc2} : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %acc : f32")
+        lines.append("          }")
+        lines.append(f"          scf.yield {acc_next} : f32")
+        lines.append("        }")
+
+        lines.append("        scf.if %pred_d {")
+        out_idx = _fresh("out_idx")
+        lines.append(f"          {out_idx} = arith.addi %base_q, %lane : index")
+        lines.append(f"          memref.store {acc_out}, {arg_ssa[out_name2]}[{out_idx}] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif (
