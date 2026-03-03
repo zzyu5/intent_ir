@@ -291,6 +291,157 @@ def _emit_rms_norm2d_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _emit_rms_norm_residual2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x).strip() for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 rms_norm_residual2d expects two outputs, got outputs={outputs}")
+    out0, out1 = outputs
+    out0_shape = _shape(out0, intent=intent, bindings=bindings)
+    out1_shape = _shape(out1, intent=intent, bindings=bindings)
+    if len(out0_shape) == 2 and len(out1_shape) == 1:
+        out_2d, out_rstd = out0, out1
+        out_shape, rstd_shape = out0_shape, out1_shape
+    elif len(out1_shape) == 2 and len(out0_shape) == 1:
+        out_2d, out_rstd = out1, out0
+        out_shape, rstd_shape = out1_shape, out0_shape
+    else:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 rms_norm_residual2d expects [M,N] and [M] outputs, got {out0_shape} and {out1_shape}"
+        )
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0 or int(rstd_shape[0]) != int(m_dim):
+        raise RuntimeError(f"rvv cpu-loops v1 rms_norm_residual2d shape mismatch: out={out_shape} rstd={rstd_shape}")
+
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+
+    def _name_key(raw: str) -> str:
+        return str(raw or "").strip().lower().replace("-", "_")
+
+    rank2_mn = [n for n in ext_inputs if list(_shape(n, intent=intent, bindings=bindings)) == [m_dim, n_dim]]
+    rank1_n = [n for n in ext_inputs if list(_shape(n, intent=intent, bindings=bindings)) == [n_dim]]
+
+    inp_name = next((n for n in rank2_mn if _name_key(n) in {"inp", "input", "x"} or "inp" in _name_key(n)), "")
+    residual_name = next((n for n in rank2_mn if "resid" in _name_key(n)), "")
+    if not inp_name:
+        for n in list(rank2_mn):
+            if n != residual_name:
+                inp_name = str(n)
+                break
+    if not residual_name:
+        for n in list(rank2_mn):
+            if n != inp_name:
+                residual_name = str(n)
+                break
+    if not (inp_name and residual_name):
+        raise RuntimeError("rvv cpu-loops v1 rms_norm_residual2d expects inp[M,N] and residual[M,N] inputs")
+
+    weight_name = next((n for n in rank1_n if _name_key(n) in {"weight", "w", "weight_ptr", "gamma"}), "")
+    bias_name = next((n for n in rank1_n if _name_key(n) in {"bias", "b", "bias_ptr", "beta"}), "")
+    if (not weight_name) or (not bias_name):
+        # Deterministic fallback: prefer bias first (matches many frontends).
+        ordered = sorted([str(x) for x in list(rank1_n)])
+        if len(ordered) >= 2:
+            bias_name = bias_name or ordered[0]
+            weight_name = weight_name or ordered[1]
+    if not (weight_name and bias_name):
+        raise RuntimeError("rvv cpu-loops v1 rms_norm_residual2d expects weight[N] and bias[N] inputs")
+
+    eps_val = _find_const_scalar(intent=intent, output="eps", dtype="f32", bindings=bindings)
+    if eps_val is None:
+        eps_val = _find_const_scalar(intent=intent, output="epsilon", dtype="f32", bindings=bindings)
+    if eps_val is None:
+        eps_val = 1.0e-5
+    n_scalar_val = _find_const_scalar(intent=intent, output="N_scalar", dtype="f32", bindings=bindings)
+    if n_scalar_val is None:
+        n_scalar_val = float(n_dim)
+
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
+    for name in io_names:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        if elem_ty != "f32":
+            raise RuntimeError(
+                f"rvv cpu-loops v1 rms_norm_residual2d supports only f32 tensors, got {name} dtype={elem_ty!r}"
+            )
+        sh = _shape(name, intent=intent, bindings=bindings)
+        numel = 1
+        for d in sh:
+            numel *= int(d)
+        memref_ty = f"memref<{int(numel)}x{elem_ty}>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+
+    inp_memref = memref_ty_by_name[inp_name]
+    res_memref = memref_ty_by_name[residual_name]
+    w_memref = memref_ty_by_name[weight_name]
+    b_memref = memref_ty_by_name[bias_name]
+    out_memref = memref_ty_by_name[out_2d]
+    rstd_memref = memref_ty_by_name[out_rstd]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cM = arith.constant {m_dim} : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
+    lines.append("  %c0f = arith.constant 0.0 : f32")
+    lines.append(f"  %cNf = arith.constant {_f32_lit(float(n_scalar_val))} : f32")
+    lines.append(f"  %eps = arith.constant {_f32_lit(float(eps_val))} : f32")
+    lines.append("  scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("    %base = arith.muli %m, %cN : index")
+    lines.append("    %sum_sq = scf.for %n = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
+    lines.append("      %i = arith.addi %base, %n : index")
+    lines.append(f"      %x = memref.load {arg_ssa[inp_name]}[%i] : {inp_memref}")
+    lines.append(f"      %r = memref.load {arg_ssa[residual_name]}[%i] : {res_memref}")
+    lines.append(f"      %b = memref.load {arg_ssa[bias_name]}[%n] : {b_memref}")
+    lines.append("      %z0 = arith.addf %x, %r : f32")
+    lines.append("      %z = arith.addf %z0, %b : f32")
+    lines.append("      %z2 = arith.mulf %z, %z : f32")
+    lines.append("      %acc2 = arith.addf %acc, %z2 : f32")
+    lines.append("      scf.yield %acc2 : f32")
+    lines.append("    }")
+    lines.append("    %mean_sq = arith.divf %sum_sq, %cNf : f32")
+    lines.append("    %var_eps = arith.addf %mean_sq, %eps : f32")
+    lines.append("    %rstd_val = math.rsqrt %var_eps : f32")
+    lines.append(f"    memref.store %rstd_val, {arg_ssa[out_rstd]}[%m] : {rstd_memref}")
+    lines.append("    scf.for %n2 = %c0 to %cN step %c1 {")
+    lines.append("      %i2 = arith.addi %base, %n2 : index")
+    lines.append(f"      %xv = memref.load {arg_ssa[inp_name]}[%i2] : {inp_memref}")
+    lines.append(f"      %rv = memref.load {arg_ssa[residual_name]}[%i2] : {res_memref}")
+    lines.append(f"      %bv = memref.load {arg_ssa[bias_name]}[%n2] : {b_memref}")
+    lines.append(f"      %w = memref.load {arg_ssa[weight_name]}[%n2] : {w_memref}")
+    lines.append("      %zv0 = arith.addf %xv, %rv : f32")
+    lines.append("      %zv = arith.addf %zv0, %bv : f32")
+    lines.append("      %zn = arith.mulf %zv, %rstd_val : f32")
+    lines.append("      %y = arith.mulf %zn, %w : f32")
+    lines.append(f"      memref.store %y, {arg_ssa[out_2d]}[%i2] : {out_memref}")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def _emit_layer_norm_persistent_kernel(
     *,
     kernel_name: str,
@@ -402,12 +553,12 @@ def _emit_layer_norm_persistent_kernel(
     lines.append("      %acc2 = arith.addf %acc, %x : f32")
     lines.append("      scf.yield %acc2 : f32")
     lines.append("    }")
-    lines.append("    %mean = arith.divf %sum, %cNf : f32")
-    lines.append(f"    memref.store %mean, {arg_ssa[out_mean]}[%m] : {mean_memref}")
+    lines.append("    %mean_val = arith.divf %sum, %cNf : f32")
+    lines.append(f"    memref.store %mean_val, {arg_ssa[out_mean]}[%m] : {mean_memref}")
     lines.append("    %sum_sq = scf.for %n2 = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
     lines.append("      %i2 = arith.addi %base, %n2 : index")
     lines.append(f"      %x2 = memref.load {arg_ssa[inp_name]}[%i2] : {inp_memref}")
-    lines.append("      %d = arith.subf %x2, %mean : f32")
+    lines.append("      %d = arith.subf %x2, %mean_val : f32")
     lines.append("      %d2 = arith.mulf %d, %d : f32")
     lines.append("      %acc3 = arith.addf %acc, %d2 : f32")
     lines.append("      scf.yield %acc3 : f32")
@@ -419,7 +570,7 @@ def _emit_layer_norm_persistent_kernel(
     lines.append("    scf.for %n3 = %c0 to %cN step %c1 {")
     lines.append("      %i3 = arith.addi %base, %n3 : index")
     lines.append(f"      %x3 = memref.load {arg_ssa[inp_name]}[%i3] : {inp_memref}")
-    lines.append("      %d3 = arith.subf %x3, %mean : f32")
+    lines.append("      %d3 = arith.subf %x3, %mean_val : f32")
     lines.append("      %norm = arith.mulf %d3, %rstd : f32")
     lines.append(f"      %w = memref.load {arg_ssa[weight_name]}[%n3] : {w_memref}")
     lines.append(f"      %b = memref.load {arg_ssa[bias_name]}[%n3] : {b_memref}")
@@ -429,6 +580,397 @@ def _emit_layer_norm_persistent_kernel(
     lines.append("    }")
     lines.append("  }")
     lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_layer_norm_residual2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x).strip() for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 3:
+        raise RuntimeError(f"rvv cpu-loops v1 layer_norm_residual2d expects three outputs, got outputs={outputs}")
+
+    shapes = {n: _shape(n, intent=intent, bindings=bindings) for n in outputs}
+    out_2d = next((n for n, sh in shapes.items() if len(sh) == 2), "")
+    if not out_2d:
+        raise RuntimeError(f"rvv cpu-loops v1 layer_norm_residual2d missing rank-2 output in outputs={outputs}")
+    m_dim, n_dim = map(int, shapes[out_2d])
+    out_mean = next((n for n in outputs if n != out_2d and len(shapes.get(n) or []) == 1), "")
+    out_rstd = next((n for n in outputs if n not in {out_2d, out_mean} and len(shapes.get(n) or []) == 1), "")
+    if not out_mean or not out_rstd:
+        raise RuntimeError("rvv cpu-loops v1 layer_norm_residual2d expects rank-1 mean/rstd outputs")
+    if list(shapes.get(out_mean) or []) != [m_dim] or list(shapes.get(out_rstd) or []) != [m_dim]:
+        raise RuntimeError("rvv cpu-loops v1 layer_norm_residual2d expects mean/rstd shape [M]")
+
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+
+    def _name_key(raw: str) -> str:
+        return str(raw or "").strip().lower().replace("-", "_")
+
+    rank2_mn = [n for n in ext_inputs if list(_shape(n, intent=intent, bindings=bindings)) == [m_dim, n_dim]]
+    rank1_n = [n for n in ext_inputs if list(_shape(n, intent=intent, bindings=bindings)) == [n_dim]]
+    if len(rank2_mn) < 2:
+        raise RuntimeError("rvv cpu-loops v1 layer_norm_residual2d expects inp[M,N] and residual[M,N] inputs")
+
+    inp_name = next((n for n in rank2_mn if _name_key(n) in {"inp", "input", "x"} or "inp" in _name_key(n)), "")
+    residual_name = next((n for n in rank2_mn if "resid" in _name_key(n)), "")
+    if not inp_name:
+        for n in list(rank2_mn):
+            if n != residual_name:
+                inp_name = str(n)
+                break
+    if not residual_name:
+        for n in list(rank2_mn):
+            if n != inp_name:
+                residual_name = str(n)
+                break
+
+    weight_name = next((n for n in rank1_n if _name_key(n) in {"weight", "w", "weight_ptr", "gamma"}), "")
+    bias_name = next((n for n in rank1_n if _name_key(n) in {"bias", "b", "bias_ptr", "beta"}), "")
+    if (not weight_name) or (not bias_name):
+        ordered = sorted([str(x) for x in list(rank1_n)])
+        if len(ordered) >= 2:
+            bias_name = bias_name or ordered[0]
+            weight_name = weight_name or ordered[1]
+    if not (inp_name and residual_name and weight_name and bias_name):
+        raise RuntimeError("rvv cpu-loops v1 layer_norm_residual2d failed to infer inputs")
+
+    eps_val = _find_const_scalar(intent=intent, output="eps", dtype="f32", bindings=bindings)
+    if eps_val is None:
+        eps_val = _find_const_scalar(intent=intent, output="epsilon", dtype="f32", bindings=bindings)
+    if eps_val is None:
+        eps_val = 1.0e-5
+    n_scalar_val = _find_const_scalar(intent=intent, output="N_scalar", dtype="f32", bindings=bindings)
+    if n_scalar_val is None:
+        n_scalar_val = float(n_dim)
+
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
+    for name in io_names:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        if elem_ty != "f32":
+            raise RuntimeError(
+                f"rvv cpu-loops v1 layer_norm_residual2d supports only f32 tensors, got {name} dtype={elem_ty!r}"
+            )
+        sh = _shape(name, intent=intent, bindings=bindings)
+        numel = 1
+        for d in sh:
+            numel *= int(d)
+        memref_ty = f"memref<{int(numel)}x{elem_ty}>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+
+    inp_memref = memref_ty_by_name[inp_name]
+    res_memref = memref_ty_by_name[residual_name]
+    w_memref = memref_ty_by_name[weight_name]
+    b_memref = memref_ty_by_name[bias_name]
+    out_memref = memref_ty_by_name[out_2d]
+    mean_memref = memref_ty_by_name[out_mean]
+    rstd_memref = memref_ty_by_name[out_rstd]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cM = arith.constant {m_dim} : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
+    lines.append("  %c0f = arith.constant 0.0 : f32")
+    lines.append(f"  %cNf = arith.constant {_f32_lit(float(n_scalar_val))} : f32")
+    lines.append(f"  %eps = arith.constant {_f32_lit(float(eps_val))} : f32")
+    lines.append("  scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("    %base = arith.muli %m, %cN : index")
+    lines.append("    %sum = scf.for %n = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
+    lines.append("      %i = arith.addi %base, %n : index")
+    lines.append(f"      %x = memref.load {arg_ssa[inp_name]}[%i] : {inp_memref}")
+    lines.append(f"      %r = memref.load {arg_ssa[residual_name]}[%i] : {res_memref}")
+    lines.append("      %z = arith.addf %x, %r : f32")
+    lines.append("      %acc2 = arith.addf %acc, %z : f32")
+    lines.append("      scf.yield %acc2 : f32")
+    lines.append("    }")
+    lines.append("    %mean_val = arith.divf %sum, %cNf : f32")
+    lines.append(f"    memref.store %mean_val, {arg_ssa[out_mean]}[%m] : {mean_memref}")
+    lines.append("    %sum_sq = scf.for %n2 = %c0 to %cN step %c1 iter_args(%acc = %c0f) -> (f32) {")
+    lines.append("      %i2 = arith.addi %base, %n2 : index")
+    lines.append(f"      %x2 = memref.load {arg_ssa[inp_name]}[%i2] : {inp_memref}")
+    lines.append(f"      %r2 = memref.load {arg_ssa[residual_name]}[%i2] : {res_memref}")
+    lines.append("      %z2 = arith.addf %x2, %r2 : f32")
+    lines.append("      %d = arith.subf %z2, %mean_val : f32")
+    lines.append("      %d2 = arith.mulf %d, %d : f32")
+    lines.append("      %acc3 = arith.addf %acc, %d2 : f32")
+    lines.append("      scf.yield %acc3 : f32")
+    lines.append("    }")
+    lines.append("    %var = arith.divf %sum_sq, %cNf : f32")
+    lines.append("    %var_eps = arith.addf %var, %eps : f32")
+    lines.append("    %rstd_val = math.rsqrt %var_eps : f32")
+    lines.append(f"    memref.store %rstd_val, {arg_ssa[out_rstd]}[%m] : {rstd_memref}")
+    lines.append("    scf.for %n3 = %c0 to %cN step %c1 {")
+    lines.append("      %i3 = arith.addi %base, %n3 : index")
+    lines.append(f"      %x3 = memref.load {arg_ssa[inp_name]}[%i3] : {inp_memref}")
+    lines.append(f"      %r3 = memref.load {arg_ssa[residual_name]}[%i3] : {res_memref}")
+    lines.append("      %z3 = arith.addf %x3, %r3 : f32")
+    lines.append("      %d3 = arith.subf %z3, %mean_val : f32")
+    lines.append("      %norm = arith.mulf %d3, %rstd_val : f32")
+    lines.append(f"      %w = memref.load {arg_ssa[weight_name]}[%n3] : {w_memref}")
+    lines.append(f"      %b = memref.load {arg_ssa[bias_name]}[%n3] : {b_memref}")
+    lines.append("      %scaled = arith.mulf %norm, %w : f32")
+    lines.append("      %y = arith.addf %scaled, %b : f32")
+    lines.append(f"      memref.store %y, {arg_ssa[out_2d]}[%i3] : {out_memref}")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_mlp2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x).strip() for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 mlp2d expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    mm_ops = [op for op in ops if str(getattr(op, "op", "")).strip() == "matmul"]
+    if len(mm_ops) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d expects exactly 2 matmul ops, got {len(mm_ops)}")
+    mm0, mm1 = mm_ops
+    mm0_ins = [str(x).strip() for x in list(getattr(mm0, "inputs", []) or []) if str(x).strip()]
+    mm1_ins = [str(x).strip() for x in list(getattr(mm1, "inputs", []) or []) if str(x).strip()]
+    if len(mm0_ins) != 2 or len(mm1_ins) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d expects matmul inputs of length 2, got {mm0_ins} and {mm1_ins}")
+    a_name, w1_name = mm0_ins
+    hidden_name, w2_name = mm1_ins
+
+    a_shape = _shape(a_name, intent=intent, bindings=bindings)
+    w1_shape = _shape(w1_name, intent=intent, bindings=bindings)
+    w2_shape = _shape(w2_name, intent=intent, bindings=bindings)
+    if len(a_shape) != 2 or len(w1_shape) != 2 or len(w2_shape) != 2:
+        raise RuntimeError("rvv cpu-loops v1 mlp2d expects rank-2 A/W1/W2 tensors")
+    if int(a_shape[0]) != int(m_dim):
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d expects A[M,K], got {a_name} shape={a_shape} for M={m_dim}")
+    if int(w2_shape[1]) != int(n_dim):
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d expects W2[H,N], got {w2_name} shape={w2_shape} for N={n_dim}")
+    k_dim = int(a_shape[1])
+    h_dim = int(w2_shape[0])
+    if k_dim <= 0 or h_dim <= 0:
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d invalid K/H inferred: K={k_dim} H={h_dim}")
+    if [int(x) for x in w1_shape] != [int(k_dim), int(h_dim)]:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 mlp2d expects W1[K,H], got {w1_name} shape={w1_shape} (K={k_dim},H={h_dim})"
+        )
+
+    b1_name = ""
+    b2_name = ""
+
+    # Prefer graph-based identification over shape heuristics (H can equal N, making shapes ambiguous).
+    tensors = dict(intent.tensors or {})
+    produced = {str(getattr(op, "output", "")).strip() for op in ops if str(getattr(op, "output", "")).strip()}
+    op_by_output: dict[str, Any] = {str(getattr(op, "output", "")).strip(): op for op in ops if str(getattr(op, "output", "")).strip()}
+
+    def _op_name(op: Any) -> str:
+        return str(getattr(op, "op", "")).strip()
+
+    def _op_inputs(op: Any) -> list[str]:
+        return [str(x).strip() for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+
+    def _is_external(name: str) -> bool:
+        return str(name) in tensors and str(name) not in produced
+
+    def _resolve_bias_input(name: str, *, expected_len: int) -> str | None:
+        nm = str(name).strip()
+        if not nm:
+            return None
+        op = op_by_output.get(nm)
+        if op is not None and _op_name(op) == "broadcast_in_dim":
+            b_ins = _op_inputs(op)
+            if len(b_ins) == 1:
+                return str(b_ins[0])
+            return None
+        if _is_external(nm) and _shape(nm, intent=intent, bindings=bindings) == [int(expected_len)]:
+            return nm
+        return None
+
+    # b1: resolve from the pre-activation that feeds into `hidden` (max/relu output).
+    op_hidden = op_by_output.get(str(hidden_name))
+    pre_act = ""
+    if op_hidden is not None:
+        hn = _op_name(op_hidden)
+        if hn == "relu":
+            ins = _op_inputs(op_hidden)
+            if len(ins) == 1:
+                pre_act = str(ins[0])
+        elif hn == "max":
+            ins = _op_inputs(op_hidden)
+            pre_act = next((n for n in ins if n in op_by_output and _op_name(op_by_output.get(n)) == "add"), "")
+    if pre_act:
+        op_add = op_by_output.get(str(pre_act))
+        if op_add is not None and _op_name(op_add) == "add":
+            for n in _op_inputs(op_add):
+                cand = _resolve_bias_input(n, expected_len=h_dim)
+                if cand:
+                    b1_name = str(cand)
+                    break
+
+    # b2: resolve from the final add that produces the output.
+    op_out = op_by_output.get(str(out_name))
+    if op_out is not None and _op_name(op_out) == "add":
+        for n in _op_inputs(op_out):
+            cand = _resolve_bias_input(n, expected_len=n_dim)
+            if cand:
+                b2_name = str(cand)
+                break
+
+    if not (b1_name and b2_name):
+        rank1_f32 = [
+            str(nm)
+            for nm, tt in tensors.items()
+            if str(nm).strip()
+            and str(nm) != out_name
+            and _dtype(getattr(tt, "dtype", "f32")) == "f32"
+            and len(_shape(str(nm), intent=intent, bindings=bindings)) == 1
+        ]
+
+        def _name_key(raw: str) -> str:
+            return str(raw or "").strip().lower().replace("-", "_")
+
+        if not b1_name:
+            b1_name = next((nm for nm in rank1_f32 if _name_key(nm) in {"b1", "bias1", "bias_1"}), "")
+        if not b2_name:
+            b2_name = next((nm for nm in rank1_f32 if _name_key(nm) in {"b2", "bias2", "bias_2"}), "")
+
+        # Last resort: pick by shape only if unambiguous.
+        if not b1_name:
+            cands = [nm for nm in rank1_f32 if _shape(nm, intent=intent, bindings=bindings) == [int(h_dim)]]
+            if len(cands) == 1:
+                b1_name = cands[0]
+        if not b2_name:
+            cands = [nm for nm in rank1_f32 if _shape(nm, intent=intent, bindings=bindings) == [int(n_dim)]]
+            if len(cands) == 1:
+                b2_name = cands[0]
+    if not (b1_name and b2_name):
+        raise RuntimeError(f"rvv cpu-loops v1 mlp2d missing b1[H]/b2[N] inputs (b1={b1_name!r} b2={b2_name!r})")
+
+    io_names = _io_arg_order(intent)
+    total_a = int(m_dim * k_dim)
+    total_w1 = int(k_dim * h_dim)
+    total_w2 = int(h_dim * n_dim)
+    total_b1 = int(h_dim)
+    total_b2 = int(n_dim)
+    total_out = int(m_dim * n_dim)
+
+    arg_types: dict[str, str] = {
+        a_name: f"memref<{total_a}xf32>",
+        w1_name: f"memref<{total_w1}xf32>",
+        w2_name: f"memref<{total_w2}xf32>",
+        b1_name: f"memref<{total_b1}xf32>",
+        b2_name: f"memref<{total_b2}xf32>",
+        out_name: f"memref<{total_out}xf32>",
+    }
+    for n in list(io_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 mlp2d: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in io_names]
+
+    a_memref_ty = arg_types[a_name]
+    w1_memref_ty = arg_types[w1_name]
+    w2_memref_ty = arg_types[w2_name]
+    b1_memref_ty = arg_types[b1_name]
+    b2_memref_ty = arg_types[b2_name]
+    out_memref_ty = arg_types[out_name]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append(f"    %cK = arith.constant {k_dim} : index")
+    lines.append(f"    %cH = arith.constant {h_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    hidden_total = int(m_dim * h_dim)
+    hidden_memref_ty = f"memref<{hidden_total}xf32>"
+    lines.append(f"    %hidden = memref.alloca() : {hidden_memref_ty}")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %a_base = arith.muli %m, %cK : index")
+    lines.append("      %h_base = arith.muli %m, %cH : index")
+    lines.append("      scf.for %h = %c0 to %cH step %c1 {")
+    lines.append("        %sum = scf.for %k = %c0 to %cK step %c1 iter_args(%a = %c0f) -> (f32) {")
+    lines.append("          %a_i = arith.addi %a_base, %k : index")
+    lines.append("          %w1_row = arith.muli %k, %cH : index")
+    lines.append("          %w1_i = arith.addi %w1_row, %h : index")
+    lines.append(f"          %av = memref.load %{_mlir_ident(a_name)}[%a_i] : {a_memref_ty}")
+    lines.append(f"          %w1v = memref.load %{_mlir_ident(w1_name)}[%w1_i] : {w1_memref_ty}")
+    lines.append("          %p = arith.mulf %av, %w1v : f32")
+    lines.append("          %a2 = arith.addf %a, %p : f32")
+    lines.append("          scf.yield %a2 : f32")
+    lines.append("        }")
+    lines.append(f"        %b1v = memref.load %{_mlir_ident(b1_name)}[%h] : {b1_memref_ty}")
+    lines.append("        %pre = arith.addf %sum, %b1v : f32")
+    lines.append("        %hid = arith.maximumf %pre, %c0f : f32")
+    lines.append("        %hi = arith.addi %h_base, %h : index")
+    lines.append(f"        memref.store %hid, %hidden[%hi] : {hidden_memref_ty}")
+    lines.append("      }")
+    lines.append("      %out_row = arith.muli %m, %cN : index")
+    lines.append("      scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("        %acc_out = scf.for %h2 = %c0 to %cH step %c1 iter_args(%acc = %c0f) -> (f32) {")
+    lines.append("          %hi2 = arith.addi %h_base, %h2 : index")
+    lines.append(f"          %hv = memref.load %hidden[%hi2] : {hidden_memref_ty}")
+    lines.append("          %w2_row = arith.muli %h2, %cN : index")
+    lines.append("          %w2_i = arith.addi %w2_row, %n : index")
+    lines.append(f"          %w2v = memref.load %{_mlir_ident(w2_name)}[%w2_i] : {w2_memref_ty}")
+    lines.append("          %q = arith.mulf %hv, %w2v : f32")
+    lines.append("          %acc2 = arith.addf %acc, %q : f32")
+    lines.append("          scf.yield %acc2 : f32")
+    lines.append("        }")
+    lines.append(f"        %b2v = memref.load %{_mlir_ident(b2_name)}[%n] : {b2_memref_ty}")
+    lines.append("        %y = arith.addf %acc_out, %b2v : f32")
+    lines.append("        %out_i = arith.addi %out_row, %n : index")
+    lines.append(f"        memref.store %y, %{_mlir_ident(out_name)}[%out_i] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
     lines.append("  }")
     lines.append("}")
     return "\n".join(lines) + "\n"
@@ -1153,6 +1695,101 @@ def _emit_row_reduce_kernel(
     lines.append("        scf.yield %y : f32")
     lines.append("      }")
     lines.append(f"      memref.store %acc, %{_mlir_ident(out_name)}[%m] : {out_memref_ty}")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_row_reduce_any_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    """
+    Implements `any_kernel_dim`: out[m] = any(inp[m, :] != 0).
+
+    ABI notes:
+      - bool/i1 tensors are represented as i8 in the exported memref ABI.
+    """
+
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "bool")) != "i8":
+        raise RuntimeError("rvv cpu-loops v1 reduce_any expects bool output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 reduce_any expects rank-1 output, got {out_shape}")
+    m_dim = int(out_shape[0])
+    if m_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    # Canonical intent: const(0) -> ne -> reduce_any(axis=1,dims=[1])
+    if not ops:
+        raise RuntimeError("rvv cpu-loops v1 reduce_any requires non-empty ops")
+
+    io_names = _io_arg_order(intent)
+    ext_inputs = [n for n in io_names if n not in set(outputs)]
+    inp_name = ""
+    n_dim = 0
+    for name in ext_inputs:
+        tt = (intent.tensors or {}).get(str(name))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(str(name), intent=intent, bindings=bindings)
+        if len(shp) == 2 and int(shp[0]) == int(m_dim) and int(shp[1]) > 0:
+            inp_name = str(name)
+            n_dim = int(shp[1])
+            break
+    if not inp_name:
+        raise RuntimeError("rvv cpu-loops v1 reduce_any expects external input[M,N] f32 tensor")
+
+    total = int(m_dim * n_dim)
+    in_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = f"memref<{m_dim}xi8>"
+
+    arg_types: dict[str, str] = {inp_name: in_memref_ty, out_name: out_memref_ty}
+    for n in list(io_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 reduce_any: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in io_names]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %false = arith.constant false")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %base = arith.muli %m, %cN : index")
+    lines.append("      %acc = scf.for %n = %c0 to %cN step %c1 iter_args(%a = %false) -> (i1) {")
+    lines.append("        %i = arith.addi %base, %n : index")
+    lines.append(f"        %x = memref.load %{_mlir_ident(inp_name)}[%i] : {in_memref_ty}")
+    lines.append("        %nz = arith.cmpf une, %x, %c0f : f32")
+    lines.append("        %a2 = arith.ori %a, %nz : i1")
+    lines.append("        scf.yield %a2 : i1")
+    lines.append("      }")
+    lines.append("      %out_i8 = arith.extui %acc : i1 to i8")
+    lines.append(f"      memref.store %out_i8, %{_mlir_ident(out_name)}[%m] : {out_memref_ty}")
     lines.append("    }")
     lines.append("    return")
     lines.append("  }")
@@ -2822,6 +3459,9 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "grouped_row_sum2d":
         module_text = _emit_grouped_row_sum2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_grouped_row_sum2d_v1"
+    elif kernel_name == "any_kernel_dim":
+        module_text = _emit_row_reduce_any_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_row_reduce_any_axis1_v1"
     elif kernel_name in {"ai_bench_matmul", "matmul_relu2d", "matmul_bias_relu2d", "matmul_fused_epilogue2d"}:
         relu = kernel_name in {"matmul_relu2d", "matmul_bias_relu2d"}
         require_bias = kernel_name in {"matmul_bias_relu2d", "matmul_fused_epilogue2d"}
@@ -2835,6 +3475,9 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
             require_row_col_masks=require_row_col_masks,
         )
         kind = f"cpu_loops_{kernel_name}_v1"
+    elif kernel_name == "mlp2d":
+        module_text = _emit_mlp2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_mlp2d_v1"
     elif kernel_name == "count_nonzero2d":
         module_text = _emit_count_nonzero2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_count_nonzero2d_v1"
@@ -2847,7 +3490,16 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "rms_norm2d":
         module_text = _emit_rms_norm2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "rms_norm2d_rvv_v1"
+    elif kernel_name == "rms_norm_residual2d":
+        module_text = _emit_rms_norm_residual2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "rms_norm_residual2d_rvv_v1"
     elif kernel_name == "layer_norm_persistent":
+        module_text = _emit_layer_norm_persistent_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "layer_norm_rvv_v1"
+    elif kernel_name == "layer_norm_residual2d":
+        module_text = _emit_layer_norm_residual2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "layer_norm_residual2d_rvv_v1"
+    elif kernel_name == "ai_bench_layernorm":
         module_text = _emit_layer_norm_persistent_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "layer_norm_rvv_v1"
     elif kernel_name == "group_norm_kernel":
