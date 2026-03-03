@@ -1473,7 +1473,23 @@ def _emit_elementwise_kernel(
             computed[out] = v
             continue
 
-        if name in {"relu", "abs", "sqrt", "rsqrt", "exp", "exp2", "neg", "floor", "ceil", "log", "sin", "cos", "tan"}:
+        if name in {
+            "relu",
+            "abs",
+            "sqrt",
+            "rsqrt",
+            "exp",
+            "exp2",
+            "neg",
+            "floor",
+            "ceil",
+            "log",
+            "sin",
+            "cos",
+            "tan",
+            "atan",
+            "acos",
+        }:
             if len(ins) != 1 or not out:
                 raise RuntimeError(f"invalid unary op: {name} inputs={ins} output={out!r}")
             for nm in [*ins, out]:
@@ -1504,8 +1520,14 @@ def _emit_elementwise_kernel(
                 lines.append(f"    {v} = math.ceil {a} : f32")
             elif name == "log":
                 lines.append(f"    {v} = math.log {a} : f32")
-            elif name in {"sin", "cos", "tan"}:
-                mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[name]
+            elif name in {"sin", "cos", "tan", "atan", "acos"}:
+                mop = {
+                    "sin": "math.sin",
+                    "cos": "math.cos",
+                    "tan": "math.tan",
+                    "atan": "math.atan",
+                    "acos": "math.acos",
+                }[name]
                 lines.append(f"    {v} = {mop} {a} : f32")
             else:
                 base = attrs.get("base")
@@ -1522,6 +1544,347 @@ def _emit_elementwise_kernel(
     out_memref_ty = f"memref<{total}xf32>"
     lines.append(f"    memref.store {final}, {arg_ssa[out_name]}[%i] : {out_memref_ty}")
     lines.append("    }")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_cmp2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d expects single output, got outputs={outputs}")
+    out_name = str(outputs[0]).strip()
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d missing output tensor spec: {out_name}")
+    out_ty = _dtype(getattr(out_tt, "dtype", "bool"))
+    if out_ty not in {"i8", "i32"}:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d supports only bool/i32 outputs, got out dtype={getattr(out_tt,'dtype','')}")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid cmp2d output shape: {out_shape}")
+    total = int(m_dim * n_dim)
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if not ops:
+        raise RuntimeError("rvv cpu-loops v1 cmp2d requires non-empty ops")
+    cmp_ops = [op for op in ops if str(getattr(op, "op", "")).strip() in {"eq", "ne", "lt", "le", "gt", "ge"}]
+    if len(cmp_ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d expects exactly 1 cmp op, got {[getattr(o,'op','') for o in cmp_ops]}")
+    cmp_op = cmp_ops[0]
+    cmp_name = str(getattr(cmp_op, "op", "")).strip()
+    ins = [str(x).strip() for x in list(getattr(cmp_op, "inputs", []) or []) if str(x).strip()]
+    if len(ins) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d {cmp_name} expects 2 inputs, got inputs={ins}")
+    lhs_name, rhs_name = str(ins[0]), str(ins[1])
+    lhs_tt = (intent.tensors or {}).get(lhs_name)
+    rhs_tt = (intent.tensors or {}).get(rhs_name)
+    if lhs_tt is None or rhs_tt is None:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d missing input tensor specs: lhs={lhs_name!r} rhs={rhs_name!r}")
+    if _dtype(getattr(lhs_tt, "dtype", "f32")) != "f32" or _dtype(getattr(rhs_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d supports only f32 inputs, got {lhs_name}={getattr(lhs_tt,'dtype','')}, {rhs_name}={getattr(rhs_tt,'dtype','')}")
+    lhs_shape = _shape(lhs_name, intent=intent, bindings=bindings)
+    rhs_shape = _shape(rhs_name, intent=intent, bindings=bindings)
+    if list(lhs_shape) != [m_dim, n_dim] or list(rhs_shape) != [m_dim, n_dim]:
+        raise RuntimeError(f"rvv cpu-loops v1 cmp2d expects inputs shape [M,N]=={out_shape}, got lhs={lhs_shape} rhs={rhs_shape}")
+
+    io_names = _io_arg_order(intent)
+    if not io_names:
+        raise RuntimeError("rvv cpu-loops v1 cmp2d missing io tensors")
+
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
+    for name in io_names:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"rvv cpu-loops v1 cmp2d missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "f32"))
+        sh = _shape(name, intent=intent, bindings=bindings)
+        if len(sh) == 2:
+            if list(sh) != [m_dim, n_dim]:
+                raise RuntimeError(f"rvv cpu-loops v1 cmp2d expects rank-2 io tensors to match [M,N], got {name} shape={sh}")
+            numel = int(m_dim * n_dim)
+        elif len(sh) == 0:
+            numel = 1
+        else:
+            raise RuntimeError(f"rvv cpu-loops v1 cmp2d supports only rank-2 or scalar io tensors, got {name} shape={sh}")
+        memref_ty = f"memref<{numel}x{elem_ty}>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+
+    lhs_memref = memref_ty_by_name[lhs_name]
+    rhs_memref = memref_ty_by_name[rhs_name]
+    out_memref = memref_ty_by_name[out_name]
+
+    pred_kind = {
+        "eq": "oeq",
+        "ne": "one",
+        "lt": "olt",
+        "le": "ole",
+        "gt": "ogt",
+        "ge": "oge",
+    }[cmp_name]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cM = arith.constant {m_dim} : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
+    if out_ty == "i8":
+        lines.append("  %c0o = arith.constant 0 : i8")
+        lines.append("  %c1o = arith.constant 1 : i8")
+    else:
+        lines.append("  %c0o = arith.constant 0 : i32")
+        lines.append("  %c1o = arith.constant 1 : i32")
+    lines.append("  scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("    %mN = arith.muli %m, %cN : index")
+    lines.append("    scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("      %i = arith.addi %mN, %n : index")
+    lines.append(f"      %a = memref.load {arg_ssa[lhs_name]}[%i] : {lhs_memref}")
+    lines.append(f"      %b = memref.load {arg_ssa[rhs_name]}[%i] : {rhs_memref}")
+    lines.append(f"      %p = arith.cmpf {pred_kind}, %a, %b : f32")
+    lines.append(f"      %v = arith.select %p, %c1o, %c0o : {out_ty}")
+    lines.append(f"      memref.store %v, {arg_ssa[out_name]}[%i] : {out_memref}")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_bitwise2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d expects single output, got outputs={outputs}")
+    out_name = str(outputs[0]).strip()
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "i32")) != "i32":
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d supports only i32 output, got dtype={getattr(out_tt,'dtype','')}")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid bitwise2d output shape: {out_shape}")
+    total = int(m_dim * n_dim)
+
+    ops = [op for op in list(intent.ops or []) if op is not None]
+    if len(ops) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d expects exactly 1 op, got {len(ops)}")
+    op0 = ops[0]
+    op_name = str(getattr(op0, "op", "")).strip()
+    ins = [str(x).strip() for x in list(getattr(op0, "inputs", []) or []) if str(x).strip()]
+    out = str(getattr(op0, "output", "")).strip()
+    if out != out_name:
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d output mismatch: op.output={out!r} expected={out_name!r}")
+    if op_name not in {
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_not",
+        "bitwise_left_shift",
+        "bitwise_right_shift",
+    }:
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d unsupported op: {op_name}")
+
+    if op_name == "bitwise_not":
+        if len(ins) != 1:
+            raise RuntimeError(f"rvv cpu-loops v1 bitwise_not expects 1 input, got inputs={ins}")
+    else:
+        if len(ins) != 2:
+            raise RuntimeError(f"rvv cpu-loops v1 {op_name} expects 2 inputs, got inputs={ins}")
+
+    io_names = _io_arg_order(intent)
+    if not io_names:
+        raise RuntimeError("rvv cpu-loops v1 bitwise2d missing io tensors")
+
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
+    for name in io_names:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"rvv cpu-loops v1 bitwise2d missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "i32"))
+        if elem_ty != "i32":
+            raise RuntimeError(f"rvv cpu-loops v1 bitwise2d supports only i32 tensors, got {name} dtype={getattr(tt,'dtype','')}")
+        sh = _shape(name, intent=intent, bindings=bindings)
+        if len(sh) != 2 or list(sh) != [m_dim, n_dim]:
+            raise RuntimeError(f"rvv cpu-loops v1 bitwise2d expects [M,N] tensors, got {name} shape={sh}")
+        memref_ty = f"memref<{total}xi32>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+
+    a_name = str(ins[0])
+    b_name = str(ins[1]) if len(ins) > 1 else ""
+    if a_name not in arg_ssa or (b_name and b_name not in arg_ssa):
+        raise RuntimeError(f"rvv cpu-loops v1 bitwise2d expects inputs in io tensors, got inputs={ins} io={io_names}")
+
+    out_memref = memref_ty_by_name[out_name]
+    a_memref = memref_ty_by_name[a_name]
+    b_memref = memref_ty_by_name[b_name] if b_name else ""
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cM = arith.constant {m_dim} : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
+    lines.append("  %all_ones = arith.constant -1 : i32")
+    lines.append("  scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("    %mN = arith.muli %m, %cN : index")
+    lines.append("    scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("      %i = arith.addi %mN, %n : index")
+    lines.append(f"      %a = memref.load {arg_ssa[a_name]}[%i] : {a_memref}")
+    if b_name:
+        lines.append(f"      %b = memref.load {arg_ssa[b_name]}[%i] : {b_memref}")
+    if op_name == "bitwise_and":
+        lines.append("      %v = arith.andi %a, %b : i32")
+    elif op_name == "bitwise_or":
+        lines.append("      %v = arith.ori %a, %b : i32")
+    elif op_name == "bitwise_left_shift":
+        lines.append("      %v = arith.shli %a, %b : i32")
+    elif op_name == "bitwise_right_shift":
+        lines.append("      %v = arith.shrsi %a, %b : i32")
+    else:
+        lines.append("      %v = arith.xori %a, %all_ones : i32")
+    lines.append(f"      memref.store %v, {arg_ssa[out_name]}[%i] : {out_memref}")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("  return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_arange1d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 arange1d expects single output, got outputs={outputs}")
+    out_name = str(outputs[0]).strip()
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"rvv cpu-loops v1 arange1d missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "i64")) != "i64":
+        raise RuntimeError(f"rvv cpu-loops v1 arange1d supports only i64 output, got dtype={getattr(out_tt,'dtype','')}")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 arange1d expects rank-1 output, got {out_shape}")
+    n_dim = int(out_shape[0])
+    if n_dim <= 0:
+        raise RuntimeError(f"invalid arange1d output shape: {out_shape}")
+
+    io_names = _io_arg_order(intent)
+    if not io_names:
+        raise RuntimeError("rvv cpu-loops v1 arange1d missing io tensors")
+
+    arg_decls: list[str] = []
+    arg_ssa: dict[str, str] = {}
+    memref_ty_by_name: dict[str, str] = {}
+    for name in io_names:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"rvv cpu-loops v1 arange1d missing tensor spec: {name}")
+        elem_ty = _dtype(getattr(tt, "dtype", "i64"))
+        sh = _shape(name, intent=intent, bindings=bindings)
+        if name == out_name:
+            if elem_ty != "i64":
+                raise RuntimeError(f"rvv cpu-loops v1 arange1d output must be i64, got {name} dtype={getattr(tt,'dtype','')}")
+            if len(sh) != 1 or int(sh[0]) != int(n_dim):
+                raise RuntimeError(f"rvv cpu-loops v1 arange1d output shape mismatch: out_shape={out_shape} got {name} shape={sh}")
+            numel = int(n_dim)
+        else:
+            if elem_ty != "i64":
+                raise RuntimeError(f"rvv cpu-loops v1 arange1d expects scalar i64 inputs, got {name} dtype={getattr(tt,'dtype','')}")
+            if len(sh) != 0:
+                raise RuntimeError(f"rvv cpu-loops v1 arange1d expects scalar inputs, got {name} shape={sh}")
+            numel = 1
+        memref_ty = f"memref<{numel}x{elem_ty}>"
+        ssa = f"%{_mlir_ident(name)}"
+        arg_ssa[name] = ssa
+        memref_ty_by_name[name] = memref_ty
+        arg_decls.append(f"    {ssa}: {memref_ty}")
+
+    # Expect the standard FlagGems arange seed: inputs are scalar start/step.
+    scalar_inputs = [n for n in io_names if n != out_name]
+    if len(scalar_inputs) < 2:
+        raise RuntimeError(f"rvv cpu-loops v1 arange1d expects at least 2 scalar inputs (start, step), got io={io_names}")
+    start_name = None
+    step_name = None
+    for n in scalar_inputs:
+        if str(n).lower() == "start":
+            start_name = n
+        if str(n).lower() == "step":
+            step_name = n
+    if start_name is None or step_name is None:
+        # Fall back to stable order: [start, step, out]
+        start_name, step_name = scalar_inputs[0], scalar_inputs[1]
+
+    out_memref = memref_ty_by_name[out_name]
+    start_memref = memref_ty_by_name[start_name]
+    step_memref = memref_ty_by_name[step_name]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
+    lines.append(",\n".join(arg_decls))
+    lines.append("  ) {")
+    lines.append("  %c0 = arith.constant 0 : index")
+    lines.append("  %c1 = arith.constant 1 : index")
+    lines.append(f"  %cN = arith.constant {n_dim} : index")
+    lines.append(f"  %start_val = memref.load {arg_ssa[start_name]}[%c0] : {start_memref}")
+    lines.append(f"  %step_val = memref.load {arg_ssa[step_name]}[%c0] : {step_memref}")
+    lines.append("  scf.for %i = %c0 to %cN step %c1 {")
+    lines.append("    %ii64 = arith.index_cast %i : index to i64")
+    lines.append("    %mul = arith.muli %ii64, %step_val : i64")
+    lines.append("    %v = arith.addi %mul, %start_val : i64")
+    lines.append(f"    memref.store %v, {arg_ssa[out_name]}[%i] : {out_memref}")
     lines.append("  }")
     lines.append("  return")
     lines.append("  }")
@@ -4994,6 +5357,21 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "group_norm_kernel":
         module_text = _emit_group_norm_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "group_norm_rvv_v1"
+    elif kernel_name == "arange1d":
+        module_text = _emit_arange1d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_arange1d_v1"
+    elif kernel_name in {
+        "bitwise_and2d",
+        "bitwise_or2d",
+        "bitwise_not2d",
+        "bitwise_left_shift2d",
+        "bitwise_right_shift2d",
+    }:
+        module_text = _emit_bitwise2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_bitwise2d_v1"
+    elif kernel_name in {"eq2d", "ne2d", "lt2d", "le2d", "gt2d", "ge2d"}:
+        module_text = _emit_cmp2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_cmp2d_v1"
     elif len(ops) == 2:
         op_names = [str(getattr(o, "op", "")).strip() for o in ops]
         if set(op_names) == {"reduce_min", "argmin"} and len(outputs) == 2:
