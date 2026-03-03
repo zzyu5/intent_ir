@@ -1672,7 +1672,15 @@ def _emit_elementwise_kernel(
                 elif name == "min":
                     lines.append(f"    {v} = arith.minimumf {a}, {b} : f32")
                 else:
-                    lines.append(f"    {v} = arith.remf {a}, {b} : f32")
+                    # Match torch.remainder semantics (Python-style modulo):
+                    #   r = a - floor(a / b) * b
+                    q = _fresh(f"{_mlir_ident(out)}_q")
+                    qf = _fresh(f"{_mlir_ident(out)}_qf")
+                    qb = _fresh(f"{_mlir_ident(out)}_qb")
+                    lines.append(f"    {q} = arith.divf {a}, {b} : f32")
+                    lines.append(f"    {qf} = math.floor {q} : f32")
+                    lines.append(f"    {qb} = arith.mulf {qf}, {b} : f32")
+                    lines.append(f"    {v} = arith.subf {a}, {qb} : f32")
             elif in0_ty in {"i8", "i32"} and name in {"max", "min"}:
                 iop = "maxui" if name == "max" else "minui"
                 lines.append(f"    {v} = arith.{iop} {a}, {b} : {in0_ty}")
