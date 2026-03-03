@@ -2178,6 +2178,14 @@ def _build_intentir_launch_fn(
         arch=str(arch),
     )
     mlir_contract_payload = dict(ctx["mlir_contract"])
+    contract_artifacts = mlir_contract_payload.get("artifacts")
+    contract_tuning_source = ""
+    contract_tuning_applied: dict[str, Any] = {}
+    if isinstance(contract_artifacts, dict):
+        contract_tuning_source = str(contract_artifacts.get("intentir_tuning_source") or "").strip()
+        raw_applied = contract_artifacts.get("intentir_tuning_applied")
+        if isinstance(raw_applied, dict):
+            contract_tuning_applied = dict(raw_applied)
     reason_ctx = dict(mlir_contract_payload.get("reason_context") or {})
     if isinstance(ctx.get("intent_json"), dict):
         reason_ctx.setdefault("fallback_intent_json", dict(ctx["intent_json"]))
@@ -2305,8 +2313,12 @@ def _build_intentir_launch_fn(
         "strict_mode": bool(strict_fallback_enabled()),
         "fallback_policy": ("strict" if bool(strict_fallback_enabled()) else "legacy_compatible"),
         "intent_binding_overrides": dict(applied_binding_overrides),
-        "intentir_tuning_source": str(tuning_source),
-        "intentir_tuning_applied": dict(applied_binding_overrides),
+        # Prefer provenance recorded in the MLIR backend contract artifacts (apply_tuning_db),
+        # but keep perf-runner binding overrides for backward compatibility.
+        "intentir_tuning_source": str(contract_tuning_source or tuning_source),
+        "intentir_tuning_applied": (
+            dict(contract_tuning_applied) if contract_tuning_applied else dict(applied_binding_overrides)
+        ),
         "intentir_tuning_arch": str(arch),
         "intentir_tuning_db": str(_TUNING_DB_PATH),
         "intent_contract_rebuild": dict(rebuild_meta),
