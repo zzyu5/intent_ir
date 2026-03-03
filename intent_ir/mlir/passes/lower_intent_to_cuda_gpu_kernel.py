@@ -6661,11 +6661,13 @@ def lower_intent_to_cuda_gpu_kernel(
         row_mask_name = matmul_v1.get("row_mask")
         col_mask_name = matmul_v1.get("col_mask")
         relu = bool(matmul_v1.get("relu") or False)
+        bias_name = str(bias_name) if bias_name is not None else None
+        row_mask_name = str(row_mask_name) if row_mask_name is not None else None
+        col_mask_name = str(col_mask_name) if col_mask_name is not None else None
 
-        if bias_name is not None or add_inp_name is not None or alpha_name is not None or beta_name is not None:
-            raise RuntimeError("matmul_mma_tf32_v1 currently supports plain matmul only (no addmm/alpha/beta/bias)")
-        if row_mask_name is not None or col_mask_name is not None or relu:
-            raise RuntimeError("matmul_mma_tf32_v1 currently supports plain matmul only (no masks/relu)")
+        if add_inp_name is not None or alpha_name is not None or beta_name is not None:
+            raise RuntimeError("matmul_mma_tf32_v1 currently supports plain matmul only (no addmm/alpha/beta)")
+        use_epilogue = bool(bias_name is not None or row_mask_name is not None or col_mask_name is not None or relu)
 
         m_dim = int(matmul_v1["M"])
         n_dim = int(matmul_v1["N"])
@@ -6685,10 +6687,33 @@ def lower_intent_to_cuda_gpu_kernel(
             raise RuntimeError("matmul expects f32 B tensor")
         if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
             raise RuntimeError("matmul expects f32 output tensor")
+        if bias_name is not None:
+            if str((arg_specs.get(bias_name) or {}).get("memref_elem_ty") or "") != "f32":
+                raise RuntimeError("matmul_mma_tf32_v1 epilogue bias expects f32 tensor")
+            bias_dims = list((arg_specs.get(bias_name) or {}).get("dims") or [])
+            if bias_dims != [int(n_dim)]:
+                raise RuntimeError(f"matmul_mma_tf32_v1 epilogue bias expects dims [N]; got {bias_dims}")
+        if row_mask_name is not None:
+            row_mask_elem_ty = str((arg_specs.get(row_mask_name) or {}).get("memref_elem_ty") or "")
+            if row_mask_elem_ty not in {"i1", "i8"}:
+                raise RuntimeError("matmul_mma_tf32_v1 epilogue row_mask expects i1/i8 tensor")
+            rm_dims = list((arg_specs.get(row_mask_name) or {}).get("dims") or [])
+            if rm_dims != [int(m_dim)]:
+                raise RuntimeError(f"matmul_mma_tf32_v1 epilogue row_mask expects dims [M]; got {rm_dims}")
+        if col_mask_name is not None:
+            col_mask_elem_ty = str((arg_specs.get(col_mask_name) or {}).get("memref_elem_ty") or "")
+            if col_mask_elem_ty not in {"i1", "i8"}:
+                raise RuntimeError("matmul_mma_tf32_v1 epilogue col_mask expects i1/i8 tensor")
+            cm_dims = list((arg_specs.get(col_mask_name) or {}).get("dims") or [])
+            if cm_dims != [int(n_dim)]:
+                raise RuntimeError(f"matmul_mma_tf32_v1 epilogue col_mask expects dims [N]; got {cm_dims}")
 
         a_memref = str(arg_specs[a_name]["memref"])
         b_memref = str(arg_specs[b_name]["memref"])
         out_memref = str(arg_specs[out_name2]["memref"])
+        bias_memref = str(arg_specs[str(bias_name)]["memref"]) if bias_name is not None else ""
+        row_mask_memref = str(arg_specs[str(row_mask_name)]["memref"]) if row_mask_name is not None else ""
+        col_mask_memref = str(arg_specs[str(col_mask_name)]["memref"]) if col_mask_name is not None else ""
         out2_memref = f"memref<{int(m_dim)}x{int(n_dim)}xf32, 1>"
 
         if bm <= 0 or bn <= 0 or bk <= 0:
@@ -6719,6 +6744,13 @@ def lower_intent_to_cuda_gpu_kernel(
             "warps_n": int(warps_n),
             "warps": int(warps),
         }
+        if use_epilogue:
+            cuda_real_mlir_matmul_cfg["epilogue"] = {
+                "bias": bool(bias_name is not None),
+                "row_mask": bool(row_mask_name is not None),
+                "col_mask": bool(col_mask_name is not None),
+                "relu": bool(relu),
+            }
 
         grid_x = int(n_dim) // int(bn)
         grid_y = int(m_dim) // int(bm)
@@ -6726,10 +6758,14 @@ def lower_intent_to_cuda_gpu_kernel(
 
         sh_a_sym = f"__intentir_sh_a_{_mlir_ident(kernel_name)}_f32"
         sh_b_sym = f"__intentir_sh_b_{_mlir_ident(kernel_name)}_f32"
+        sh_c_sym = f"__intentir_sh_c_{_mlir_ident(kernel_name)}_f32" if use_epilogue else ""
         extra_shared_globals = [
             (str(sh_a_sym), f"memref<{int(bm)}x{int(bk)}xf32, 3>"),
             (str(sh_b_sym), f"memref<{int(bk)}x{int(bn)}xf32, 3>"),
         ]
+        cs_memref = f"memref<{int(bm)}x{int(bn)}xf32, 3>"
+        if use_epilogue:
+            extra_shared_globals.append((str(sh_c_sym), str(cs_memref)))
         vec4_ty = "vector<4xf32>"
         vec_copy = (
             (int(bk) % 4) == 0
@@ -6768,6 +6804,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %cBK = arith.constant {int(bk)} : index")
         lines.append(f"      %cTileA = arith.constant {int(bm * bk)} : index")
         lines.append(f"      %cTileB = arith.constant {int(bk * bn)} : index")
+        if use_epilogue:
+            lines.append(f"      %cTileC = arith.constant {int(bm * bn)} : index")
         if vec_copy:
             lines.append(f"      %cTileA4 = arith.constant {int(tile_a4)} : index")
             lines.append(f"      %cTileB4 = arith.constant {int(tile_b4)} : index")
@@ -6777,6 +6815,8 @@ def lower_intent_to_cuda_gpu_kernel(
 
         lines.append(f"      %As = memref.get_global @{sh_a_sym} : memref<{int(bm)}x{int(bk)}xf32, 3>")
         lines.append(f"      %Bs = memref.get_global @{sh_b_sym} : memref<{int(bk)}x{int(bn)}xf32, 3>")
+        if use_epilogue:
+            lines.append(f"      %Cs = memref.get_global @{sh_c_sym} : {cs_memref}")
 
         lines.append(f"      %out2 = memref.reinterpret_cast {arg_ssa[out_name2]} to")
         lines.append("        offset: [0],")
@@ -6953,10 +6993,66 @@ def lower_intent_to_cuda_gpu_kernel(
 
             lines.append("      gpu.barrier")
 
-        lines.append(
-            f"      gpu.subgroup_mma_store_matrix {acc_cur}, %out2[%gm, %gn] "
-            f"{{leadDimension = {int(n_dim)} : index}} : !gpu.mma_matrix<16x16xf32, \"COp\">, {out2_memref}"
-        )
+        if use_epilogue:
+            lines.append(
+                f"      gpu.subgroup_mma_store_matrix {acc_cur}, %Cs[%row_w, %col_w] "
+                f"{{leadDimension = {int(bn)} : index}} : !gpu.mma_matrix<16x16xf32, \"COp\">, {cs_memref}"
+            )
+            lines.append("      gpu.barrier")
+
+            lines.append("      scf.for %t = %tid to %cTileC step %cThreads {")
+            lines.append("        %t_r = arith.divui %t, %cBN : index")
+            lines.append("        %t_c = arith.remui %t, %cBN : index")
+            lines.append("        %gm_e = arith.addi %row0, %t_r : index")
+            lines.append("        %gn_e = arith.addi %col0, %t_c : index")
+            lines.append(f"        %val0 = memref.load %Cs[%t_r, %t_c] : {cs_memref}")
+            val_cur = "%val0"
+
+            if bias_name is not None:
+                lines.append(f"        %bias = memref.load {arg_ssa[str(bias_name)]}[%gn_e] : {bias_memref}")
+                lines.append(f"        %val_bias = arith.addf {val_cur}, %bias{fm} : f32")
+                val_cur = "%val_bias"
+
+            if relu:
+                lines.append(f"        %val_relu = arith.maximumf {val_cur}, %c0f{fm} : f32")
+                val_cur = "%val_relu"
+
+            cond: str | None = None
+            if row_mask_name is not None:
+                row_mask_elem_ty = str(arg_specs[str(row_mask_name)].get("memref_elem_ty") or "i8")
+                rm = _fresh("rm")
+                rm0 = _fresh("rm0")
+                rm1 = _fresh("rm1")
+                lines.append(f"        {rm} = memref.load {arg_ssa[str(row_mask_name)]}[%gm_e] : {row_mask_memref}")
+                lines.append(f"        {rm0} = arith.constant 0 : {row_mask_elem_ty}")
+                lines.append(f"        {rm1} = arith.cmpi ne, {rm}, {rm0} : {row_mask_elem_ty}")
+                cond = str(rm1)
+            if col_mask_name is not None:
+                col_mask_elem_ty = str(arg_specs[str(col_mask_name)].get("memref_elem_ty") or "i8")
+                cm = _fresh("cm")
+                cm0 = _fresh("cm0")
+                cm1 = _fresh("cm1")
+                lines.append(f"        {cm} = memref.load {arg_ssa[str(col_mask_name)]}[%gn_e] : {col_mask_memref}")
+                lines.append(f"        {cm0} = arith.constant 0 : {col_mask_elem_ty}")
+                lines.append(f"        {cm1} = arith.cmpi ne, {cm}, {cm0} : {col_mask_elem_ty}")
+                if cond is None:
+                    cond = str(cm1)
+                else:
+                    cond2 = _fresh("cond")
+                    lines.append(f"        {cond2} = arith.andi {cond}, {cm1} : i1")
+                    cond = str(cond2)
+            if cond is not None:
+                val_sel = _fresh("val_m")
+                lines.append(f"        {val_sel} = arith.select {cond}, {val_cur}, %c0f : f32")
+                val_cur = str(val_sel)
+
+            lines.append(f"        memref.store {val_cur}, %out2[%gm_e, %gn_e] : {out2_memref}")
+            lines.append("      }")
+        else:
+            lines.append(
+                f"      gpu.subgroup_mma_store_matrix {acc_cur}, %out2[%gm, %gn] "
+                f"{{leadDimension = {int(n_dim)} : index}} : !gpu.mma_matrix<16x16xf32, \"COp\">, {out2_memref}"
+            )
     elif matmul_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "matmul_mma_tf32_global_v1":
         kernel_kind = "matmul_mma_tf32_global_v1"
         a_name = str(matmul_v1["A"])
