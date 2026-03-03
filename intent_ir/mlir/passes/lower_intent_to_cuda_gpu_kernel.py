@@ -7204,6 +7204,21 @@ def lower_intent_to_cuda_gpu_kernel(
         grid_y = int(m_dim) // int(bm)
         launch_override = {"block": [int(threads), 1, 1], "grid": [int(grid_x), int(grid_y), 1]}
 
+        # Static shared memory: double-buffered A/B tiles. Keep a conservative 48KiB
+        # default cap to avoid cuModuleLoadData(CUDA_ERROR_INVALID_PTX) on some
+        # driver/runtime configs when static shared exceeds the per-block limit.
+        #
+        # bytes = 2*(BM*BK*4) + 2*(BK*BN*4)
+        static_shared_bytes = 8 * int(bk) * (int(bm) + int(bn))
+        if static_shared_bytes > (48 * 1024):
+            raise RuntimeError(
+                "matmul_mma_tf32_v2 uses double-buffered static shared memory and "
+                "requires static_shared_bytes<=49152 (48KiB); "
+                f"got static_shared_bytes={static_shared_bytes} "
+                f"(MMA_BM={bm} MMA_BN={bn} MMA_BK={bk}). "
+                "Reduce MMA_BK and/or tile sizes."
+            )
+
         sh_a0_sym = f"__intentir_sh_a0_{_mlir_ident(kernel_name)}_f32"
         sh_a1_sym = f"__intentir_sh_a1_{_mlir_ident(kernel_name)}_f32"
         sh_b0_sym = f"__intentir_sh_b0_{_mlir_ident(kernel_name)}_f32"
