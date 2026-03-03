@@ -1183,8 +1183,11 @@ def _emit_elementwise_kernel(
     out_tt = (intent.tensors or {}).get(out_name)
     if out_tt is None:
         raise RuntimeError(f"missing output tensor spec: {out_name}")
-    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
-        raise RuntimeError("rvv cpu-loops v1 supports only f32 outputs")
+    out_elem_ty = _dtype(getattr(out_tt, "dtype", "f32"))
+    if out_elem_ty not in {"f32", "i8"}:
+        raise RuntimeError(
+            f"rvv cpu-loops v1 elementwise supports only f32/bool outputs, got out={out_name} dtype={getattr(out_tt,'dtype','')}"
+        )
     out_shape = _shape(out_name, intent=intent, bindings=bindings)
     if len(out_shape) != 2:
         raise RuntimeError(f"rvv cpu-loops v1 elementwise expects rank-2 output, got {out_shape}")
@@ -1213,8 +1216,8 @@ def _emit_elementwise_kernel(
         if tt is None:
             raise RuntimeError(f"missing tensor spec: {name}")
         elem_ty = _dtype(getattr(tt, "dtype", "f32"))
-        if name == out_name and elem_ty != "f32":
-            raise RuntimeError(f"rvv cpu-loops v1 supports only f32 outputs, got output dtype={elem_ty!r}")
+        if name == out_name and elem_ty not in {"f32", "i8"}:
+            raise RuntimeError(f"rvv cpu-loops v1 elementwise supports only f32/bool outputs, got output dtype={elem_ty!r}")
         sh = _shape(name, intent=intent, bindings=bindings)
         shape_by_name[name] = list(sh)
         if len(sh) == 2:
@@ -1262,8 +1265,12 @@ def _emit_elementwise_kernel(
     lines.append(f"  %cM = arith.constant {m_dim} : index")
     lines.append(f"  %cN = arith.constant {n_dim} : index")
     lines.append("  %c0f = arith.constant 0.0 : f32")
+    lines.append("  %c1f = arith.constant 1.0 : f32")
     lines.append("  %c0i8 = arith.constant 0 : i8")
+    lines.append("  %c1i8 = arith.constant 1 : i8")
     lines.append("  %c0i32 = arith.constant 0 : i32")
+    lines.append("  %c1i32 = arith.constant 1 : i32")
+    lines.append("  %true = arith.constant true")
     lines.extend(scalar_loads)
     lines.append("  scf.for %m = %c0 to %cM step %c1 {")
     lines.append("    %mN = arith.muli %m, %cN : index")
@@ -1342,15 +1349,49 @@ def _emit_elementwise_kernel(
                 raise RuntimeError(f"rvv cpu-loops v1 cast missing tensor specs: in={in_name!r} out={out!r}")
             in_ty = _dtype(getattr(in_tt, "dtype", "f32"))
             out_ty = _dtype(getattr(out_tt, "dtype", "f32"))
-            to = str(attrs.get("to") or attrs.get("dtype") or out_ty).strip().lower()
-            if to != out_ty:
-                raise RuntimeError(f"rvv cpu-loops v1 cast dtype mismatch: attrs.to={to!r} tensor.dtype={out_ty!r}")
+            to_raw = str(attrs.get("to") or attrs.get("dtype") or out_ty).strip().lower()
+            try:
+                to_norm = _dtype(to_raw) if to_raw else out_ty
+            except Exception:
+                to_norm = to_raw
+            if to_norm != out_ty:
+                raise RuntimeError(
+                    f"rvv cpu-loops v1 cast dtype mismatch: attrs.to={to_raw!r} normalized={to_norm!r} tensor.dtype={out_ty!r}"
+                )
             a = _in(0)
             if in_ty == out_ty:
                 computed[out] = a
             elif in_ty == "f16" and out_ty == "f32":
                 v = f"%{_mlir_ident(out)}_t"
                 lines.append(f"    {v} = arith.extf {a} : f16 to f32")
+                computed[out] = v
+            elif in_ty == "i8" and out_ty == "f32":
+                p = f"%{_mlir_ident(out)}_p"
+                lines.append(f"    {p} = arith.cmpi ne, {a}, %c0i8 : i8")
+                v = f"%{_mlir_ident(out)}_t"
+                lines.append(f"    {v} = arith.select {p}, %c1f, %c0f : f32")
+                computed[out] = v
+            elif in_ty == "i32" and out_ty == "f32":
+                v = f"%{_mlir_ident(out)}_t"
+                lines.append(f"    {v} = arith.sitofp {a} : i32 to f32")
+                computed[out] = v
+            elif in_ty == "f32" and out_ty == "i8":
+                p = f"%{_mlir_ident(out)}_p"
+                lines.append(f"    {p} = arith.cmpf one, {a}, %c0f : f32")
+                v = f"%{_mlir_ident(out)}_t"
+                lines.append(f"    {v} = arith.select {p}, %c1i8, %c0i8 : i8")
+                computed[out] = v
+            elif in_ty == "i8" and out_ty == "i32":
+                p = f"%{_mlir_ident(out)}_p"
+                lines.append(f"    {p} = arith.cmpi ne, {a}, %c0i8 : i8")
+                v = f"%{_mlir_ident(out)}_t"
+                lines.append(f"    {v} = arith.select {p}, %c1i32, %c0i32 : i32")
+                computed[out] = v
+            elif in_ty == "i32" and out_ty == "i8":
+                p = f"%{_mlir_ident(out)}_p"
+                lines.append(f"    {p} = arith.cmpi ne, {a}, %c0i32 : i32")
+                v = f"%{_mlir_ident(out)}_t"
+                lines.append(f"    {v} = arith.select {p}, %c1i8, %c0i8 : i8")
                 computed[out] = v
             else:
                 raise RuntimeError(f"rvv cpu-loops v1 unsupported cast: {in_ty} -> {out_ty}")
@@ -1444,32 +1485,182 @@ def _emit_elementwise_kernel(
             computed[out] = a
             continue
 
+        if name == "iota":
+            if ins or not out:
+                raise RuntimeError(f"invalid iota op: inputs={ins} output={out!r}")
+            out_tt = (intent.tensors or {}).get(out)
+            if out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 iota missing tensor spec: out={out!r}")
+            out_ty = _dtype(getattr(out_tt, "dtype", "i32"))
+            if out_ty != "i32":
+                raise RuntimeError(f"rvv cpu-loops v1 iota supports only i32 outputs, got out={out} dtype={getattr(out_tt,'dtype','')}")
+            out_sh = _shape(out, intent=intent, bindings=bindings)
+            if list(out_sh) != [m_dim, n_dim]:
+                raise RuntimeError(f"rvv cpu-loops v1 iota requires out shape [M,N], got out={out} shape={out_sh} expected={[m_dim,n_dim]}")
+            axis = attrs.get("axis")
+            if not isinstance(axis, int):
+                try:
+                    axis = int(axis)
+                except Exception:
+                    axis = None
+            if axis not in {0, 1}:
+                raise RuntimeError(f"rvv cpu-loops v1 iota supports only axis 0/1, got axis={attrs.get('axis')!r}")
+            v = f"%{_mlir_ident(out)}_t"
+            if axis == 0:
+                lines.append(f"    {v} = arith.index_cast %m : index to i32")
+            else:
+                lines.append(f"    {v} = arith.index_cast %n : index to i32")
+            computed[out] = v
+            continue
+
+        if name in {"eq", "ne", "lt", "le", "gt", "ge"}:
+            if len(ins) != 2 or not out:
+                raise RuntimeError(f"invalid cmp op: {name} inputs={ins} output={out!r}")
+            lhs_name, rhs_name = str(ins[0]), str(ins[1])
+            lhs_tt = (intent.tensors or {}).get(lhs_name)
+            rhs_tt = (intent.tensors or {}).get(rhs_name)
+            out_tt = (intent.tensors or {}).get(out)
+            if lhs_tt is None or rhs_tt is None or out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 cmp missing tensor specs: op={name} inputs={ins} out={out!r}")
+            lhs_ty = _dtype(getattr(lhs_tt, "dtype", "f32"))
+            rhs_ty = _dtype(getattr(rhs_tt, "dtype", "f32"))
+            out_ty = _dtype(getattr(out_tt, "dtype", "bool"))
+            if lhs_ty != rhs_ty:
+                raise RuntimeError(f"rvv cpu-loops v1 cmp requires same input dtypes, got {lhs_name}={lhs_ty} {rhs_name}={rhs_ty}")
+            if out_ty not in {"i8", "i32"}:
+                raise RuntimeError(f"rvv cpu-loops v1 cmp supports only bool/i32 outputs, got out={out} dtype={getattr(out_tt,'dtype','')}")
+            a = _in(0)
+            b = _in(1)
+            p = f"%{_mlir_ident(out)}_p"
+            if lhs_ty == "f32":
+                pred = {
+                    "eq": "oeq",
+                    "ne": "une",
+                    "lt": "olt",
+                    "le": "ole",
+                    "gt": "ogt",
+                    "ge": "oge",
+                }[name]
+                lines.append(f"    {p} = arith.cmpf {pred}, {a}, {b} : f32")
+            elif lhs_ty in {"i8", "i16", "i32", "i64"}:
+                pred = {
+                    "eq": "eq",
+                    "ne": "ne",
+                    "lt": "slt",
+                    "le": "sle",
+                    "gt": "sgt",
+                    "ge": "sge",
+                }[name]
+                lines.append(f"    {p} = arith.cmpi {pred}, {a}, {b} : {lhs_ty}")
+            else:
+                raise RuntimeError(f"rvv cpu-loops v1 cmp supports only f32/i* inputs, got {lhs_ty}")
+            v = f"%{_mlir_ident(out)}_t"
+            if out_ty == "i32":
+                lines.append(f"    {v} = arith.select {p}, %c1i32, %c0i32 : i32")
+            else:
+                lines.append(f"    {v} = arith.select {p}, %c1i8, %c0i8 : i8")
+            computed[out] = v
+            continue
+
+        if name in {"and", "or", "xor"}:
+            if len(ins) != 2 or not out:
+                raise RuntimeError(f"invalid logical op: {name} inputs={ins} output={out!r}")
+            a0_name, a1_name = str(ins[0]), str(ins[1])
+            a0_tt = (intent.tensors or {}).get(a0_name)
+            a1_tt = (intent.tensors or {}).get(a1_name)
+            out_tt = (intent.tensors or {}).get(out)
+            if a0_tt is None or a1_tt is None or out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 logical op missing tensor specs: op={name} inputs={ins} out={out!r}")
+            in_ty0 = _dtype(getattr(a0_tt, "dtype", "bool"))
+            in_ty1 = _dtype(getattr(a1_tt, "dtype", "bool"))
+            out_ty = _dtype(getattr(out_tt, "dtype", "bool"))
+            if in_ty0 != in_ty1 or out_ty != in_ty0:
+                raise RuntimeError(f"rvv cpu-loops v1 logical op requires same dtypes, got {a0_name}={in_ty0} {a1_name}={in_ty1} out={out_ty}")
+            if out_ty not in {"i8", "i32"}:
+                raise RuntimeError(f"rvv cpu-loops v1 logical op supports only bool/i32 tensors, got out={out} dtype={getattr(out_tt,'dtype','')}")
+            a = _in(0)
+            b = _in(1)
+            pa = f"%{_mlir_ident(out)}_pa"
+            pb = f"%{_mlir_ident(out)}_pb"
+            if out_ty == "i32":
+                lines.append(f"    {pa} = arith.cmpi ne, {a}, %c0i32 : i32")
+                lines.append(f"    {pb} = arith.cmpi ne, {b}, %c0i32 : i32")
+            else:
+                lines.append(f"    {pa} = arith.cmpi ne, {a}, %c0i8 : i8")
+                lines.append(f"    {pb} = arith.cmpi ne, {b}, %c0i8 : i8")
+            p = f"%{_mlir_ident(out)}_p"
+            lop = {"and": "andi", "or": "ori", "xor": "xori"}[name]
+            lines.append(f"    {p} = arith.{lop} {pa}, {pb} : i1")
+            v = f"%{_mlir_ident(out)}_t"
+            if out_ty == "i32":
+                lines.append(f"    {v} = arith.select {p}, %c1i32, %c0i32 : i32")
+            else:
+                lines.append(f"    {v} = arith.select {p}, %c1i8, %c0i8 : i8")
+            computed[out] = v
+            continue
+
+        if name == "not":
+            if len(ins) != 1 or not out:
+                raise RuntimeError(f"invalid logical not op: inputs={ins} output={out!r}")
+            in_name = str(ins[0])
+            in_tt = (intent.tensors or {}).get(in_name)
+            out_tt = (intent.tensors or {}).get(out)
+            if in_tt is None or out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 not missing tensor specs: in={in_name!r} out={out!r}")
+            in_ty = _dtype(getattr(in_tt, "dtype", "bool"))
+            out_ty = _dtype(getattr(out_tt, "dtype", "bool"))
+            if out_ty != in_ty or out_ty not in {"i8", "i32"}:
+                raise RuntimeError(f"rvv cpu-loops v1 not supports only bool/i32 tensors, got in={in_ty} out={out_ty}")
+            a = _in(0)
+            pa = f"%{_mlir_ident(out)}_pa"
+            if out_ty == "i32":
+                lines.append(f"    {pa} = arith.cmpi ne, {a}, %c0i32 : i32")
+            else:
+                lines.append(f"    {pa} = arith.cmpi ne, {a}, %c0i8 : i8")
+            p = f"%{_mlir_ident(out)}_p"
+            lines.append(f"    {p} = arith.xori {pa}, %true : i1")
+            v = f"%{_mlir_ident(out)}_t"
+            if out_ty == "i32":
+                lines.append(f"    {v} = arith.select {p}, %c1i32, %c0i32 : i32")
+            else:
+                lines.append(f"    {v} = arith.select {p}, %c1i8, %c0i8 : i8")
+            computed[out] = v
+            continue
+
         if name in {"add", "sub", "mul", "div", "max", "min"}:
             if len(ins) != 2 or not out:
                 raise RuntimeError(f"invalid binary op: {name} inputs={ins} output={out!r}")
-            for nm in [*ins, out]:
-                tt = (intent.tensors or {}).get(str(nm))
-                if tt is None:
-                    raise RuntimeError(f"rvv cpu-loops v1 missing tensor spec: {nm}")
-                if _dtype(getattr(tt, "dtype", "f32")) != "f32":
-                    raise RuntimeError(
-                        f"rvv cpu-loops v1 supports only f32 for op {name}, got tensor={nm} dtype={getattr(tt, 'dtype', '')}"
-                    )
+            in0_tt = (intent.tensors or {}).get(str(ins[0]))
+            in1_tt = (intent.tensors or {}).get(str(ins[1]))
+            out_tt = (intent.tensors or {}).get(str(out))
+            if in0_tt is None or in1_tt is None or out_tt is None:
+                raise RuntimeError(f"rvv cpu-loops v1 missing tensor spec: op={name} inputs={ins} out={out!r}")
+            in0_ty = _dtype(getattr(in0_tt, "dtype", "f32"))
+            in1_ty = _dtype(getattr(in1_tt, "dtype", "f32"))
+            out_ty = _dtype(getattr(out_tt, "dtype", "f32"))
+            if in0_ty != in1_ty or out_ty != in0_ty:
+                raise RuntimeError(f"rvv cpu-loops v1 binary op requires same dtypes, got {ins[0]}={in0_ty} {ins[1]}={in1_ty} out={out_ty}")
             a = _in(0)
             b = _in(1)
             v = f"%{_mlir_ident(out)}_t"
-            if name == "add":
-                lines.append(f"    {v} = arith.addf {a}, {b} : f32")
-            elif name == "sub":
-                lines.append(f"    {v} = arith.subf {a}, {b} : f32")
-            elif name == "mul":
-                lines.append(f"    {v} = arith.mulf {a}, {b} : f32")
-            elif name == "div":
-                lines.append(f"    {v} = arith.divf {a}, {b} : f32")
-            elif name == "max":
-                lines.append(f"    {v} = arith.maximumf {a}, {b} : f32")
+            if in0_ty == "f32":
+                if name == "add":
+                    lines.append(f"    {v} = arith.addf {a}, {b} : f32")
+                elif name == "sub":
+                    lines.append(f"    {v} = arith.subf {a}, {b} : f32")
+                elif name == "mul":
+                    lines.append(f"    {v} = arith.mulf {a}, {b} : f32")
+                elif name == "div":
+                    lines.append(f"    {v} = arith.divf {a}, {b} : f32")
+                elif name == "max":
+                    lines.append(f"    {v} = arith.maximumf {a}, {b} : f32")
+                else:
+                    lines.append(f"    {v} = arith.minimumf {a}, {b} : f32")
+            elif in0_ty in {"i8", "i32"} and name in {"max", "min"}:
+                iop = "maxui" if name == "max" else "minui"
+                lines.append(f"    {v} = arith.{iop} {a}, {b} : {in0_ty}")
             else:
-                lines.append(f"    {v} = arith.minimumf {a}, {b} : f32")
+                raise RuntimeError(f"rvv cpu-loops v1 unsupported binary op: {name} dtype={in0_ty}")
             computed[out] = v
             continue
 
@@ -1489,6 +1680,7 @@ def _emit_elementwise_kernel(
             "tan",
             "atan",
             "acos",
+            "erf",
         }:
             if len(ins) != 1 or not out:
                 raise RuntimeError(f"invalid unary op: {name} inputs={ins} output={out!r}")
@@ -1520,13 +1712,14 @@ def _emit_elementwise_kernel(
                 lines.append(f"    {v} = math.ceil {a} : f32")
             elif name == "log":
                 lines.append(f"    {v} = math.log {a} : f32")
-            elif name in {"sin", "cos", "tan", "atan", "acos"}:
+            elif name in {"sin", "cos", "tan", "atan", "acos", "erf"}:
                 mop = {
                     "sin": "math.sin",
                     "cos": "math.cos",
                     "tan": "math.tan",
                     "atan": "math.atan",
                     "acos": "math.acos",
+                    "erf": "math.erf",
                 }[name]
                 lines.append(f"    {v} = {mop} {a} : f32")
             else:
@@ -1541,7 +1734,7 @@ def _emit_elementwise_kernel(
         raise RuntimeError(f"rvv cpu-loops v1 unsupported op: {name}")
 
     final = computed.get(out_name) or _load(out_name)
-    out_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = memref_ty_by_name[out_name]
     lines.append(f"    memref.store {final}, {arg_ssa[out_name]}[%i] : {out_memref_ty}")
     lines.append("    }")
     lines.append("  }")
