@@ -16456,11 +16456,15 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
         lines.append(f"        %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
 
+        # Causal attention: only kv <= q contributes. Avoid wasted work by
+        # bounding the KV loop by min(KV, q+1).
+        lines.append("        %kv_end0 = arith.addi %bid, %c1 : index")
+        lines.append("        %p_kv_end = arith.cmpi ule, %kv_end0, %cKV : index")
+        lines.append("        %kv_end = arith.select %p_kv_end, %kv_end0, %cKV : index")
+
         # Pass-1: compute max score.
         m_out = _fresh("m_out")
-        lines.append(f"        {m_out} = scf.for %kv = %c0 to %cKV step %c1 iter_args(%m = %neg_inf) -> (f32) {{")
-        pred_attend = _fresh("pred_attend")
-        lines.append(f"          {pred_attend} = arith.cmpi ule, %kv, %bid : index")
+        lines.append(f"        {m_out} = scf.for %kv = %c0 to %kv_end step %c1 iter_args(%m = %neg_inf) -> (f32) {{")
         lines.append("          %base_k = arith.muli %kv, %cHD : index")
         k_val = _fresh("k_val")
         lines.append(f"          {k_val} = scf.if %pred_d -> (f32) {{")
@@ -16474,19 +16478,11 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          }")
         partial0 = _fresh("partial0")
         lines.append(f"          {partial0} = arith.mulf {qv}, {k_val}{fm} : f32")
-        partial = _fresh("partial")
-        lines.append(f"          {partial} = scf.if {pred_attend} -> (f32) {{")
-        lines.append(f"            scf.yield {partial0} : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %c0f : f32")
-        lines.append("          }")
-        dot = _subwarp_allreduce_sum_xor_16(partial, indent="          ")
+        dot = _subwarp_allreduce_sum_xor_16(partial0, indent="          ")
         score = _fresh("score")
         lines.append(f"          {score} = arith.mulf {dot}, %sm2{fm} : f32")
-        score_m = _fresh("score_m")
-        lines.append(f"          {score_m} = arith.select {pred_attend}, {score}, %neg_inf : f32")
         m_next = _fresh("m_next")
-        lines.append(f"          {m_next} = arith.maximumf %m, {score_m}{fm} : f32")
+        lines.append(f"          {m_next} = arith.maximumf %m, {score}{fm} : f32")
         lines.append(f"          scf.yield {m_next} : f32")
         lines.append("        }")
 
@@ -16494,11 +16490,9 @@ def lower_intent_to_cuda_gpu_kernel(
         l_out = _fresh("l_out")
         acc_out = _fresh("acc_out")
         lines.append(
-            f"        {l_out}, {acc_out} = scf.for %kv = %c0 to %cKV step %c1 "
+            f"        {l_out}, {acc_out} = scf.for %kv = %c0 to %kv_end step %c1 "
             "iter_args(%l = %c0f, %acc = %c0f) -> (f32, f32) {"
         )
-        pred_attend2 = _fresh("pred_attend")
-        lines.append(f"          {pred_attend2} = arith.cmpi ule, %kv, %bid : index")
         lines.append("          %base_k2 = arith.muli %kv, %cHD : index")
         k_val2 = _fresh("k_val")
         lines.append(f"          {k_val2} = scf.if %pred_d -> (f32) {{")
@@ -16512,19 +16506,11 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          }")
         partial0_2 = _fresh("partial0")
         lines.append(f"          {partial0_2} = arith.mulf {qv}, {k_val2}{fm} : f32")
-        partial2 = _fresh("partial")
-        lines.append(f"          {partial2} = scf.if {pred_attend2} -> (f32) {{")
-        lines.append(f"            scf.yield {partial0_2} : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %c0f : f32")
-        lines.append("          }")
-        dot2 = _subwarp_allreduce_sum_xor_16(partial2, indent="          ")
+        dot2 = _subwarp_allreduce_sum_xor_16(partial0_2, indent="          ")
         score2 = _fresh("score")
         lines.append(f"          {score2} = arith.mulf {dot2}, %sm2{fm} : f32")
-        score2_m = _fresh("score_m")
-        lines.append(f"          {score2_m} = arith.select {pred_attend2}, {score2}, %neg_inf : f32")
         delta = _fresh("delta")
-        lines.append(f"          {delta} = arith.subf {score2_m}, {m_out}{fm} : f32")
+        lines.append(f"          {delta} = arith.subf {score2}, {m_out}{fm} : f32")
 
         p_local = _fresh("p_local")
         lines.append(f"          {p_local} = scf.if %is0 -> (f32) {{")
