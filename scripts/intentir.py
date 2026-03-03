@@ -183,6 +183,9 @@ def _cmd_tune(args: argparse.Namespace) -> int:
     kernel = str(args.kernel).strip()
     if not kernel:
         raise SystemExit("--kernel is required")
+    kernel_source = str(getattr(args, "kernel_source", "triton_native") or "triton_native").strip().lower()
+    if kernel_source not in {"triton_native", "coverage_batches"}:
+        raise SystemExit(f"invalid --kernel-source={kernel_source!r}")
 
     arch = _normalize_cuda_arch(str(args.arch or "")) or _detect_cuda_arch()
     if not arch:
@@ -243,28 +246,50 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         env = dict(base_env)
         env["INTENTIR_CUDA_TUNING_DB"] = str(cand_db)
 
-        rc_cov = _run(
-            _python_cmd(
-                "scripts/intentir.py",
-                "suite",
-                "--suite",
-                "flaggems-coverage-single",
-                "--backend-target",
-                str(backend_target),
-                "--kernel",
-                str(kernel),
-                "--cases-limit",
-                str(int(args.cases_limit)),
-                "--out-root",
-                str(cov_dir),
-                "--cuda-runtime-backend",
-                str(args.cuda_runtime_backend),
-                "--stream",
-            ),
-            stream=True,
-            dry_run=bool(args.dry_run),
-            env_overrides=env,
-        )
+        if kernel_source == "triton_native":
+            rc_cov = _run(
+                _python_cmd(
+                    "scripts/triton/full_pipeline_verify.py",
+                    "--suite",
+                    "coverage",
+                    "--backend-target",
+                    str(backend_target),
+                    "--kernel",
+                    str(kernel),
+                    "--cases-limit",
+                    str(int(args.cases_limit)),
+                    "--no-stage-c",
+                    "--no-mutation-kill",
+                    "--out-dir",
+                    str(cov_dir),
+                ),
+                stream=True,
+                dry_run=bool(args.dry_run),
+                env_overrides=env,
+            )
+        else:
+            rc_cov = _run(
+                _python_cmd(
+                    "scripts/intentir.py",
+                    "suite",
+                    "--suite",
+                    "flaggems-coverage-single",
+                    "--backend-target",
+                    str(backend_target),
+                    "--kernel",
+                    str(kernel),
+                    "--cases-limit",
+                    str(int(args.cases_limit)),
+                    "--out-root",
+                    str(cov_dir),
+                    "--cuda-runtime-backend",
+                    str(args.cuda_runtime_backend),
+                    "--stream",
+                ),
+                stream=True,
+                dry_run=bool(args.dry_run),
+                env_overrides=env,
+            )
         if rc_cov != 0:
             results.append(
                 {
@@ -275,6 +300,22 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                     "perf_rc": None,
                     "ratio": None,
                     "error": f"coverage_rc={rc_cov}",
+                    "coverage_dir": str(cov_dir),
+                    "perf_dir": str(perf_dir),
+                }
+            )
+            continue
+
+        if kernel_source != "triton_native":
+            results.append(
+                {
+                    "candidate": cand_id,
+                    "kernel_kind": str(kernel_kind),
+                    "bindings": dict(bindings),
+                    "coverage_rc": int(rc_cov),
+                    "perf_rc": None,
+                    "ratio": None,
+                    "error": "perf_sweep_only_supported_for_kernel_source=triton_native",
                     "coverage_dir": str(cov_dir),
                     "perf_dir": str(perf_dir),
                 }
@@ -337,6 +378,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         "schema_version": "intentir_cuda_autotune_summary_v1",
         "kernel": str(kernel),
         "backend_target": str(backend_target),
+        "kernel_source": str(kernel_source),
         "arch": str(arch),
         "wave": str(wave),
         "evidence_mode": str(evidence_mode),
@@ -1165,6 +1207,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tune = sub.add_parser("tune", help="Measured autotune for one CUDA kernel")
     tune.add_argument("--backend-target", choices=["cuda_h100", "cuda_5090d"], required=True)
     tune.add_argument("--kernel", required=True)
+    tune.add_argument("--kernel-source", choices=["triton_native", "coverage_batches"], default="triton_native")
     tune.add_argument("--candidate", action="append", default=[], help="Candidate: KIND[:K=V,A=B] (repeatable)")
     tune.add_argument("--arch", default="", help="Optional arch key override (e.g. sm120). Defaults to detect.")
     tune.add_argument("--out-root", default=None)
