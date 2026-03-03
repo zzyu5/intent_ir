@@ -16393,7 +16393,9 @@ def lower_intent_to_cuda_gpu_kernel(
         if int(hd) != 16:
             raise RuntimeError("attn2d_causal_softmax_v11 requires HEAD_DIM==16")
 
-        block_x = 32
+        # HEAD_DIM==16, so launch exactly one half-warp worth of threads.
+        # This avoids wasting a second 16-lane segment on predicated-off work.
+        block_x = 16
         launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
         cuda_real_mlir_attention_cfg = {
             "block_x": int(block_x),
@@ -16437,20 +16439,13 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cQ : index")
         lines.append("      scf.if %pred_row {")
         lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
-        lines.append("        %pred_d = arith.cmpi ult, %tid, %cHD : index")
 
-        # Load Q[q, tid] for tid<HD; otherwise 0.
+        # Load Q[q, tid] (tid is always < HD since block_x == HD == 16).
         lines.append("        %base_q = arith.muli %bid, %cHD : index")
         qv = _fresh("qv")
-        lines.append(f"        {qv} = scf.if %pred_d -> (f32) {{")
         idx_q = _fresh("idx_q")
-        q_load = _fresh("q_load")
-        lines.append(f"          {idx_q} = arith.addi %base_q, %tid : index")
-        lines.append(f"          {q_load} = memref.load {arg_ssa[q_name]}[{idx_q}] : {q_memref}")
-        lines.append(f"          scf.yield {q_load} : f32")
-        lines.append("        } else {")
-        lines.append("          scf.yield %c0f : f32")
-        lines.append("        }")
+        lines.append(f"        {idx_q} = arith.addi %base_q, %tid : index")
+        lines.append(f"        {qv} = memref.load {arg_ssa[q_name]}[{idx_q}] : {q_memref}")
 
         # Precompute scale for exp2.
         lines.append(f"        %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
@@ -16467,15 +16462,9 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        {m_out} = scf.for %kv = %c0 to %kv_end step %c1 iter_args(%m = %neg_inf) -> (f32) {{")
         lines.append("          %base_k = arith.muli %kv, %cHD : index")
         k_val = _fresh("k_val")
-        lines.append(f"          {k_val} = scf.if %pred_d -> (f32) {{")
         idx_k = _fresh("idx_k")
-        k_load = _fresh("k_load")
         lines.append(f"            {idx_k} = arith.addi %base_k, %tid : index")
-        lines.append(f"            {k_load} = memref.load {arg_ssa[k_name]}[{idx_k}] : {k_memref}")
-        lines.append(f"            scf.yield {k_load} : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %c0f : f32")
-        lines.append("          }")
+        lines.append(f"          {k_val} = memref.load {arg_ssa[k_name]}[{idx_k}] : {k_memref}")
         partial0 = _fresh("partial0")
         lines.append(f"          {partial0} = arith.mulf {qv}, {k_val}{fm} : f32")
         dot = _subwarp_allreduce_sum_xor_16(partial0, indent="          ")
@@ -16495,15 +16484,9 @@ def lower_intent_to_cuda_gpu_kernel(
         )
         lines.append("          %base_k2 = arith.muli %kv, %cHD : index")
         k_val2 = _fresh("k_val")
-        lines.append(f"          {k_val2} = scf.if %pred_d -> (f32) {{")
         idx_k2 = _fresh("idx_k")
-        k_load2 = _fresh("k_load")
         lines.append(f"            {idx_k2} = arith.addi %base_k2, %tid : index")
-        lines.append(f"            {k_load2} = memref.load {arg_ssa[k_name]}[{idx_k2}] : {k_memref}")
-        lines.append(f"            scf.yield {k_load2} : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %c0f : f32")
-        lines.append("          }")
+        lines.append(f"          {k_val2} = memref.load {arg_ssa[k_name]}[{idx_k2}] : {k_memref}")
         partial0_2 = _fresh("partial0")
         lines.append(f"          {partial0_2} = arith.mulf {qv}, {k_val2}{fm} : f32")
         dot2 = _subwarp_allreduce_sum_xor_16(partial0_2, indent="          ")
@@ -16526,22 +16509,16 @@ def lower_intent_to_cuda_gpu_kernel(
 
         l_next2 = _fresh("l_next")
         lines.append(f"          {l_next2} = arith.addf %l, {p}{fm} : f32")
-        acc_next2 = _fresh("acc_next")
-        lines.append(f"          {acc_next2} = scf.if %pred_d -> (f32) {{")
-        lines.append("            %base_v2 = arith.muli %kv, %cHD : index")
+        lines.append("          %base_v2 = arith.muli %kv, %cHD : index")
         idx_v = _fresh("idx_v")
         v_load2 = _fresh("v_load")
-        lines.append(f"            {idx_v} = arith.addi %base_v2, %tid : index")
-        lines.append(f"            {v_load2} = memref.load {arg_ssa[v_name]}[{idx_v}] : {v_memref}")
+        lines.append(f"          {idx_v} = arith.addi %base_v2, %tid : index")
+        lines.append(f"          {v_load2} = memref.load {arg_ssa[v_name]}[{idx_v}] : {v_memref}")
         prod = _fresh("prod")
-        lines.append(f"            {prod} = llvm.intr.fma({p}, {v_load2}, %c0f) : (f32, f32, f32) -> f32")
+        lines.append(f"          {prod} = llvm.intr.fma({p}, {v_load2}, %c0f) : (f32, f32, f32) -> f32")
         acc2 = _fresh("acc2")
-        lines.append(f"            {acc2} = arith.addf %acc, {prod}{fm} : f32")
-        lines.append(f"            scf.yield {acc2} : f32")
-        lines.append("          } else {")
-        lines.append("            scf.yield %acc : f32")
-        lines.append("          }")
-        lines.append(f"          scf.yield {l_next2}, {acc_next2} : f32, f32")
+        lines.append(f"          {acc2} = arith.addf %acc, {prod}{fm} : f32")
+        lines.append(f"          scf.yield {l_next2}, {acc2} : f32, f32")
         lines.append("        }")
 
         # Normalize and store.
@@ -16560,11 +16537,9 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        {inv_b}, {ok} = gpu.shuffle idx {inv_local}, %c0_i32, %c16_i32 : f32")
         outv = _fresh("outv")
         lines.append(f"        {outv} = arith.mulf {acc_out}, {inv_b}{fm} : f32")
-        lines.append("        scf.if %pred_d {")
         idx_o = _fresh("idx_o")
-        lines.append(f"          {idx_o} = arith.addi %base_q, %tid : index")
-        lines.append(f"          memref.store {outv}, {arg_ssa[out_name2]}[{idx_o}] : {out_memref}")
-        lines.append("        }")
+        lines.append(f"        {idx_o} = arith.addi %base_q, %tid : index")
+        lines.append(f"        memref.store {outv}, {arg_ssa[out_name2]}[{idx_o}] : {out_memref}")
         lines.append("      }")
     elif attn2d_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v12":
         # Perf-first: warp-only + online softmax (single-pass) for masked_attention2d (HD=16).
