@@ -5906,6 +5906,7 @@ def lower_intent_to_cuda_gpu_kernel(
             "masked_attention2d": {
                 "attn2d_causal_softmax_v10",
                 "attn2d_causal_softmax_v14",
+                "attn2d_causal_softmax_v15",
                 "attn2d_causal_softmax_v11",
                 "attn2d_causal_softmax_v12",
                 "attn2d_causal_softmax_v4",
@@ -5996,6 +5997,17 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError("attn2d_causal_softmax_v14 override is only supported for masked_attention2d")
                 if int(attn2d_v1.get("HEAD_DIM") or 0) != 16:
                     raise RuntimeError("attn2d_causal_softmax_v14 requires HEAD_DIM==16")
+            if kernel_kind_override == "attn2d_causal_softmax_v15":
+                if intent_name != "masked_attention2d":
+                    raise RuntimeError("attn2d_causal_softmax_v15 override is only supported for masked_attention2d")
+                if int(attn2d_v1.get("HEAD_DIM") or 0) != 16:
+                    raise RuntimeError("attn2d_causal_softmax_v15 requires HEAD_DIM==16")
+                warps = int(bindings.get("ATTN_SCORE_WARPS") or 4)
+                if warps not in {2, 4, 8}:
+                    raise RuntimeError(
+                        "attn2d_causal_softmax_v15 requires ATTN_SCORE_WARPS in {2,4,8}; "
+                        f"got {warps}"
+                    )
             if kernel_kind_override == "attn2d_causal_softmax_v10":
                 if intent_name != "masked_attention2d":
                     raise RuntimeError("attn2d_causal_softmax_v10 override is only supported for masked_attention2d")
@@ -17427,6 +17439,315 @@ def lower_intent_to_cuda_gpu_kernel(
         out_idx = _fresh("out_idx")
         lines.append(f"          {out_idx} = arith.addi %base_q, %tid : index")
         lines.append(f"          memref.store {outv}, {arg_ssa[out_name2]}[{out_idx}] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif attn2d_v1 is not None and kernel_kind_override_enabled and kernel_kind_override == "attn2d_causal_softmax_v15":
+        # Perf-first: masked_attention2d is a tiny micro-kernel (canonical Q=16, KV=16, HD=16).
+        # v10 uses a shared scores buffer + multiple barriers; v14 uses a single warp. This variant
+        # keeps multiple warps per row for occupancy but reduces the barrier count by using an
+        # associative online-softmax reduction across warp KV partitions:
+        #   each warp computes (m,l,acc) for its KV slice, then warp0 combines them.
+        kernel_kind = "attn2d_causal_softmax_v15"
+        q_name = str(attn2d_v1["Q"])
+        k_name = str(attn2d_v1["K"])
+        v_name = str(attn2d_v1["V"])
+        out_name2 = str(attn2d_v1["out"])
+        sm_scale_name = str(attn2d_v1["sm_scale"])
+        q_ctx = int(attn2d_v1["Q_CTX"])
+        kv_ctx = int(attn2d_v1["KV_CTX"])
+        hd = int(attn2d_v1["HEAD_DIM"])
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        v_memref = str(arg_specs[v_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        sm_scale_memref = str(arg_specs[sm_scale_name]["memref"])
+
+        if int(hd) != 16:
+            raise RuntimeError("attn2d_causal_softmax_v15 requires HEAD_DIM==16")
+        warps = int(bindings.get("ATTN_SCORE_WARPS") or 4)
+        if int(warps) not in {2, 4, 8}:
+            raise RuntimeError(f"attn2d_causal_softmax_v15 requires ATTN_SCORE_WARPS in {{2,4,8}}; got {warps}")
+
+        block_x = int(warps) * 32
+        kv_per_warp = (int(kv_ctx) + int(warps) - 1) // int(warps) if int(warps) > 0 else int(kv_ctx)
+        launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
+        cuda_real_mlir_attention_cfg = {
+            "block_x": int(block_x),
+            "warps": int(warps),
+            "kv_per_warp": int(kv_per_warp),
+            "head_dim": int(hd),
+            "scores_shared": False,
+            "softmax_two_pass": False,
+            "barrier": "warp-partition-reduce",
+        }
+
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        m_off = 0
+        l_off = int(m_off + int(warps))
+        acc_off = int(l_off + int(warps))
+        sh_elems = int(acc_off + int(warps) * int(hd))
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
+
+        def _subwarp_allreduce_sum_xor_16(val_ssa: str, *, indent: str) -> str:
+            cur = str(val_ssa)
+            for off in ("%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                sel = _fresh("sel")
+                nxt = _fresh("sum")
+                lines.append(f"{indent}{sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c16_i32 : f32")
+                lines.append(f"{indent}{sel} = arith.select {ok}, {sh}, %c0f : f32")
+                lines.append(f"{indent}{nxt} = arith.addf {cur}, {sel}{fm} : f32")
+                cur = str(nxt)
+            return cur
+
+        def _broadcast_lane0(val_ssa: str, *, indent: str) -> str:
+            sh = _fresh("sh")
+            ok = _fresh("ok")
+            sel = _fresh("sel")
+            lines.append(f"{indent}{sh}, {ok} = gpu.shuffle idx {val_ssa}, %c0_i32, %c32_i32 : f32")
+            lines.append(f"{indent}{sel} = arith.select {ok}, {sh}, %c0f : f32")
+            return str(sel)
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %c0_i32 = arith.constant 0 : i32")
+        lines.append("      %c1_i32 = arith.constant 1 : i32")
+        lines.append("      %c2_i32 = arith.constant 2 : i32")
+        lines.append("      %c4_i32 = arith.constant 4 : i32")
+        lines.append("      %c8_i32 = arith.constant 8 : i32")
+        lines.append("      %c16_i32 = arith.constant 16 : i32")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        lines.append(f"      %cWarps = arith.constant {int(warps)} : index")
+        lines.append(f"      %cKVPerWarp = arith.constant {int(kv_per_warp)} : index")
+        lines.append(f"      %cHD = arith.constant {int(hd)} : index")
+        lines.append(f"      %cQ = arith.constant {int(q_ctx)} : index")
+        lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
+        lines.append(f"      %cMOff = arith.constant {int(m_off)} : index")
+        lines.append(f"      %cLOff = arith.constant {int(l_off)} : index")
+        lines.append(f"      %cAccOff = arith.constant {int(acc_off)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty is not None
+        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"      %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
+        lines.append(f"      %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
+
+        lines.append("      %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("      %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("      %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("      %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("      %pred_d = arith.cmpi ult, %lane, %cHD : index")
+
+        # Load per-lane Q value once.
+        lines.append("      %base_q = arith.muli %bid, %cHD : index")
+        lines.append("      %qv = scf.if %pred_d -> (f32) {")
+        lines.append("        %q_idx = arith.addi %base_q, %lane : index")
+        lines.append(f"        %q_load = memref.load {arg_ssa[q_name]}[%q_idx] : {q_memref}")
+        lines.append("        scf.yield %q_load : f32")
+        lines.append("      } else {")
+        lines.append("        scf.yield %c0f : f32")
+        lines.append("      }")
+
+        # kv_end = min(KV, bid+1) for causal attention.
+        lines.append("      %kv_end0 = arith.addi %bid, %c1 : index")
+        lines.append("      %p_kv_end = arith.cmpi ule, %kv_end0, %cKV : index")
+        lines.append("      %kv_end = arith.select %p_kv_end, %kv_end0, %cKV : index")
+
+        # Warp-local KV range [kv_start, kv_end_w).
+        lines.append("      %kv_start = arith.muli %warp, %cKVPerWarp : index")
+        lines.append("      %kv_end1 = arith.addi %kv_start, %cKVPerWarp : index")
+        lines.append("      %p_kv_end1 = arith.cmpi ule, %kv_end1, %kv_end : index")
+        lines.append("      %kv_end_w = arith.select %p_kv_end1, %kv_end1, %kv_end : index")
+
+        # Warp partial online-softmax over its KV slice.
+        m_out = _fresh("m_out")
+        l_out = _fresh("l_out")
+        acc_out = _fresh("acc_out")
+        lines.append(
+            f"      {m_out}, {l_out}, {acc_out} = scf.for %kv = %kv_start to %kv_end_w step %c1 "
+            "iter_args(%m = %neg_inf, %l = %c0f, %acc = %c0f) -> (f32, f32, f32) {"
+        )
+        lines.append("        %k_base = arith.muli %kv, %cHD : index")
+        lines.append("        %k_val = scf.if %pred_d -> (f32) {")
+        lines.append("          %k_idx = arith.addi %k_base, %lane : index")
+        lines.append(f"          %k_load = memref.load {arg_ssa[k_name]}[%k_idx] : {k_memref}")
+        lines.append("          scf.yield %k_load : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        lines.append("        %partial = llvm.intr.fma(%qv, %k_val, %c0f) : (f32, f32, f32) -> f32")
+        dot = _subwarp_allreduce_sum_xor_16("%partial", indent="        ")
+        lines.append(f"        %score = arith.mulf {dot}, %sm2{fm} : f32")
+        lines.append("        %score0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("          scf.yield %score : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        score_b = _broadcast_lane0("%score0", indent="        ")
+
+        lines.append(f"        %m_new = arith.maximumf %m, {score_b}{fm} : f32")
+        lines.append(f"        %dm = arith.subf %m, %m_new{fm} : f32")
+        lines.append("        %alpha0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("          %a = math.exp2 %dm : f32")
+        lines.append("          scf.yield %a : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        alpha_b = _broadcast_lane0("%alpha0", indent="        ")
+
+        lines.append(f"        %ds = arith.subf {score_b}, %m_new{fm} : f32")
+        lines.append("        %p0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("          %p = math.exp2 %ds : f32")
+        lines.append("          scf.yield %p : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        p_b = _broadcast_lane0("%p0", indent="        ")
+
+        lines.append(f"        %l_scaled = arith.mulf %l, {alpha_b}{fm} : f32")
+        lines.append(f"        %l_new = arith.addf %l_scaled, {p_b}{fm} : f32")
+
+        lines.append(f"        %acc_scaled = arith.mulf %acc, {alpha_b}{fm} : f32")
+        lines.append("        %acc_new = scf.if %pred_d -> (f32) {")
+        lines.append("          %v_base = arith.muli %kv, %cHD : index")
+        lines.append("          %v_idx = arith.addi %v_base, %lane : index")
+        lines.append(f"          %vv = memref.load {arg_ssa[v_name]}[%v_idx] : {v_memref}")
+        lines.append(
+            f"          %an = llvm.intr.fma({p_b}, %vv, %acc_scaled) : (f32, f32, f32) -> f32"
+        )
+        lines.append("          scf.yield %an : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %acc_scaled : f32")
+        lines.append("        }")
+        lines.append("        scf.yield %m_new, %l_new, %acc_new : f32, f32, f32")
+        lines.append("      }")
+
+        # Write warp partials to shared (m,l in lane0; acc in lanes < HD).
+        lines.append("      scf.if %is_lane0 {")
+        lines.append("        %m_idx = arith.addi %cMOff, %warp : index")
+        lines.append(f"        memref.store {m_out}, %sh[%m_idx] : {shared_global_memref_ty}")
+        lines.append("        %l_idx = arith.addi %cLOff, %warp : index")
+        lines.append(f"        memref.store {l_out}, %sh[%l_idx] : {shared_global_memref_ty}")
+        lines.append("      }")
+        lines.append("      scf.if %pred_d {")
+        lines.append("        %w_off = arith.muli %warp, %cHD : index")
+        lines.append("        %acc_idx0 = arith.addi %w_off, %lane : index")
+        lines.append("        %acc_idx = arith.addi %cAccOff, %acc_idx0 : index")
+        lines.append(f"        memref.store {acc_out}, %sh[%acc_idx] : {shared_global_memref_ty}")
+        lines.append("      }")
+        lines.append("      gpu.barrier")
+
+        # Warp0: combine warp partials (m,l,acc) across warps.
+        lines.append("      scf.if %is_warp0 {")
+        lines.append("        %m0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("          %mi = arith.addi %cMOff, %c0 : index")
+        lines.append(f"          %mv = memref.load %sh[%mi] : {shared_global_memref_ty}")
+        lines.append("          scf.yield %mv : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        m_b0 = _broadcast_lane0("%m0", indent="        ")
+        lines.append("        %l0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("          %li = arith.addi %cLOff, %c0 : index")
+        lines.append(f"          %lv = memref.load %sh[%li] : {shared_global_memref_ty}")
+        lines.append("          scf.yield %lv : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+        l_b0 = _broadcast_lane0("%l0", indent="        ")
+
+        lines.append("        %acc0 = scf.if %pred_d -> (f32) {")
+        lines.append("          %a0 = arith.addi %cAccOff, %lane : index")
+        lines.append(f"          %av = memref.load %sh[%a0] : {shared_global_memref_ty}")
+        lines.append("          scf.yield %av : f32")
+        lines.append("        } else {")
+        lines.append("          scf.yield %c0f : f32")
+        lines.append("        }")
+
+        m_final = _fresh("m_final")
+        l_final = _fresh("l_final")
+        acc_final = _fresh("acc_final")
+        lines.append(
+            f"        {m_final}, {l_final}, {acc_final} = scf.for %w = %c1 to %cWarps step %c1 "
+            f"iter_args(%m = {m_b0}, %l = {l_b0}, %acc = %acc0) -> (f32, f32, f32) {{"
+        )
+
+        # Load warp-w partial stats.
+        lines.append("          %mw0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("            %mi = arith.addi %cMOff, %w : index")
+        lines.append(f"            %mv = memref.load %sh[%mi] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %mv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        mw_b = _broadcast_lane0("%mw0", indent="          ")
+
+        lines.append("          %lw0 = scf.if %is_lane0 -> (f32) {")
+        lines.append("            %li = arith.addi %cLOff, %w : index")
+        lines.append(f"            %lv = memref.load %sh[%li] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %lv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lw_b = _broadcast_lane0("%lw0", indent="          ")
+
+        lines.append("          %accw = scf.if %pred_d -> (f32) {")
+        lines.append("            %w_off = arith.muli %w, %cHD : index")
+        lines.append("            %ai0 = arith.addi %w_off, %lane : index")
+        lines.append("            %ai = arith.addi %cAccOff, %ai0 : index")
+        lines.append(f"            %av = memref.load %sh[%ai] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %av : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+
+        # Combine (%m,%l,%acc) with (%mw,%lw,%accw).
+        lines.append(f"          %m_new = arith.maximumf %m, {mw_b}{fm} : f32")
+        lines.append(f"          %dm0 = arith.subf %m, %m_new{fm} : f32")
+        lines.append("          %alpha00 = scf.if %is_lane0 -> (f32) {")
+        lines.append("            %a = math.exp2 %dm0 : f32")
+        lines.append("            scf.yield %a : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        alpha0_b = _broadcast_lane0("%alpha00", indent="          ")
+
+        lines.append(f"          %dm1 = arith.subf {mw_b}, %m_new{fm} : f32")
+        lines.append("          %alpha10 = scf.if %is_lane0 -> (f32) {")
+        lines.append("            %a = math.exp2 %dm1 : f32")
+        lines.append("            scf.yield %a : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        alpha1_b = _broadcast_lane0("%alpha10", indent="          ")
+
+        lines.append(f"          %l0 = arith.mulf %l, {alpha0_b}{fm} : f32")
+        lines.append(f"          %l1 = arith.mulf {lw_b}, {alpha1_b}{fm} : f32")
+        lines.append(f"          %l_new = arith.addf %l0, %l1{fm} : f32")
+
+        lines.append(f"          %acc0 = arith.mulf %acc, {alpha0_b}{fm} : f32")
+        lines.append(f"          %acc1 = arith.mulf %accw, {alpha1_b}{fm} : f32")
+        lines.append(f"          %acc_new = arith.addf %acc0, %acc1{fm} : f32")
+
+        lines.append("          scf.yield %m_new, %l_new, %acc_new : f32, f32, f32")
+        lines.append("        }")
+
+        # Normalize and store.
+        lines.append("        %l_nz = arith.cmpf one, " + str(l_final) + ", %c0f : f32")
+        lines.append("        %l_safe = arith.select %l_nz, " + str(l_final) + ", %c1f : f32")
+        lines.append(f"        %outv = arith.divf {acc_final}, %l_safe{fm} : f32")
+        lines.append("        scf.if %pred_d {")
+        lines.append("          %out_idx = arith.addi %base_q, %lane : index")
+        lines.append(f"          memref.store %outv, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif (
