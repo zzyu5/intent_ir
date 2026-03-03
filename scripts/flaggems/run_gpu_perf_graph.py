@@ -418,10 +418,10 @@ def _apply_intentir_perf_binding_overrides(
     )
     for k, v in overrides.items():
         key = str(k)
-        if key in merged and merged.get(key) is not None:
-            continue
+        prev = merged.get(key)
         merged[key] = v
-        applied[key] = v
+        if prev != v:
+            applied[key] = v
     return merged, applied, (override_source if applied else "none")
 
 
@@ -2313,11 +2313,18 @@ def _build_intentir_launch_fn(
         "strict_mode": bool(strict_fallback_enabled()),
         "fallback_policy": ("strict" if bool(strict_fallback_enabled()) else "legacy_compatible"),
         "intent_binding_overrides": dict(applied_binding_overrides),
-        # Prefer provenance recorded in the MLIR backend contract artifacts (apply_tuning_db),
-        # but keep perf-runner binding overrides for backward compatibility.
-        "intentir_tuning_source": str(contract_tuning_source or tuning_source),
+        # Prefer provenance recorded in the MLIR backend contract artifacts (apply_tuning_db).
+        # Perf-runner binding overrides only reflect the launch-time bindings we chose (and are
+        # not guaranteed to have influenced the compiled PTX when using prebuilt artifacts).
+        "intentir_tuning_source": (
+            str(contract_tuning_source)
+            if (contract_tuning_source or contract_tuning_applied)
+            else str(tuning_source)
+        ),
         "intentir_tuning_applied": (
-            dict(contract_tuning_applied) if contract_tuning_applied else dict(applied_binding_overrides)
+            dict(contract_tuning_applied)
+            if (contract_tuning_source or contract_tuning_applied)
+            else dict(applied_binding_overrides)
         ),
         "intentir_tuning_arch": str(arch),
         "intentir_tuning_db": str(_TUNING_DB_PATH),

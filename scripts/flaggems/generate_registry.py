@@ -86,7 +86,10 @@ def main() -> None:
         assert repo_or_src is not None
         p = Path(repo_or_src).resolve()
         src = p if p.name == "src" else (p / "src")
-        source_label = str(src)
+        try:
+            source_label = str(src.resolve().relative_to(ROOT))
+        except Exception:
+            source_label = str(src)
         all_ops = load_flaggems_all_ops(flaggems_src=src)
         if not commit:
             commit = str(infer_flaggems_commit_from_src(src) or "")
@@ -99,7 +102,7 @@ def main() -> None:
         except Exception as e:
             raise RuntimeError(
                 "unable to import `flag_gems`; install the package (pip/uv/conda) or pass "
-                f\"--flag-gems-repo-path {_ARCHIVE_FLAGGEMS_REPO_DEFAULT} (or another FlagGems checkout)\"  # noqa: ISC003
+                f"--flag-gems-repo-path {_ARCHIVE_FLAGGEMS_REPO_DEFAULT} (or another FlagGems checkout)"  # noqa: ISC003
             ) from e
         if not commit:
             commit = _infer_pip_tag() or "unknown"

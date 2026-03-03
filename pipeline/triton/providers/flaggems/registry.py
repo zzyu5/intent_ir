@@ -272,6 +272,33 @@ _SEMANTIC_E2E_ALIASES: dict[str, str] = {
 _E2E_SPEC_TO_SEMANTIC: dict[str, str] = {v: k for k, v in _SEMANTIC_TO_E2E_SPEC.items()}
 
 
+def _ensure_flaggems_cache_dir_env() -> None:
+    """
+    FlagGems defaults to using `Path.home() / ".flaggems"` for caches.
+
+    Some of our remote runners use accounts whose home directory is not writable
+    (e.g. `/home/<user>` owned by root with 755), which would make `import flag_gems`
+    fail at import time. If FLAGGEMS_CACHE_DIR is unset and HOME isn't writable,
+    redirect the cache under our repo artifacts directory.
+    """
+
+    if str(os.getenv("FLAGGEMS_CACHE_DIR", "")).strip():
+        return
+    try:
+        home = Path.home()
+        if os.access(str(home), os.W_OK):
+            return
+    except Exception:
+        pass
+    cache_dir = (ROOT / "artifacts" / "_flaggems_cache").resolve()
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Best-effort; if even artifacts aren't writable, let FlagGems raise.
+        return
+    os.environ["FLAGGEMS_CACHE_DIR"] = str(cache_dir)
+
+
 def _is_valid_flaggems_src_dir(path: Path) -> bool:
     p = Path(path)
     return bool((p / "flag_gems" / "__init__.py").is_file())
@@ -300,6 +327,8 @@ def _iter_flaggems_src_candidates(flaggems_src: str | Path | None) -> list[Path]
         if not s or s.startswith("python:"):
             continue
         p = Path(s)
+        if not p.is_absolute():
+            p = (ROOT / p).resolve()
         # Allow callers to provide either ".../src" or ".../src/flag_gems".
         if p.name == "flag_gems" and (p / "__init__.py").is_file():
             p = p.parent
@@ -353,6 +382,7 @@ def _force_import_flaggems_from_src(src_dir: Path) -> None:
 
 
 def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
+    _ensure_flaggems_cache_dir_env()
     candidates = _iter_flaggems_src_candidates(flaggems_src)
     valid_candidates: list[Path] = []
     for p in candidates:
