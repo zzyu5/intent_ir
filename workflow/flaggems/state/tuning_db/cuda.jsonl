@@ -17,5 +17,5 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm90","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":128,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy (H100 sm90 ratio~1.05 @ M256,N512,K256)"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm120","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy (5090D sm120a ratio~1.00 @ M256,N512,K256)"}
 
-# Triton-native softmax (graph perf): use 256 threads per row for better ILP/occupancy.
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_softmax","arch":"sm120","bindings":{"SOFTMAX_BLOCK_THREADS":256,"SOFTMAX_VEC4":1},"note":"5090D sm120a graph perf: vec4 load/store + 256 threads"}
+# Triton-native softmax (graph perf): use a triton-like masked pow2 tile mapping.
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_softmax","arch":"sm120","bindings":{"SOFTMAX_BLOCK_THREADS":128},"kernel_kind":"row_softmax_axis1_triton_v1","note":"5090D sm120a graph perf: triton-like (128 threads, pow2<=1024, masked transfer)"}

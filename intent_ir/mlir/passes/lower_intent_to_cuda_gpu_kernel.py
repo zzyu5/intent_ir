@@ -5910,6 +5910,11 @@ def lower_intent_to_cuda_gpu_kernel(
                 "attn2d_causal_softmax_v2",
                 "attn2d_causal_softmax_v1",
             },
+            "ai_bench_softmax": {
+                "row_softmax_axis1_triton_v1",
+                "row_softmax_axis1_vec4_v2",
+                "row_softmax_axis1_v1",
+            },
             "ai_bench_matmul": {"matmul_mma_tf32_v1", "matmul_mma_tf32_global_v1", "matmul_tile_v2", "matmul_tile_v1"},
             "matmul_fused_epilogue2d": {
                 "matmul_mma_tf32_v1",
@@ -6017,6 +6022,17 @@ def lower_intent_to_cuda_gpu_kernel(
                         f"{kernel_kind_override} override requires M%MMA_BM==0, N%MMA_BN==0, K%MMA_BK==0, and K%8==0; "
                         f"got M={m_dim} N={n_dim} K={k_dim} MMA_BM={mma_bm} MMA_BN={mma_bn} MMA_BK={mma_bk}"
                     )
+        if intent_name == "ai_bench_softmax":
+            if row_softmax_axis1 is None:
+                raise RuntimeError(
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires ai_bench_softmax matcher; "
+                    "got no row_softmax_axis1 pattern match"
+                )
+            red_n = int(row_softmax_axis1.get("reduce_n") or 0)
+            if red_n <= 0:
+                raise RuntimeError(f"ai_bench_softmax softmax reduce_n must be >0; got {red_n}")
+            if kernel_kind_override == "row_softmax_axis1_triton_v1" and red_n > 1024:
+                raise RuntimeError("row_softmax_axis1_triton_v1 currently requires reduce_n<=1024")
         kernel_kind_override_enabled = True
     lines: list[str] = []
     lines.append("module attributes {")
@@ -8701,6 +8717,197 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %o = arith.subf %xc, %logsum{fm} : f32")
         lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
         lines.append("        }")
+        lines.append("      }")
+    elif (
+        row_softmax_axis1 is not None
+        and kernel_kind_override_enabled
+        and kernel_kind_override == "row_softmax_axis1_triton_v1"
+    ):
+        kernel_kind = "row_softmax_axis1_triton_v1"
+        assert out_m is not None
+        assert out_n is not None
+        inp_name = str(row_softmax_axis1["inp"])
+        out_name2 = str(row_softmax_axis1["out"])
+        red_n = int(row_softmax_axis1["reduce_n"])
+        in_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        if red_n <= 0:
+            raise RuntimeError("softmax2d reduce_n must be > 0")
+        if red_n > 1024:
+            raise RuntimeError(f"{kernel_kind} currently requires reduce_n<=1024; got reduce_n={red_n}")
+
+        pad_n = 1 << (int(red_n) - 1).bit_length()
+        pad_n = int(min(int(pad_n), 1024))
+        block_threads = 128
+        if (int(pad_n) % int(block_threads)) != 0:
+            raise RuntimeError(f"{kernel_kind} requires pad_n%128==0; got pad_n={pad_n}")
+        ept = int(pad_n) // int(block_threads)
+        if ept <= 0 or ept > 16:
+            raise RuntimeError(f"{kernel_kind} invalid EPT={ept} (pad_n={pad_n} block_threads={block_threads})")
+        warps = int(block_threads // 32)
+
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(out_m), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(warps)}xf32, 3>"
+
+        # Triton-like mapping for ai_bench_softmax:
+        # - `pad_n` is a power-of-two (<=1024)
+        # - one CTA per row
+        # - 128 threads (4 warps), each lane processes `ept = pad_n/128` columns with stride 128
+        in_tile_memref = f"memref<{int(ept)}xf32, strided<[{int(block_threads)}], offset: ?>, 1>"
+        out_tile_memref = f"memref<{int(ept)}xf32, strided<[{int(block_threads)}], offset: ?>, 1>"
+        vty_f = f"vector<{int(ept)}xf32>"
+        vty_i32 = f"vector<{int(ept)}xi32>"
+        offsets = [int(i) * int(block_threads) for i in range(int(ept))]
+        offsets_dense = ", ".join(str(o) for o in offsets)
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c0_i32 = arith.constant 0 : i32")
+        lines.append("      %c32 = arith.constant 32 : i32")
+        lines.append("      %c32_idx = arith.constant 32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32_idx : index")
+        lines.append("      %warp = arith.divui %tid, %c32_idx : index")
+        lines.append("      %c16 = arith.constant 16 : i32")
+        lines.append("      %c8 = arith.constant 8 : i32")
+        lines.append("      %c4 = arith.constant 4 : i32")
+        lines.append("      %c2 = arith.constant 2 : i32")
+        lines.append("      %c1 = arith.constant 1 : i32")
+        lines.append(f"      %cWarps = arith.constant {int(warps)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+        lines.append(f"      %cM = arith.constant {int(out_m)} : index")
+        lines.append(f"      %cN = arith.constant {int(red_n)} : index")
+        lines.append(f"      %cC = arith.constant {int(red_n)} : i32")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("        %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+
+        # Build mask for the strided tile: (tid + [0,128,256,...] < C)
+        lines.append("        %tid_i32 = arith.index_cast %tid : index to i32")
+        lines.append(f"        %offs = arith.constant dense<[{offsets_dense}]> : {vty_i32}")
+        lines.append(f"        %tidv = vector.splat %tid_i32 : {vty_i32}")
+        lines.append(f"        %cols = arith.addi %offs, %tidv : {vty_i32}")
+        lines.append(f"        %cv = vector.splat %cC : {vty_i32}")
+        lines.append(f"        %mask = arith.cmpi ult, %cols, %cv : {vty_i32}")
+
+        # Strided row view for vectorized masked transfer_read/write.
+        lines.append("        %base = arith.muli %bid, %cN : index")
+        lines.append("        %off = arith.addi %base, %tid : index")
+        lines.append(f"        %in_s = memref.reinterpret_cast {arg_ssa[inp_name]} to")
+        lines.append("          offset: [%off],")
+        lines.append(f"          sizes: [{int(ept)}],")
+        lines.append(f"          strides: [{int(block_threads)}]")
+        lines.append(f"        : {in_memref} to {in_tile_memref}")
+        lines.append(f"        %out_s = memref.reinterpret_cast {arg_ssa[out_name2]} to")
+        lines.append("          offset: [%off],")
+        lines.append(f"          sizes: [{int(ept)}],")
+        lines.append(f"          strides: [{int(block_threads)}]")
+        lines.append(f"        : {out_memref} to {out_tile_memref}")
+
+        lines.append(f"        %xv = vector.transfer_read %in_s[%c0], %neg_inf, %mask : {in_tile_memref}, {vty_f}")
+        lines.append(f"        %partial_max = vector.reduction <maximumf>, %xv : {vty_f} into f32")
+
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty is not None
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+
+        # warp_allreduce_max
+        bm_cur = "%partial_max"
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%bm_sh_{o}"
+            ok = f"%bm_ok_{o}"
+            nxt = f"%bm_{o}"
+            lines.append(f"        {sh}, {ok} = gpu.shuffle xor {bm_cur}, %c{o}, %c32 : f32")
+            lines.append(f"        {nxt} = arith.maximumf {bm_cur}, {sh}{fm} : f32")
+            bm_cur = nxt
+        wm_final = str(bm_cur)
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {wm_final}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %wv = scf.if %lane_in -> (f32) {")
+        lines.append(f"            %t = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %t : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %neg_inf : f32")
+        lines.append("          }")
+        bm_cur2 = "%wv"
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%bbm_sh_{o}"
+            ok = f"%bbm_ok_{o}"
+            nxt = f"%bbm_{o}"
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {bm_cur2}, %c{o}, %c32 : f32")
+            lines.append(f"          {nxt} = arith.maximumf {bm_cur2}, {sh}{fm} : f32")
+            bm_cur2 = nxt
+        bm_final = str(bm_cur2)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {bm_final}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append(f"        %maxv = memref.load %sh[%c0] : {shared_global_memref_ty}")
+
+        lines.append(f"        %maxv_v = vector.splat %maxv : {vty_f}")
+        lines.append(f"        %xc = arith.subf %xv, %maxv_v{fm} : {vty_f}")
+        lines.append(f"        %log2e_v = vector.splat %cLOG2E : {vty_f}")
+        lines.append(f"        %xcl2 = arith.mulf %xc, %log2e_v{fm} : {vty_f}")
+        lines.append(f"        %ev = math.exp2 %xcl2{fm} : {vty_f}")
+        lines.append(f"        %partial_sum = vector.reduction <add>, %ev : {vty_f} into f32")
+
+        # warp_allreduce_sum
+        sum_cur = "%partial_sum"
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%ws_sh_{o}"
+            ok = f"%ws_ok_{o}"
+            nxt = f"%ws_{o}"
+            lines.append(f"        {sh}, {ok} = gpu.shuffle xor {sum_cur}, %c{o}, %c32 : f32")
+            lines.append(f"        {nxt} = arith.addf {sum_cur}, {sh}{fm} : f32")
+            sum_cur = nxt
+        ws_final = str(sum_cur)
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {ws_final}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in2 = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %sv = scf.if %lane_in2 -> (f32) {")
+        lines.append(f"            %t2 = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %t2 : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        bs_cur = "%sv"
+        for off in (16, 8, 4, 2, 1):
+            o = int(off)
+            sh = f"%bs_sh_{o}"
+            ok = f"%bs_ok_{o}"
+            nxt = f"%bs_{o}"
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {bs_cur}, %c{o}, %c32 : f32")
+            lines.append(f"          {nxt} = arith.addf {bs_cur}, {sh}{fm} : f32")
+            bs_cur = nxt
+        bs_final = str(bs_cur)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {bs_final}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append(f"        %sumv = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"        %inv = arith.divf %c1f, %sumv{fm} : f32")
+        lines.append(f"        %inv_v = vector.splat %inv : {vty_f}")
+        lines.append(f"        %y = arith.mulf %ev, %inv_v{fm} : {vty_f}")
+        lines.append(f"        vector.transfer_write %y, %out_s[%c0], %mask : {vty_f}, {out_tile_memref}")
         lines.append("      }")
     elif row_softmax_axis1 is not None:
         kernel_kind = "row_softmax_axis1_v1"
