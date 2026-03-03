@@ -1260,6 +1260,546 @@ def _emit_row_argminmax_kernel(
     return "\n".join(lines) + "\n"
 
 
+def _emit_matmul2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+    relu: bool,
+    require_bias: bool,
+    require_row_col_masks: bool,
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 matmul expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 matmul expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    tensors = dict(intent.tensors or {})
+    rank2_f32: list[str] = []
+    rank1_f32: list[str] = []
+    rank1_i8: list[str] = []
+    for name, tt in tensors.items():
+        nm = str(name).strip()
+        if not nm or nm == out_name:
+            continue
+        dt = _dtype(getattr(tt, "dtype", "f32"))
+        shp = _shape(nm, intent=intent, bindings=bindings)
+        if dt == "f32" and len(shp) == 2:
+            rank2_f32.append(nm)
+        elif dt == "f32" and len(shp) == 1:
+            rank1_f32.append(nm)
+        elif dt == "i8" and len(shp) == 1:
+            rank1_i8.append(nm)
+
+    a_name = ""
+    b_name = ""
+    k_dim = 0
+    for a in list(rank2_f32):
+        a_shape = _shape(a, intent=intent, bindings=bindings)
+        if len(a_shape) != 2 or int(a_shape[0]) != int(m_dim):
+            continue
+        for b in list(rank2_f32):
+            if b == a:
+                continue
+            b_shape = _shape(b, intent=intent, bindings=bindings)
+            if len(b_shape) != 2 or int(b_shape[1]) != int(n_dim):
+                continue
+            if int(a_shape[1]) <= 0 or int(b_shape[0]) <= 0:
+                continue
+            if int(a_shape[1]) != int(b_shape[0]):
+                continue
+            a_name, b_name = str(a), str(b)
+            k_dim = int(a_shape[1])
+            break
+        if a_name and b_name:
+            break
+    if not (a_name and b_name and k_dim > 0):
+        raise RuntimeError(
+            f"rvv cpu-loops v1 matmul: failed to infer A/B for kernel={kernel_name!r} output={out_name!r}"
+        )
+
+    bias_name = ""
+    if bool(require_bias):
+        for b in list(rank1_f32):
+            b_shape = _shape(b, intent=intent, bindings=bindings)
+            if b_shape == [int(n_dim)]:
+                bias_name = str(b)
+                break
+        if not bias_name:
+            raise RuntimeError(f"rvv cpu-loops v1 matmul: missing bias [N] for kernel={kernel_name!r}")
+
+    row_mask_name = ""
+    col_mask_name = ""
+    if bool(require_row_col_masks):
+        for nm in list(rank1_i8):
+            shp = _shape(nm, intent=intent, bindings=bindings)
+            if shp == [int(m_dim)] and not row_mask_name:
+                row_mask_name = str(nm)
+            elif shp == [int(n_dim)] and not col_mask_name:
+                col_mask_name = str(nm)
+        if not (row_mask_name and col_mask_name):
+            raise RuntimeError(f"rvv cpu-loops v1 matmul: missing row/col masks for kernel={kernel_name!r}")
+
+    total_a = int(m_dim * k_dim)
+    total_b = int(k_dim * n_dim)
+    total_out = int(m_dim * n_dim)
+    a_memref_ty = f"memref<{total_a}xf32>"
+    b_memref_ty = f"memref<{total_b}xf32>"
+    out_memref_ty = f"memref<{total_out}xf32>"
+    bias_memref_ty = f"memref<{int(n_dim)}xf32>" if bias_name else ""
+    rm_memref_ty = f"memref<{int(m_dim)}xi8>" if row_mask_name else ""
+    cm_memref_ty = f"memref<{int(n_dim)}xi8>" if col_mask_name else ""
+
+    arg_types: dict[str, str] = {a_name: a_memref_ty, b_name: b_memref_ty, out_name: out_memref_ty}
+    if bias_name:
+        arg_types[str(bias_name)] = bias_memref_ty
+    if row_mask_name:
+        arg_types[str(row_mask_name)] = rm_memref_ty
+    if col_mask_name:
+        arg_types[str(col_mask_name)] = cm_memref_ty
+
+    arg_names = _io_arg_order(intent)
+    for n in list(arg_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 matmul: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in arg_names]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append(f"    %cK = arith.constant {k_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    if relu:
+        lines.append("    %c0f_relu = arith.constant 0.0 : f32")
+    if row_mask_name or col_mask_name:
+        lines.append("    %c0i8 = arith.constant 0 : i8")
+
+    # Row-major matmul with optional epilogue.
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %a_row = arith.muli %m, %cK : index")
+    lines.append("      %out_row = arith.muli %m, %cN : index")
+    if row_mask_name:
+        rm = f"%{_mlir_ident(row_mask_name)}"
+        lines.append(f"      %rmv = memref.load {rm}[%m] : {rm_memref_ty}")
+        lines.append("      %rmnz = arith.cmpi ne, %rmv, %c0i8 : i8")
+    lines.append("      scf.for %n = %c0 to %cN step %c1 {")
+    lines.append("        %acc = scf.for %k = %c0 to %cK step %c1 iter_args(%x = %c0f) -> (f32) {")
+    lines.append("          %a_idx = arith.addi %a_row, %k : index")
+    lines.append(f"          %av = memref.load %{_mlir_ident(a_name)}[%a_idx] : {a_memref_ty}")
+    lines.append("          %b_row = arith.muli %k, %cN : index")
+    lines.append("          %b_idx = arith.addi %b_row, %n : index")
+    lines.append(f"          %bv = memref.load %{_mlir_ident(b_name)}[%b_idx] : {b_memref_ty}")
+    lines.append("          %prod = arith.mulf %av, %bv : f32")
+    lines.append("          %x2 = arith.addf %x, %prod : f32")
+    lines.append("          scf.yield %x2 : f32")
+    lines.append("        }")
+    val_cur = "%acc"
+    if bias_name:
+        lines.append(f"        %bias = memref.load %{_mlir_ident(bias_name)}[%n] : {bias_memref_ty}")
+        lines.append(f"        %accb = arith.addf {val_cur}, %bias : f32")
+        val_cur = "%accb"
+    if relu:
+        lines.append(f"        %relu = arith.maximumf {val_cur}, %c0f_relu : f32")
+        val_cur = "%relu"
+    if col_mask_name:
+        cm = f"%{_mlir_ident(col_mask_name)}"
+        lines.append(f"        %cmv = memref.load {cm}[%n] : {cm_memref_ty}")
+        lines.append("        %cmnz = arith.cmpi ne, %cmv, %c0i8 : i8")
+        if row_mask_name:
+            lines.append("        %cond = arith.andi %rmnz, %cmnz : i1")
+            cond = "%cond"
+        else:
+            cond = "%cmnz"
+        lines.append(f"        %masked = arith.select {cond}, {val_cur}, %c0f : f32")
+        val_cur = "%masked"
+
+    lines.append("        %out_idx = arith.addi %out_row, %n : index")
+    lines.append(f"        memref.store {val_cur}, %{_mlir_ident(out_name)}[%out_idx] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_row_softmax2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+    require_mask: bool,
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 softmax expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 softmax expects rank-2 output, got {out_shape}")
+    m_dim, n_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or n_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    tensors = dict(intent.tensors or {})
+    arg_names = _io_arg_order(intent)
+
+    in_name = ""
+    # Prefer IO tensors over intermediate nodes.
+    for nm in list(arg_names):
+        if nm == out_name:
+            continue
+        tt = tensors.get(str(nm))
+        if tt is None:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(str(nm), intent=intent, bindings=bindings)
+        if shp == [int(m_dim), int(n_dim)]:
+            in_name = str(nm)
+            break
+    if not in_name:
+        for name, tt in tensors.items():
+            nm = str(name).strip()
+            if not nm or nm == out_name:
+                continue
+            if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+                continue
+            shp = _shape(nm, intent=intent, bindings=bindings)
+            if shp == [int(m_dim), int(n_dim)]:
+                in_name = nm
+                break
+    if not in_name:
+        raise RuntimeError(f"rvv cpu-loops v1 softmax: failed to infer input for kernel={kernel_name!r}")
+
+    mask_name = ""
+    mask_dt = ""
+    if bool(require_mask):
+        # Prefer the public IO mask tensor, not internal casts (e.g. mask_bool).
+        for nm in list(arg_names):
+            nm = str(nm).strip()
+            if not nm or nm in {out_name, in_name}:
+                continue
+            tt = tensors.get(nm)
+            if tt is None:
+                continue
+            dt = _dtype(getattr(tt, "dtype", "bool"))
+            if dt not in {"i8", "i32"}:
+                continue
+            shp = _shape(nm, intent=intent, bindings=bindings)
+            if shp == [int(n_dim)]:
+                mask_name = nm
+                mask_dt = dt
+                break
+        if not mask_name:
+            raise RuntimeError(f"rvv cpu-loops v1 softmax: missing mask [N] for kernel={kernel_name!r}")
+
+    total = int(m_dim * n_dim)
+    in_memref_ty = f"memref<{total}xf32>"
+    out_memref_ty = f"memref<{total}xf32>"
+    mask_elem_ty = "i8" if (not mask_dt) else str(mask_dt)
+    mask_memref_ty = f"memref<{int(n_dim)}x{mask_elem_ty}>" if mask_name else ""
+
+    arg_types: dict[str, str] = {in_name: in_memref_ty, out_name: out_memref_ty}
+    if mask_name:
+        arg_types[mask_name] = mask_memref_ty
+    for n in list(arg_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 softmax: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in arg_names]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    %neg_inf = arith.constant 0xFF800000 : f32")
+    if mask_name:
+        if mask_elem_ty == "i32":
+            lines.append("    %c0mask = arith.constant 0 : i32")
+        else:
+            lines.append("    %c0mask = arith.constant 0 : i8")
+        lines.append("    %masked_neg = arith.constant -1.0e9 : f32")
+
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %row = arith.muli %m, %cN : index")
+
+    # Pass 1: max
+    lines.append("      %mx = scf.for %n = %c0 to %cN step %c1 iter_args(%x = %neg_inf) -> (f32) {")
+    lines.append("        %idx = arith.addi %row, %n : index")
+    lines.append(f"        %v0 = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    if mask_name:
+        lines.append(f"        %m0 = memref.load %{_mlir_ident(mask_name)}[%n] : {mask_memref_ty}")
+        lines.append(f"        %men = arith.cmpi ne, %m0, %c0mask : {mask_elem_ty}")
+        lines.append("        %v = arith.select %men, %v0, %masked_neg : f32")
+    else:
+        lines.append("        %v = arith.addf %v0, %c0f : f32")
+    lines.append("        %x2 = arith.maximumf %x, %v : f32")
+    lines.append("        scf.yield %x2 : f32")
+    lines.append("      }")
+
+    # Pass 2: sum exp
+    lines.append("      %sm = scf.for %n2 = %c0 to %cN step %c1 iter_args(%s = %c0f) -> (f32) {")
+    lines.append("        %idx2 = arith.addi %row, %n2 : index")
+    lines.append(f"        %u0 = memref.load %{_mlir_ident(in_name)}[%idx2] : {in_memref_ty}")
+    if mask_name:
+        lines.append(f"        %m1 = memref.load %{_mlir_ident(mask_name)}[%n2] : {mask_memref_ty}")
+        lines.append(f"        %men1 = arith.cmpi ne, %m1, %c0mask : {mask_elem_ty}")
+        lines.append("        %u = arith.select %men1, %u0, %masked_neg : f32")
+    else:
+        lines.append("        %u = arith.addf %u0, %c0f : f32")
+    lines.append("        %shift = arith.subf %u, %mx : f32")
+    lines.append("        %ex = math.exp %shift : f32")
+    lines.append("        %s2 = arith.addf %s, %ex : f32")
+    lines.append("        scf.yield %s2 : f32")
+    lines.append("      }")
+
+    # Pass 3: write
+    lines.append("      scf.for %n3 = %c0 to %cN step %c1 {")
+    lines.append("        %idx3 = arith.addi %row, %n3 : index")
+    lines.append(f"        %w0 = memref.load %{_mlir_ident(in_name)}[%idx3] : {in_memref_ty}")
+    if mask_name:
+        lines.append(f"        %m2 = memref.load %{_mlir_ident(mask_name)}[%n3] : {mask_memref_ty}")
+        lines.append(f"        %men2 = arith.cmpi ne, %m2, %c0mask : {mask_elem_ty}")
+        lines.append("        %w = arith.select %men2, %w0, %masked_neg : f32")
+    else:
+        lines.append("        %w = arith.addf %w0, %c0f : f32")
+    lines.append("        %shift2 = arith.subf %w, %mx : f32")
+    lines.append("        %ex2 = math.exp %shift2 : f32")
+    lines.append("        %y = arith.divf %ex2, %sm : f32")
+    lines.append(f"        memref.store %y, %{_mlir_ident(out_name)}[%idx3] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_gather2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 gather2d expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 gather2d expects rank-1 output, got {out_shape}")
+    l_dim = int(out_shape[0])
+    if l_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    tensors = dict(intent.tensors or {})
+    inp_name = ""
+    row_idx_name = ""
+    col_idx_name = ""
+    m_dim = 0
+    n_dim = 0
+    for name, tt in tensors.items():
+        nm = str(name).strip()
+        if not nm or nm == out_name:
+            continue
+        dt = _dtype(getattr(tt, "dtype", "f32"))
+        shp = _shape(nm, intent=intent, bindings=bindings)
+        if dt == "f32" and len(shp) == 2 and not inp_name:
+            inp_name = nm
+            m_dim, n_dim = int(shp[0]), int(shp[1])
+        if dt == "i32" and shp == [int(l_dim)]:
+            if not row_idx_name:
+                row_idx_name = nm
+            elif not col_idx_name and nm != row_idx_name:
+                col_idx_name = nm
+    if not (inp_name and row_idx_name and col_idx_name and m_dim > 0 and n_dim > 0):
+        raise RuntimeError(f"rvv cpu-loops v1 gather2d: failed to infer inputs for kernel={kernel_name!r}")
+
+    total_inp = int(m_dim * n_dim)
+    inp_memref_ty = f"memref<{total_inp}xf32>"
+    idx_memref_ty = f"memref<{l_dim}xi32>"
+    out_memref_ty = f"memref<{l_dim}xf32>"
+
+    arg_types: dict[str, str] = {
+        inp_name: inp_memref_ty,
+        row_idx_name: idx_memref_ty,
+        col_idx_name: idx_memref_ty,
+        out_name: out_memref_ty,
+    }
+    arg_names = _io_arg_order(intent)
+    for n in list(arg_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 gather2d: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in arg_names]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cL = arith.constant {l_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append("    scf.for %i = %c0 to %cL step %c1 {")
+    lines.append(f"      %r32 = memref.load %{_mlir_ident(row_idx_name)}[%i] : {idx_memref_ty}")
+    lines.append(f"      %c32 = memref.load %{_mlir_ident(col_idx_name)}[%i] : {idx_memref_ty}")
+    lines.append("      %r = arith.index_cast %r32 : i32 to index")
+    lines.append("      %c = arith.index_cast %c32 : i32 to index")
+    lines.append("      %mul = arith.muli %r, %cN : index")
+    lines.append("      %idx = arith.addi %mul, %c : index")
+    lines.append(f"      %x = memref.load %{_mlir_ident(inp_name)}[%idx] : {inp_memref_ty}")
+    lines.append(f"      memref.store %x, %{_mlir_ident(out_name)}[%i] : {out_memref_ty}")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _emit_grouped_row_sum2d_kernel(
+    *,
+    kernel_name: str,
+    intent: IntentFunction,
+    bindings: Mapping[str, Any],
+) -> str:
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"rvv cpu-loops v1 expects single output, got outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+    if _dtype(getattr(out_tt, "dtype", "f32")) != "f32":
+        raise RuntimeError("rvv cpu-loops v1 grouped_row_sum2d expects f32 output")
+    out_shape = _shape(out_name, intent=intent, bindings=bindings)
+    if len(out_shape) != 2:
+        raise RuntimeError(f"rvv cpu-loops v1 grouped_row_sum2d expects rank-2 output, got {out_shape}")
+    m_dim, g_dim = int(out_shape[0]), int(out_shape[1])
+    if m_dim <= 0 or g_dim <= 0:
+        raise RuntimeError(f"invalid output shape for {out_name}: {out_shape}")
+
+    tensors = dict(intent.tensors or {})
+    in_name = ""
+    n_dim = 0
+    for name, tt in tensors.items():
+        nm = str(name).strip()
+        if not nm or nm == out_name:
+            continue
+        if _dtype(getattr(tt, "dtype", "f32")) != "f32":
+            continue
+        shp = _shape(nm, intent=intent, bindings=bindings)
+        if len(shp) == 2 and int(shp[0]) == int(m_dim):
+            in_name = nm
+            n_dim = int(shp[1])
+            break
+    if not (in_name and n_dim > 0):
+        raise RuntimeError(f"rvv cpu-loops v1 grouped_row_sum2d: failed to infer input for kernel={kernel_name!r}")
+
+    group_size = int(bindings.get("group_size") or bindings.get("GROUP_SIZE") or 0)
+    if group_size <= 0:
+        if int(g_dim) > 0 and (int(n_dim) % int(g_dim)) == 0:
+            group_size = int(n_dim) // int(g_dim)
+    if group_size <= 0 or (int(n_dim) % int(group_size)) != 0 or (int(n_dim) // int(group_size)) != int(g_dim):
+        raise RuntimeError(
+            f"rvv cpu-loops v1 grouped_row_sum2d expects N divisible by group_size and G=N/group_size; "
+            f"got M={m_dim} N={n_dim} G={g_dim} group_size={group_size}"
+        )
+
+    total_in = int(m_dim * n_dim)
+    total_out = int(m_dim * g_dim)
+    in_memref_ty = f"memref<{total_in}xf32>"
+    out_memref_ty = f"memref<{total_out}xf32>"
+
+    arg_types: dict[str, str] = {in_name: in_memref_ty, out_name: out_memref_ty}
+    arg_names = _io_arg_order(intent)
+    for n in list(arg_names):
+        if n not in arg_types:
+            raise RuntimeError(
+                f"rvv cpu-loops v1 grouped_row_sum2d: unexpected IO tensor {n!r} (known={sorted(arg_types)}) for kernel={kernel_name!r}"
+            )
+    arg_decls = [f"%{_mlir_ident(n)}: {arg_types[n]}" for n in arg_names]
+
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
+    lines.append("} {")
+    lines.append(f"  func.func @{_mlir_ident(kernel_name)}({', '.join(arg_decls)}) {{")
+    lines.append("    %c0 = arith.constant 0 : index")
+    lines.append("    %c1 = arith.constant 1 : index")
+    lines.append(f"    %cM = arith.constant {m_dim} : index")
+    lines.append(f"    %cN = arith.constant {n_dim} : index")
+    lines.append(f"    %cG = arith.constant {g_dim} : index")
+    lines.append(f"    %cGS = arith.constant {group_size} : index")
+    lines.append("    %c0f = arith.constant 0.0 : f32")
+    lines.append("    scf.for %m = %c0 to %cM step %c1 {")
+    lines.append("      %row = arith.muli %m, %cN : index")
+    lines.append("      %out_row = arith.muli %m, %cG : index")
+    lines.append("      scf.for %g = %c0 to %cG step %c1 {")
+    lines.append("        %g0 = arith.muli %g, %cGS : index")
+    lines.append("        %base = arith.addi %row, %g0 : index")
+    lines.append("        %acc = scf.for %i = %c0 to %cGS step %c1 iter_args(%x = %c0f) -> (f32) {")
+    lines.append("          %idx = arith.addi %base, %i : index")
+    lines.append(f"          %v = memref.load %{_mlir_ident(in_name)}[%idx] : {in_memref_ty}")
+    lines.append("          %x2 = arith.addf %x, %v : f32")
+    lines.append("          scf.yield %x2 : f32")
+    lines.append("        }")
+    lines.append("        %o = arith.addi %out_row, %g : index")
+    lines.append(f"        memref.store %acc, %{_mlir_ident(out_name)}[%o] : {out_memref_ty}")
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("    return")
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
 def _emit_row_reduce_prod_kernel(
     *,
     kernel_name: str,
@@ -2270,6 +2810,31 @@ def lower_intent_to_rvv_cpu_kernel(module: IntentMLIRModule, *, backend: str | N
     elif kernel_name == "log_softmax2d":
         module_text = _emit_log_softmax2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_log_softmax2d_v1"
+    elif kernel_name == "ai_bench_softmax":
+        module_text = _emit_row_softmax2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings, require_mask=False)
+        kind = "cpu_loops_row_softmax2d_v1"
+    elif kernel_name == "masked_softmax2d":
+        module_text = _emit_row_softmax2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings, require_mask=True)
+        kind = "cpu_loops_masked_softmax2d_v1"
+    elif kernel_name == "gather2d":
+        module_text = _emit_gather2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_gather2d_v1"
+    elif kernel_name == "grouped_row_sum2d":
+        module_text = _emit_grouped_row_sum2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
+        kind = "cpu_loops_grouped_row_sum2d_v1"
+    elif kernel_name in {"ai_bench_matmul", "matmul_relu2d", "matmul_bias_relu2d", "matmul_fused_epilogue2d"}:
+        relu = kernel_name in {"matmul_relu2d", "matmul_bias_relu2d"}
+        require_bias = kernel_name in {"matmul_bias_relu2d", "matmul_fused_epilogue2d"}
+        require_row_col_masks = kernel_name in {"matmul_fused_epilogue2d"}
+        module_text = _emit_matmul2d_kernel(
+            kernel_name=kernel_name,
+            intent=intent,
+            bindings=bindings,
+            relu=relu,
+            require_bias=require_bias,
+            require_row_col_masks=require_row_col_masks,
+        )
+        kind = f"cpu_loops_{kernel_name}_v1"
     elif kernel_name == "count_nonzero2d":
         module_text = _emit_count_nonzero2d_kernel(kernel_name=kernel_name, intent=intent, bindings=bindings)
         kind = "cpu_loops_count_nonzero2d_v1"
