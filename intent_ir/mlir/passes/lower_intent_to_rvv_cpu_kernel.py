@@ -1277,6 +1277,15 @@ def _emit_elementwise_kernel(
     lines.append("    scf.for %n = %c0 to %cN step %c1 {")
     lines.append("      %i = arith.addi %mN, %n : index")
 
+    tmp_id = 0
+
+    def _fresh(prefix: str) -> str:
+        nonlocal tmp_id
+        tmp_id += 1
+        return f"%{prefix}{tmp_id}"
+
+    load_cache: dict[tuple[str, str], str] = {}
+
     def _load(name: str) -> str:
         tt = (intent.tensors or {}).get(name)
         if tt is None:
@@ -1304,8 +1313,13 @@ def _emit_elementwise_kernel(
         if not memref_ty:
             elem_ty = _dtype(getattr(tt, "dtype", "f32"))
             memref_ty = f"memref<{int(numel)}x{elem_ty}>"
-        ssa = f"%{_mlir_ident(name)}_v"
+        cache_key = (str(name), str(idx))
+        cached = load_cache.get(cache_key)
+        if cached:
+            return cached
+        ssa = _fresh(f"{_mlir_ident(name)}_v")
         lines.append(f"    {ssa} = memref.load {arg_ssa[name]}[{idx}] : {memref_ty}")
+        load_cache[cache_key] = ssa
         return ssa
 
     computed: dict[str, str] = {}
