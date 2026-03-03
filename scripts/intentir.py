@@ -11,10 +11,13 @@ This provides one stable entrypoint for:
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import importlib
 import os
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Sequence
@@ -71,6 +74,307 @@ def _infer_full196_artifact_dir() -> str:
     if rp.is_file():
         return str(rp.parent)
     return ""
+
+
+def _utc_ymd() -> str:
+    return datetime.datetime.utcnow().strftime("%Y%m%d")
+
+
+def _normalize_cuda_arch(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return ""
+    if s.isdigit():
+        return f"sm{s}"
+    if s.startswith("sm_"):
+        s = s[3:]
+    elif s.startswith("sm"):
+        s = s[2:]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return f"sm{digits}" if digits else ""
+
+
+def _detect_cuda_arch() -> str:
+    env = _normalize_cuda_arch(os.getenv("INTENTIR_CUDA_SM", ""))
+    if env:
+        return env
+    try:  # pragma: no cover - depends on CUDA env
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            if isinstance(major, int) and isinstance(minor, int):
+                return f"sm{int(major)}{int(minor)}"
+    except Exception:
+        pass
+    return ""
+
+
+def _default_cuda_wave() -> str:
+    env = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+    if env:
+        return env
+    state = ROOT / "workflow" / "flaggems" / "state"
+    best_n = None
+    if state.is_dir():
+        for p in state.glob("cuda_real_mlir_wave*_kernels.json"):
+            m = re.match(r"cuda_real_mlir_wave(\d+)_kernels\.json$", p.name)
+            if not m:
+                continue
+            try:
+                n = int(m.group(1))
+            except Exception:
+                continue
+            if best_n is None or n > best_n:
+                best_n = n
+    return f"wave{best_n}" if best_n is not None else ""
+
+
+def _parse_candidate(raw: str) -> tuple[str, dict[str, int]]:
+    """
+    Syntax:
+      <kernel_kind>
+      <kernel_kind>:K=V,A=B
+    """
+
+    s = str(raw or "").strip()
+    if not s:
+        raise ValueError("empty candidate")
+    if ":" in s:
+        kind, rest = s.split(":", 1)
+    else:
+        kind, rest = s, ""
+    kernel_kind = str(kind).strip()
+    if not kernel_kind:
+        raise ValueError(f"invalid candidate={raw!r}: empty kernel_kind")
+    bindings: dict[str, int] = {}
+    rest = str(rest).strip()
+    if rest:
+        for part in rest.split(","):
+            item = str(part).strip()
+            if not item:
+                continue
+            if "=" not in item:
+                raise ValueError(f"invalid candidate binding {item!r} (expected K=V)")
+            k, v = item.split("=", 1)
+            key = str(k).strip()
+            val_raw = str(v).strip()
+            if not key:
+                raise ValueError(f"invalid candidate binding {item!r} (empty key)")
+            try:
+                bindings[key] = int(val_raw, 0)
+            except Exception as e:  # noqa: BLE001
+                raise ValueError(f"invalid candidate binding {item!r} (non-int value)") from e
+    return kernel_kind, bindings
+
+
+def _candidate_id(kernel_kind: str, bindings: dict[str, int], *, idx: int) -> str:
+    flat = ",".join(f"{k}={v}" for k, v in sorted(bindings.items()))
+    key = f"{kernel_kind}|{flat}"
+    h = hashlib.sha256(key.encode("utf-8")).hexdigest()[:10]
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", kernel_kind).strip("_")
+    return f"{idx:02d}_{slug}_{h}"
+
+
+def _cmd_tune(args: argparse.Namespace) -> int:
+    backend_target = str(args.backend_target).strip()
+    if not backend_target.startswith("cuda"):
+        raise SystemExit("--backend-target must be cuda_* for tune")
+    kernel = str(args.kernel).strip()
+    if not kernel:
+        raise SystemExit("--kernel is required")
+
+    arch = _normalize_cuda_arch(str(args.arch or "")) or _detect_cuda_arch()
+    if not arch:
+        raise SystemExit("unable to detect CUDA arch (set INTENTIR_CUDA_SM=sm_XX or pass --arch)")
+    evidence_mode = str(args.evidence_mode).strip().lower() or "off"
+    if evidence_mode not in {"on", "off"}:
+        raise SystemExit(f"invalid --evidence-mode={evidence_mode!r} (expected on/off)")
+
+    out_root = Path(args.out_root) if args.out_root else (ROOT / "artifacts" / "tuning_runs" / _utc_ymd() / f"{kernel}_{arch}")
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    wave = _default_cuda_wave()
+    if not wave:
+        raise SystemExit("missing INTENTIR_CUDA_REAL_MLIR_WAVE and no wave files found under workflow/flaggems/state/")
+
+    raw_candidates = list(args.candidate or [])
+    if not raw_candidates:
+        raise SystemExit("--candidate is required (repeatable)")
+    candidates: list[tuple[str, dict[str, int]]] = []
+    for raw in raw_candidates:
+        candidates.append(_parse_candidate(str(raw)))
+
+    base_env = {
+        "INTENTIR_REAL_MLIR": "1",
+        "INTENTIR_FALLBACK_POLICY": "strict",
+        "INTENTIR_CUDA_REQUIRE_LLVM_PTX": "1",
+        "INTENTIR_EVIDENCE_MODE": str(evidence_mode),
+        "INTENTIR_CUDA_REAL_MLIR_WAVE": str(wave),
+    }
+    # Preserve user-provided SM string (e.g. sm_120a) if present; otherwise set a normalized one.
+    if not str(os.getenv("INTENTIR_CUDA_SM", "")).strip():
+        base_env["INTENTIR_CUDA_SM"] = str(arch)
+
+    results: list[dict[str, object]] = []
+    for idx, (kernel_kind, bindings) in enumerate(candidates):
+        cand_id = _candidate_id(kernel_kind, bindings, idx=idx)
+        cand_dir = out_root / cand_id
+        cov_dir = cand_dir / "coverage"
+        perf_dir = cand_dir / "perf"
+        cand_db = cand_dir / "tuning.jsonl"
+        cand_dir.mkdir(parents=True, exist_ok=True)
+        cand_db.write_text(
+            json.dumps(
+                {
+                    "schema_version": "intentir_tuning_db_entry_v1",
+                    "backend": "cuda",
+                    "kernel": str(kernel),
+                    "arch": str(arch),
+                    "bindings": dict(bindings),
+                    "kernel_kind": str(kernel_kind),
+                    "note": "autotune_candidate",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        env = dict(base_env)
+        env["INTENTIR_CUDA_TUNING_DB"] = str(cand_db)
+
+        rc_cov = _run(
+            _python_cmd(
+                "scripts/intentir.py",
+                "suite",
+                "--suite",
+                "flaggems-coverage-single",
+                "--backend-target",
+                str(backend_target),
+                "--kernel",
+                str(kernel),
+                "--cases-limit",
+                str(int(args.cases_limit)),
+                "--out-root",
+                str(cov_dir),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--stream",
+            ),
+            stream=True,
+            dry_run=bool(args.dry_run),
+            env_overrides=env,
+        )
+        if rc_cov != 0:
+            results.append(
+                {
+                    "candidate": cand_id,
+                    "kernel_kind": str(kernel_kind),
+                    "bindings": dict(bindings),
+                    "coverage_rc": int(rc_cov),
+                    "perf_rc": None,
+                    "ratio": None,
+                    "error": f"coverage_rc={rc_cov}",
+                    "coverage_dir": str(cov_dir),
+                    "perf_dir": str(perf_dir),
+                }
+            )
+            continue
+
+        rc_perf = _run(
+            _python_cmd(
+                "scripts/intentir.py",
+                "suite",
+                "--suite",
+                "gpu-perf-triton-native",
+                "--backend-target",
+                str(backend_target),
+                "--kernel",
+                str(kernel),
+                "--out-root",
+                str(perf_dir),
+                "--gpu-perf-intent-artifact-dir",
+                str(cov_dir),
+                "--perf-warmup",
+                str(int(args.perf_warmup)),
+                "--perf-iters",
+                str(int(args.perf_iters)),
+                "--perf-repeats",
+                str(int(args.perf_repeats)),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--stream",
+            ),
+            stream=True,
+            dry_run=bool(args.dry_run),
+            env_overrides=env,
+        )
+        ratio = None
+        if rc_perf == 0 and not bool(args.dry_run):
+            try:
+                graph = json.loads((perf_dir / "gpu_perf_graph.json").read_text(encoding="utf-8"))
+                entries = list(graph.get("entries") or [])
+                for e in entries:
+                    if str((e or {}).get("kernel") or "") == str(kernel):
+                        ratio = (e or {}).get("ratio")
+                        break
+            except Exception:
+                ratio = None
+        results.append(
+            {
+                "candidate": cand_id,
+                "kernel_kind": str(kernel_kind),
+                "bindings": dict(bindings),
+                "coverage_rc": int(rc_cov),
+                "perf_rc": int(rc_perf),
+                "ratio": ratio,
+                "coverage_dir": str(cov_dir),
+                "perf_dir": str(perf_dir),
+            }
+        )
+
+    summary = {
+        "schema_version": "intentir_cuda_autotune_summary_v1",
+        "kernel": str(kernel),
+        "backend_target": str(backend_target),
+        "arch": str(arch),
+        "wave": str(wave),
+        "evidence_mode": str(evidence_mode),
+        "candidates": results,
+    }
+    (out_root / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    best = None
+    best_ratio = None
+    for r in results:
+        try:
+            ratio = r.get("ratio")
+            if not isinstance(ratio, (int, float)):
+                continue
+            if best is None or best_ratio is None or float(ratio) > float(best_ratio):
+                best = r
+                best_ratio = float(ratio)
+        except Exception:
+            continue
+
+    if best is None:
+        print(f"[intentir][tune] no passing candidates for kernel={kernel} arch={arch}", file=sys.stderr, flush=True)
+        return 2
+
+    recommended = {
+        "schema_version": "intentir_tuning_db_entry_v1",
+        "backend": "cuda",
+        "kernel": str(kernel),
+        "arch": str(arch),
+        "bindings": dict(best.get("bindings") or {}),
+        "kernel_kind": str(best.get("kernel_kind") or ""),
+        "note": f"autotune_best ratio={best_ratio}",
+    }
+    rec_line = json.dumps(recommended, ensure_ascii=False)
+    (out_root / "recommended.jsonl").write_text(rec_line + "\n", encoding="utf-8")
+    print("[intentir][tune] recommended tuning_db entry:", flush=True)
+    print(rec_line, flush=True)
+    return 0
 
 
 def _cmd_suite(args: argparse.Namespace) -> int:
@@ -857,6 +1161,21 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
     kernel.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
     kernel.set_defaults(func=_cmd_kernel)
+
+    tune = sub.add_parser("tune", help="Measured autotune for one CUDA kernel")
+    tune.add_argument("--backend-target", choices=["cuda_h100", "cuda_5090d"], required=True)
+    tune.add_argument("--kernel", required=True)
+    tune.add_argument("--candidate", action="append", default=[], help="Candidate: KIND[:K=V,A=B] (repeatable)")
+    tune.add_argument("--arch", default="", help="Optional arch key override (e.g. sm120). Defaults to detect.")
+    tune.add_argument("--out-root", default=None)
+    tune.add_argument("--cases-limit", type=int, default=1)
+    tune.add_argument("--perf-warmup", type=int, default=10)
+    tune.add_argument("--perf-iters", type=int, default=50)
+    tune.add_argument("--perf-repeats", type=int, default=3)
+    tune.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
+    tune.add_argument("--evidence-mode", choices=["on", "off"], default="off")
+    tune.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
+    tune.set_defaults(func=_cmd_tune)
 
     env = sub.add_parser("env", help="Show environment and dependency status")
     env.set_defaults(func=_cmd_env)
