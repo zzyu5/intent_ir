@@ -8755,12 +8755,10 @@ def lower_intent_to_cuda_gpu_kernel(
         # - `pad_n` is a power-of-two (<=1024)
         # - one CTA per row
         # - 128 threads (4 warps), each lane processes `ept = pad_n/128` columns with stride 128
-        in_tile_memref = f"memref<{int(ept)}xf32, strided<[{int(block_threads)}], offset: ?>, 1>"
-        out_tile_memref = f"memref<{int(ept)}xf32, strided<[{int(block_threads)}], offset: ?>, 1>"
         vty_f = f"vector<{int(ept)}xf32>"
-        vty_i32 = f"vector<{int(ept)}xi32>"
+        full_groups = int(red_n) // int(block_threads)
+        rem = int(red_n) - int(full_groups) * int(block_threads)
         offsets = [int(i) * int(block_threads) for i in range(int(ept))]
-        offsets_dense = ", ".join(str(o) for o in offsets)
 
         lines.append("      %tid = gpu.thread_id x")
         lines.append("      %bid = gpu.block_id x")
@@ -8776,6 +8774,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %c4 = arith.constant 4 : i32")
         lines.append("      %c2 = arith.constant 2 : i32")
         lines.append("      %c1 = arith.constant 1 : i32")
+        for i in range(1, int(ept)):
+            lines.append(f"      %cIdx{i} = arith.constant {int(i)} : i32")
         lines.append(f"      %cWarps = arith.constant {int(warps)} : index")
         lines.append("      %c0f = arith.constant 0.0 : f32")
         lines.append("      %c1f = arith.constant 1.0 : f32")
@@ -8789,29 +8789,42 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
         lines.append("        %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
 
-        # Build mask for the strided tile: (tid + [0,128,256,...] < C)
-        lines.append("        %tid_i32 = arith.index_cast %tid : index to i32")
-        lines.append(f"        %offs = arith.constant dense<[{offsets_dense}]> : {vty_i32}")
-        lines.append(f"        %tidv = vector.splat %tid_i32 : {vty_i32}")
-        lines.append(f"        %cols = arith.addi %offs, %tidv : {vty_i32}")
-        lines.append(f"        %cv = vector.splat %cC : {vty_i32}")
-        lines.append(f"        %mask = arith.cmpi ult, %cols, %cv : {vty_i32}")
-
-        # Strided row view for vectorized masked transfer_read/write.
+        # Load EPT values using a single remainder predicate (no per-element masks).
         lines.append("        %base = arith.muli %bid, %cN : index")
-        lines.append("        %off = arith.addi %base, %tid : index")
-        lines.append(f"        %in_s = memref.reinterpret_cast {arg_ssa[inp_name]} to")
-        lines.append("          offset: [%off],")
-        lines.append(f"          sizes: [{int(ept)}],")
-        lines.append(f"          strides: [{int(block_threads)}]")
-        lines.append(f"        : {in_memref} to {in_tile_memref}")
-        lines.append(f"        %out_s = memref.reinterpret_cast {arg_ssa[out_name2]} to")
-        lines.append("          offset: [%off],")
-        lines.append(f"          sizes: [{int(ept)}],")
-        lines.append(f"          strides: [{int(block_threads)}]")
-        lines.append(f"        : {out_memref} to {out_tile_memref}")
-
-        lines.append(f"        %xv = vector.transfer_read %in_s[%c0], %neg_inf, %mask : {in_tile_memref}, {vty_f}")
+        lines.append("        %idx0 = arith.addi %base, %tid : index")
+        if rem > 0 and full_groups < ept:
+            lines.append(f"        %cRem = arith.constant {int(rem)} : index")
+            lines.append("        %pred_rem = arith.cmpi ult, %tid, %cRem : index")
+        tile_vals: list[str] = []
+        tile_idxs: list[str] = []
+        for i, off in enumerate(offsets):
+            want = bool(i < full_groups or (i == full_groups and rem > 0))
+            if want:
+                if i == 0:
+                    idx = "%idx0"
+                else:
+                    c_off = f"%cOff_sm_tr_{int(i)}"
+                    idx = f"%idx_sm_tr_{int(i)}"
+                    lines.append(f"        {c_off} = arith.constant {int(off)} : index")
+                    lines.append(f"        {idx} = arith.addi %idx0, {c_off} : index")
+                if i < full_groups:
+                    v = f"%v_sm_tr_{int(i)}"
+                    lines.append(f"        {v} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                else:
+                    v = f"%v_sm_tr_{int(i)}"
+                    t = f"%t_sm_tr_{int(i)}"
+                    lines.append(f"        {v} = scf.if %pred_rem -> (f32) {{")
+                    lines.append(f"          {t} = memref.load {arg_ssa[inp_name]}[{idx}] : {in_memref}")
+                    lines.append(f"          scf.yield {t} : f32")
+                    lines.append("        } else {")
+                    lines.append("          scf.yield %neg_inf : f32")
+                    lines.append("        }")
+                tile_vals.append(str(v))
+                tile_idxs.append(str(idx))
+            else:
+                tile_vals.append("%neg_inf")
+                tile_idxs.append("")
+        lines.append(f"        %xv = vector.from_elements {', '.join(tile_vals)} : {vty_f}")
         lines.append(f"        %partial_max = vector.reduction <maximumf>, %xv : {vty_f} into f32")
 
         assert shared_global_sym is not None
@@ -8907,7 +8920,17 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        %inv = arith.divf %c1f, %sumv{fm} : f32")
         lines.append(f"        %inv_v = vector.splat %inv : {vty_f}")
         lines.append(f"        %y = arith.mulf %ev, %inv_v{fm} : {vty_f}")
-        lines.append(f"        vector.transfer_write %y, %out_s[%c0], %mask : {vty_f}, {out_tile_memref}")
+        for i in range(int(ept)):
+            idx_const = "%c0_i32" if i == 0 else f"%cIdx{int(i)}"
+            y_elem = f"%y_sm_tr_{int(i)}"
+            lines.append(f"        {y_elem} = vector.extractelement %y[{idx_const} : i32] : {vty_f}")
+            idx = str(tile_idxs[int(i)] or "").strip()
+            if int(i) < int(full_groups) and idx:
+                lines.append(f"        memref.store {y_elem}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+            elif int(i) == int(full_groups) and int(rem) > 0 and idx:
+                lines.append("        scf.if %pred_rem {")
+                lines.append(f"          memref.store {y_elem}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
+                lines.append("        }")
         lines.append("      }")
     elif row_softmax_axis1 is not None:
         kernel_kind = "row_softmax_axis1_v1"
