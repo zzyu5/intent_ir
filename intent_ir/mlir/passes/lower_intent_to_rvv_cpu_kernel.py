@@ -1257,6 +1257,7 @@ def _emit_elementwise_kernel(
     lines.append(f'  intentir.intent_name = "{kernel_name}",')
     lines.append(f'  intentir.intent_json_b64 = "{_b64_json(intent.to_json_dict())}"')
     lines.append("} {")
+    lines.append("  func.func private @erff(%arg0: f32) -> f32")
     lines.append(f"  func.func @{_mlir_ident(kernel_name)}(")
     lines.append(",\n".join(arg_decls))
     lines.append("  ) {")
@@ -1726,14 +1727,15 @@ def _emit_elementwise_kernel(
                 lines.append(f"    {v} = math.ceil {a} : f32")
             elif name == "log":
                 lines.append(f"    {v} = math.log {a} : f32")
-            elif name in {"sin", "cos", "tan", "atan", "acos", "erf"}:
+            elif name == "erf":
+                lines.append(f"    {v} = func.call @erff({a}) : (f32) -> f32")
+            elif name in {"sin", "cos", "tan", "atan", "acos"}:
                 mop = {
                     "sin": "math.sin",
                     "cos": "math.cos",
                     "tan": "math.tan",
                     "atan": "math.atan",
                     "acos": "math.acos",
-                    "erf": "math.erf",
                 }[name]
                 lines.append(f"    {v} = {mop} {a} : f32")
             else:
