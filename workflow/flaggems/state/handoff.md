@@ -1,11 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-01T22:24:20+00:00
-- Commit: `f68c223da9b74e71bd709d0cd193a3b95fc8951c`
+- Timestamp: 2026-03-03T19:59:57Z
+- Commit: `e213213a2363f5474eac3044cc6c130f751a8c4f`
 - Lane: `backend_compiler`
-- Summary: RVV wave13 real-MLIR: softmax_inner+log_softmax2d remote2 ok (vsetvli>=602)
+- Summary: RVV wave19 real-MLIR: add cmp/bitwise/arange + acos/atan; remote ok (compile_rc=0/run_rc=0, vsetvli_hits=602)
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/run_summary.json`
-- Status Converged: `artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/status_converged.json`
-- Evidence Paths: artifacts/validation_rounds/20260302/flaggems_coverage_rvv_wave13_realmlir_v2_softmax2_head_f68c223, artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/run_summary.json, artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/status_converged.json
-- Next Focus: RVV wave14+: extend allowlist + keep strict no-fallback
+- Evidence Paths: artifacts/validation_rounds/20260304/flaggems_coverage_rvv_wave19_realmlir_v2_misc15_head_c646003, artifacts/validation_rounds/20260304/rvv_remote_wave19_realmlir_v1_misc15.json
+- Next Focus: RVV wave20+: expand toward coverage_batches(158) missing 117 kernels; keep strict no-fallback + remote vsetvli evidence
