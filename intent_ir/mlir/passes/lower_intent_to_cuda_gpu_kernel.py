@@ -17372,8 +17372,6 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("            scf.yield %acc : f32")
         lines.append("          }")
 
-        acc_next = _fresh("acc_next")
-        lines.append(f"          {acc_next} = scf.if %pred_d -> (f32) {{")
         acc_cur = str(acc_scaled)
         tile_keys: list[tuple[str, str]] = [
             ("%c0", "%c0_i32"),
@@ -17388,35 +17386,32 @@ def lower_intent_to_cuda_gpu_kernel(
         for kv_off, src_lane_i32 in tile_keys:
             kv_g = _fresh("kv_g")
             pred_kv_g = _fresh("pred_kv_g")
-            lines.append(f"            {kv_g} = arith.addi %kv_base, {kv_off} : index")
-            lines.append(f"            {pred_kv_g} = arith.cmpi ult, {kv_g}, %kv_end : index")
+            lines.append(f"          {kv_g} = arith.addi %kv_base, {kv_off} : index")
+            lines.append(f"          {pred_kv_g} = arith.cmpi ult, {kv_g}, %kv_end : index")
             acc_upd = _fresh("acc_upd")
-            lines.append(f"            {acc_upd} = scf.if {pred_kv_g} -> (f32) {{")
             exp_g = _fresh("exp_g")
             ok = _fresh("ok")
-            lines.append(f"              {exp_g}, {ok} = gpu.shuffle idx {exp_sel}, {src_lane_i32}, %c32_i32 : f32")
+            lines.append(f"          {exp_g}, {ok} = gpu.shuffle idx {exp_sel}, {src_lane_i32}, %c32_i32 : f32")
+            pred_v = _fresh("pred_v")
+            lines.append(f"          {pred_v} = arith.andi %pred_d, {pred_kv_g} : i1")
+            lines.append(f"          {acc_upd} = scf.if {pred_v} -> (f32) {{")
             base_v = _fresh("base_v")
             idx_v = _fresh("idx_v")
             v_load = _fresh("v_load")
-            lines.append(f"              {base_v} = arith.muli {kv_g}, %cHD : index")
-            lines.append(f"              {idx_v} = arith.addi {base_v}, %tid : index")
-            lines.append(f"              {v_load} = memref.load {arg_ssa[v_name]}[{idx_v}] : {v_memref}")
+            lines.append(f"            {base_v} = arith.muli {kv_g}, %cHD : index")
+            lines.append(f"            {idx_v} = arith.addi {base_v}, %tid : index")
+            lines.append(f"            {v_load} = memref.load {arg_ssa[v_name]}[{idx_v}] : {v_memref}")
             acc_new = _fresh("acc_new")
             lines.append(
-                f"              {acc_new} = llvm.intr.fma({exp_g}, {v_load}, {acc_cur}) : (f32, f32, f32) -> f32"
+                f"            {acc_new} = llvm.intr.fma({exp_g}, {v_load}, {acc_cur}) : (f32, f32, f32) -> f32"
             )
-            lines.append(f"              scf.yield {acc_new} : f32")
-            lines.append("            } else {")
-            lines.append(f"              scf.yield {acc_cur} : f32")
-            lines.append("            }")
+            lines.append(f"            scf.yield {acc_new} : f32")
+            lines.append("          } else {")
+            lines.append(f"            scf.yield {acc_cur} : f32")
+            lines.append("          }")
             acc_cur = str(acc_upd)
 
-        lines.append(f"            scf.yield {acc_cur} : f32")
-        lines.append("          } else {")
-        lines.append(f"            scf.yield {acc_scaled} : f32")
-        lines.append("          }")
-
-        lines.append(f"          scf.yield {m_next}, {l_next}, {acc_next} : f32, f32, f32")
+        lines.append(f"          scf.yield {m_next}, {l_next}, {acc_cur} : f32, f32, f32")
         lines.append("        }")
 
         l_all = _fresh("l_all")
