@@ -43,7 +43,12 @@ from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel
 from backends.cuda.runtime import load_cuda_ptx_module
 from intent_ir.utils.repo_state import repo_state
 from pipeline.common.strict_policy import strict_fallback_enabled
-from pipeline.common.tuning_db import TuningDBEntry, load_tuning_db
+from pipeline.common.tuning_db import (
+    TuningDBEntry,
+    load_tuning_db,
+    resolve_tuning_entries,
+    tuning_db_path_from_env,
+)
 from pipeline.triton.core import coverage_kernel_specs
 from scripts.cuda_backend_smoke import (
     _build_inputs_np,
@@ -82,7 +87,7 @@ def _dump_json(path: Path, payload: dict[str, Any]) -> Path:
 
 _TUNING_DB_LOADED = False
 _TUNING_DB_PATH = ""
-_TUNING_DB_BY_KERNEL_ARCH: dict[tuple[str, str], TuningDBEntry] = {}
+_TUNING_DB_BY_KERNEL_ARCH: dict[tuple[str, str], list[TuningDBEntry]] = {}
 
 
 def _configure_tuning_db(path: Path | None) -> None:
@@ -90,7 +95,7 @@ def _configure_tuning_db(path: Path | None) -> None:
     _TUNING_DB_LOADED = False
     _TUNING_DB_PATH = ""
     _TUNING_DB_BY_KERNEL_ARCH = {}
-    _ensure_tuning_db_loaded(path=path)
+    _ensure_tuning_db_loaded(path=(path or tuning_db_path_from_env(backend="cuda")))
 
 
 def _ensure_tuning_db_loaded(*, path: Path | None = None) -> None:
@@ -285,14 +290,17 @@ def _maybe_rewrite_contract_for_perf_rebuild(
     }
 
 
-def _intentir_perf_binding_overrides_for_kernel(*, kernel: str, arch: str | None) -> tuple[dict[str, Any], str]:
+def _intentir_perf_binding_overrides_for_kernel(
+    *, kernel: str, arch: str | None, shape_bindings: dict[str, int]
+) -> tuple[dict[str, Any], str]:
     _ensure_tuning_db_loaded()
     k = str(kernel).strip()
     a = str(arch or "").strip()
     if k and a:
-        entry = _TUNING_DB_BY_KERNEL_ARCH.get((k, a))
-        if isinstance(entry, TuningDBEntry) and bool(entry.bindings):
-            return dict(entry.bindings), "tuning_db"
+        entries = _TUNING_DB_BY_KERNEL_ARCH.get((k, a)) or []
+        merged, _kernel_kind = resolve_tuning_entries(list(entries), shape_bindings=dict(shape_bindings))
+        if bool(merged):
+            return dict(merged), "tuning_db"
 
     table: dict[str, dict[str, Any]] = {
         "sort_stable2d": {"tile_n": 1024},
@@ -403,7 +411,11 @@ def _apply_intentir_perf_binding_overrides(
 
     merged = dict(bindings)
     applied: dict[str, Any] = {}
-    overrides, override_source = _intentir_perf_binding_overrides_for_kernel(kernel=str(kernel), arch=str(arch or ""))
+    overrides, override_source = _intentir_perf_binding_overrides_for_kernel(
+        kernel=str(kernel),
+        arch=str(arch or ""),
+        shape_bindings=_coerce_int_dict(bindings),
+    )
     for k, v in overrides.items():
         key = str(k)
         if key in merged and merged.get(key) is not None:

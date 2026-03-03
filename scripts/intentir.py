@@ -220,6 +220,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         base_env["INTENTIR_CUDA_SM"] = str(arch)
 
     results: list[dict[str, object]] = []
+    default_when: dict[str, int] = {}
     for idx, (kernel_kind, bindings) in enumerate(candidates):
         cand_id = _candidate_id(kernel_kind, bindings, idx=idx)
         cand_dir = out_root / cand_id
@@ -286,10 +287,19 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                     str(args.cuda_runtime_backend),
                     "--stream",
                 ),
-                stream=True,
-                dry_run=bool(args.dry_run),
-                env_overrides=env,
-            )
+            stream=True,
+            dry_run=bool(args.dry_run),
+            env_overrides=env,
+        )
+        if rc_cov == 0 and (not bool(args.dry_run)) and (not default_when):
+            try:
+                report = json.loads((cov_dir / f"{kernel}.json").read_text(encoding="utf-8"))
+                baseline = report.get("baseline") if isinstance(report, dict) else None
+                shapes = (baseline or {}).get("shapes") if isinstance(baseline, dict) else None
+                if isinstance(shapes, dict) and "HEAD_DIM" in shapes:
+                    default_when["HEAD_DIM"] = int(shapes["HEAD_DIM"])
+            except Exception:
+                default_when = {}
         if rc_cov != 0:
             results.append(
                 {
@@ -408,6 +418,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         "backend": "cuda",
         "kernel": str(kernel),
         "arch": str(arch),
+        "when": (dict(default_when) if default_when else {}),
         "bindings": dict(best.get("bindings") or {}),
         "kernel_kind": str(best.get("kernel_kind") or ""),
         "note": f"autotune_best ratio={best_ratio}",
