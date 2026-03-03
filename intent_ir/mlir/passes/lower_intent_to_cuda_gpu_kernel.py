@@ -17730,13 +17730,13 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          }")
         alpha1_b = _broadcast_lane0("%alpha10", indent="          ")
 
-        lines.append(f"          %l0 = arith.mulf %l, {alpha0_b}{fm} : f32")
-        lines.append(f"          %l1 = arith.mulf {lw_b}, {alpha1_b}{fm} : f32")
-        lines.append(f"          %l_new = arith.addf %l0, %l1{fm} : f32")
+        lines.append(f"          %l_scaled0 = arith.mulf %l, {alpha0_b}{fm} : f32")
+        lines.append(f"          %l_scaled1 = arith.mulf {lw_b}, {alpha1_b}{fm} : f32")
+        lines.append(f"          %l_new = arith.addf %l_scaled0, %l_scaled1{fm} : f32")
 
-        lines.append(f"          %acc0 = arith.mulf %acc, {alpha0_b}{fm} : f32")
-        lines.append(f"          %acc1 = arith.mulf %accw, {alpha1_b}{fm} : f32")
-        lines.append(f"          %acc_new = arith.addf %acc0, %acc1{fm} : f32")
+        lines.append(f"          %acc_scaled0 = arith.mulf %acc, {alpha0_b}{fm} : f32")
+        lines.append(f"          %acc_scaled1 = arith.mulf %accw, {alpha1_b}{fm} : f32")
+        lines.append(f"          %acc_new = arith.addf %acc_scaled0, %acc_scaled1{fm} : f32")
 
         lines.append("          scf.yield %m_new, %l_new, %acc_new : f32, f32, f32")
         lines.append("        }")
