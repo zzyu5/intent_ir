@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-03-04T08:44:23+00:00",
+  "updated_at": "2026-03-04T09:00:08+00:00",
   "branch": "compiler-cleanup-v1",
   "head_commit": "cb5deb16fdcc9203adf080ff4554ae203d421f56",
   "mode": "maintenance",
@@ -136,8 +136,8 @@
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/remote_perf/20260304/h100_cuda_cpp_matmul_fused_epilogue2d_perf_sm90_v5/run_summary.json",
-    "status_converged": "artifacts/remote_perf/20260304/h100_cuda_cpp_matmul_fused_epilogue2d_perf_sm90_v5/status_converged.json"
+    "run_summary": "artifacts/remote_perf/20260304/h100_cuda_cpp_matmul_fused_epilogue2d_perf_sm90_v7_async/run_summary.json",
+    "status_converged": "artifacts/remote_perf/20260304/h100_cuda_cpp_matmul_fused_epilogue2d_perf_sm90_v7_async/status_converged.json"
   },
   "lanes": {
     "coverage": {
