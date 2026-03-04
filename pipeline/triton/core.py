@@ -223,7 +223,9 @@ def _compiler_stack_name() -> str:
 
 
 def _compiler_cpp_wave_name() -> str:
-    return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave1")).strip().lower()
+    # Default to the latest stable C++ wave (smaller subset). Earlier waves may
+    # include aspirational kernels that are not yet implemented in the plugin.
+    return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave2")).strip().lower()
 
 
 def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
@@ -333,8 +335,8 @@ def _downstream_llvm_pipeline(
         if spec_name and str(spec_name) in kernels:
             if target.startswith("rvv"):
                 return "downstream_rvv_std_llvm_cpp", "rvv"
-            # CUDA C++ stack will be introduced incrementally; do not fall back
-            # implicitly to Python lowering when INTENTIR_COMPILER_STACK=cpp.
+            if target.startswith("cuda"):
+                return "downstream_cuda_std_cpp_llvm", "cuda"
             return None, None
         return None, None
     if target.startswith("cuda"):
@@ -525,8 +527,48 @@ def _emit_mlir_shadow_artifacts(
                         mid_mod.meta["compiler_stack"] = "cpp_plugin"
                         if str(llvm_pipeline) == "downstream_rvv_std_llvm_cpp":
                             mid_mod.meta["lowering_kind"] = "rvv_cpu_loops_v1"
+                        elif str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm":
+                            mid_mod.meta["lowering_kind"] = "cuda_focus_v1"
                     else:
                         mid_mod.meta.setdefault("compiler_stack", "python")
+
+                    # Minimal CUDA C++ stack meta for auditability and runtime launch.
+                    #
+                    # NOTE: These are duplicated in the C++ plugin (module attrs),
+                    # but backend contracts currently consume `module.meta`.
+                    if (
+                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
+                        and str(spec_name) == "ai_bench_matmul"
+                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
+                    ):
+                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
+                        m = int(sb.get("M") or 0)
+                        n = int(sb.get("N") or 0)
+                        k = int(sb.get("K") or 0)
+                        bm = int(sb.get("MMA_BM") or 64)
+                        bn = int(sb.get("MMA_BN") or 16)
+                        bk = int(sb.get("MMA_BK") or 32)
+                        if m > 0 and n > 0 and k > 0 and bm > 0 and bn > 0 and bk > 0:
+                            warps_n = max(1, int(bn) // 16)
+                            warps_m = max(1, int(bm) // 16)
+                            warps = int(warps_m) * int(warps_n)
+                            threads = int(warps) * 32
+                            grid_x = int(n) // int(bn) if int(bn) > 0 else 1
+                            grid_y = int(m) // int(bm) if int(bm) > 0 else 1
+                            if threads > 0 and grid_x > 0 and grid_y > 0:
+                                mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "matmul_mma_tf32_global_v1"
+                                mid_mod.meta["cuda_real_mlir_matmul_cfg"] = {
+                                    "BM": int(bm),
+                                    "BN": int(bn),
+                                    "BK": int(bk),
+                                    "mma": "tf32",
+                                    "global_load": True,
+                                }
+                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
+                                    "block": [int(threads), 1, 1],
+                                    "grid": [int(grid_x), int(grid_y), 1],
+                                }
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:

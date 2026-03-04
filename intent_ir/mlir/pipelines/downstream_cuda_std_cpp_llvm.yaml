@@ -1,0 +1,7 @@
+passes:
+  - mlir-opt:pass-pipeline=builtin.module(intentir-lower-cuda-focus-v1)
+  - mlir-opt:verify-each canonicalize cse convert-gpu-to-nvvm="use-bare-ptr-memref-call-conv" convert-nvgpu-to-nvvm convert-nvvm-to-llvm convert-scf-to-cf convert-cf-to-llvm convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-vector-to-llvm convert-func-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
+  - mlir-opt:pass-pipeline=builtin.module(intentir-extract-gpu-module-llvm-v1)
+  - mlir-translate:mlir-to-llvmir
+  - "llvm-as:"
+  - "opt:-O3"

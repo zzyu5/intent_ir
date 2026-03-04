@@ -1,5 +1,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -10,6 +11,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Tools/Plugins/PassPlugin.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Base64.h"
@@ -996,6 +998,317 @@ static mlir::LogicalResult lowerDiag2d(LoweringContext &ctx) {
   return mlir::success();
 }
 
+static mlir::FailureOr<mlir::gpu::GPUFuncOp>
+createCudaKernelWithFlattenedABI(LoweringContext &ctx, mlir::gpu::GPUModuleOp gpuModule,
+                                 llvm::StringRef funcName) {
+  auto loc = ctx.module.getLoc();
+  auto *mlirCtx = ctx.module.getContext();
+  std::vector<mlir::Type> argTypes;
+  argTypes.reserve(ctx.argOrder.size());
+
+  auto memSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+  for (const auto &name : ctx.argOrder) {
+    auto it = ctx.tensors.find(name);
+    if (it == ctx.tensors.end()) {
+      ctx.module.emitError() << "missing tensor spec for IO name=" << name;
+      return mlir::failure();
+    }
+    const TensorSpec &spec = it->second;
+    auto elemTy = dtypeToElemType(mlirCtx, spec.dtype);
+    if (!elemTy) {
+      ctx.module.emitError() << "unsupported dtype for tensor " << name << ": "
+                             << spec.dtype;
+      return mlir::failure();
+    }
+    auto shapeOr = resolveShape(spec, ctx.shapeBindings);
+    if (mlir::failed(shapeOr)) {
+      ctx.module.emitError() << "failed to resolve shape for tensor " << name;
+      return mlir::failure();
+    }
+    auto numelOr = shapeNumel(*shapeOr);
+    if (mlir::failed(numelOr)) {
+      ctx.module.emitError() << "invalid resolved shape for tensor " << name;
+      return mlir::failure();
+    }
+    auto memrefTy = mlir::MemRefType::get({*numelOr}, elemTy,
+                                          mlir::MemRefLayoutAttrInterface{}, memSpace);
+    argTypes.push_back(memrefTy);
+  }
+
+  auto fnType = mlir::FunctionType::get(mlirCtx, argTypes, {});
+  ctx.builder.setInsertionPointToEnd(&gpuModule.getBodyRegion().front());
+  auto fn = mlir::gpu::GPUFuncOp::create(ctx.builder, loc, funcName, fnType);
+  fn.setPrivate();
+  fn->setAttr(mlir::gpu::GPUDialect::getKernelFuncAttrName(),
+              mlir::UnitAttr::get(mlirCtx));
+  mlir::Block *entry = nullptr;
+  if (fn.getBody().empty()) {
+    entry = fn.addEntryBlock();
+  } else {
+    entry = &fn.getBody().front();
+  }
+  ctx.builder.setInsertionPointToStart(entry);
+  return fn;
+}
+
+static mlir::Value getArgByName(LoweringContext &ctx, mlir::gpu::GPUFuncOp fn,
+                                llvm::StringRef tensorName) {
+  for (size_t i = 0; i < ctx.argOrder.size(); ++i) {
+    if (ctx.argOrder[i] == tensorName.str()) {
+      return fn.getArgument(static_cast<unsigned>(i));
+    }
+  }
+  return {};
+}
+
+static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext &ctx) {
+  // Match the single-op matmul intent: C = A @ B.
+  std::string aName, bName, outName;
+  for (const auto &op : ctx.ops) {
+    if (op.op != "matmul")
+      continue;
+    if (op.inputs.size() != 2)
+      continue;
+    aName = op.inputs[0];
+    bName = op.inputs[1];
+    outName = op.output;
+    break;
+  }
+  if (aName.empty() || bName.empty() || outName.empty()) {
+    ctx.module.emitError("ai_bench_matmul: expected single matmul op");
+    return mlir::failure();
+  }
+  if (ctx.tensors.find(aName) == ctx.tensors.end() ||
+      ctx.tensors.find(bName) == ctx.tensors.end() ||
+      ctx.tensors.find(outName) == ctx.tensors.end()) {
+    ctx.module.emitError("ai_bench_matmul: missing tensor specs for A/B/C");
+    return mlir::failure();
+  }
+
+  auto *mlirCtx = ctx.module.getContext();
+  auto loc = ctx.module.getLoc();
+  auto &b = ctx.builder;
+
+  auto shapeAOr = resolveShape(ctx.tensors[aName], ctx.shapeBindings);
+  auto shapeBOr = resolveShape(ctx.tensors[bName], ctx.shapeBindings);
+  auto shapeCOr = resolveShape(ctx.tensors[outName], ctx.shapeBindings);
+  if (mlir::failed(shapeAOr) || mlir::failed(shapeBOr) || mlir::failed(shapeCOr)) {
+    ctx.module.emitError("ai_bench_matmul: failed to resolve shapes");
+    return mlir::failure();
+  }
+  if (shapeAOr->size() != 2 || shapeBOr->size() != 2 || shapeCOr->size() != 2) {
+    ctx.module.emitError("ai_bench_matmul: expected rank-2 tensors");
+    return mlir::failure();
+  }
+  int64_t M = (*shapeAOr)[0];
+  int64_t K = (*shapeAOr)[1];
+  int64_t K2 = (*shapeBOr)[0];
+  int64_t N = (*shapeBOr)[1];
+  if (K != K2) {
+    ctx.module.emitError("ai_bench_matmul: A.K != B.K");
+    return mlir::failure();
+  }
+  if ((*shapeCOr)[0] != M || (*shapeCOr)[1] != N) {
+    ctx.module.emitError("ai_bench_matmul: C shape mismatch");
+    return mlir::failure();
+  }
+  if (M <= 0 || N <= 0 || K <= 0) {
+    ctx.module.emitError("ai_bench_matmul: invalid dims");
+    return mlir::failure();
+  }
+
+  // Tunable tile params (kept consistent with python matmul_mma_tf32_global_v1).
+  auto getBind = [&](llvm::StringRef key, int64_t defv) -> int64_t {
+    auto it = ctx.shapeBindings.find(key.str());
+    if (it == ctx.shapeBindings.end())
+      return defv;
+    return it->second;
+  };
+  int64_t bm = getBind("MMA_BM", 64);
+  int64_t bn = getBind("MMA_BN", 16);
+  int64_t bk = getBind("MMA_BK", 32);
+  bool bTranspose = getBind("MMA_B_TRANSPOSE", 0) != 0;
+
+  if (bm <= 0 || bn <= 0 || bk <= 0) {
+    ctx.module.emitError("ai_bench_matmul: invalid MMA_BM/MMA_BN/MMA_BK");
+    return mlir::failure();
+  }
+  if ((bm % 16) != 0 || (bn % 16) != 0 || (bk % 8) != 0) {
+    ctx.module.emitError("ai_bench_matmul: requires BM%16==0 BN%16==0 BK%8==0");
+    return mlir::failure();
+  }
+  if ((M % bm) != 0 || (N % bn) != 0 || (K % bk) != 0 || (K % 8) != 0) {
+    ctx.module.emitError("ai_bench_matmul: requires divisibility by MMA tiles");
+    return mlir::failure();
+  }
+  int64_t warpsM = bm / 16;
+  int64_t warpsN = bn / 16;
+  int64_t warps = warpsM * warpsN;
+  int64_t threads = warps * 32;
+  if (warps <= 0 || warps > 32 || threads <= 0 || threads > 1024) {
+    ctx.module.emitError("ai_bench_matmul: invalid warps/threads");
+    return mlir::failure();
+  }
+
+  clearModuleBody(ctx.module);
+
+  // Ensure the module is treated as a GPU container module and has a target triple.
+  ctx.module->setAttr("gpu.container_module", mlir::UnitAttr::get(mlirCtx));
+  if (!ctx.module->hasAttr("llvm.target_triple")) {
+    ctx.module->setAttr("llvm.target_triple",
+                        mlir::StringAttr::get(mlirCtx, "nvptx64-nvidia-cuda"));
+  }
+
+  // GPU module + kernel.
+  b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
+  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
+
+  auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule,
+                                               sanitizeSymbolName(ctx.kernelName));
+  if (mlir::failed(fnOr))
+    return mlir::failure();
+  auto fn = *fnOr;
+
+  // Map args.
+  auto A = getArgByName(ctx, fn, aName);
+  auto Bv = getArgByName(ctx, fn, bName);
+  auto C = getArgByName(ctx, fn, outName);
+  if (!A || !Bv || !C) {
+    ctx.module.emitError("ai_bench_matmul: failed to map kernel args");
+    return mlir::failure();
+  }
+
+  auto f32 = b.getF32Type();
+  auto memSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+
+  auto a2Ty = mlir::MemRefType::get({M, K}, f32, mlir::MemRefLayoutAttrInterface{}, memSpace);
+  auto b2Ty = mlir::MemRefType::get({K, N}, f32, mlir::MemRefLayoutAttrInterface{}, memSpace);
+  auto c2Ty = mlir::MemRefType::get({M, N}, f32, mlir::MemRefLayoutAttrInterface{}, memSpace);
+
+  // Reinterpret 1D memrefs as 2D matrices.
+  auto A2 = mlir::memref::ReinterpretCastOp::create(b, loc, a2Ty, A, 0, {M, K},
+                                                    {K, 1})
+                .getResult();
+  auto B2 = mlir::memref::ReinterpretCastOp::create(b, loc, b2Ty, Bv, 0, {K, N},
+                                                    {N, 1})
+                .getResult();
+  auto C2 = mlir::memref::ReinterpretCastOp::create(b, loc, c2Ty, C, 0, {M, N},
+                                                    {N, 1})
+                .getResult();
+
+  // Thread and block ids.
+  auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
+  auto bidX = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
+  auto bidY = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::y);
+
+  auto c16 = makeIndexConst(b, loc, 16);
+  auto c32 = makeIndexConst(b, loc, 32);
+  auto cBM = makeIndexConst(b, loc, bm);
+  auto cBN = makeIndexConst(b, loc, bn);
+  auto cWarpsN = makeIndexConst(b, loc, warpsN);
+  auto c0f = makeF32Const(b, loc, 0.0f);
+
+  // Compute warp tile coordinates.
+  auto row0 = b.create<mlir::arith::MulIOp>(loc, bidY, cBM);
+  auto col0 = b.create<mlir::arith::MulIOp>(loc, bidX, cBN);
+  auto warp = b.create<mlir::arith::DivUIOp>(loc, tid, c32);
+  auto warpM = b.create<mlir::arith::DivUIOp>(loc, warp, cWarpsN);
+  auto warpN = b.create<mlir::arith::RemUIOp>(loc, warp, cWarpsN);
+  auto rowW = b.create<mlir::arith::MulIOp>(loc, warpM, c16);
+  auto colW = b.create<mlir::arith::MulIOp>(loc, warpN, c16);
+  auto gm = b.create<mlir::arith::AddIOp>(loc, row0, rowW);
+  auto gn = b.create<mlir::arith::AddIOp>(loc, col0, colW);
+
+  // MMA types.
+  auto aFragTy = mlir::gpu::MMAMatrixType::get({16, 8}, f32, "AOp");
+  auto bFragTy = mlir::gpu::MMAMatrixType::get({8, 16}, f32, "BOp");
+  auto cFragTy = mlir::gpu::MMAMatrixType::get({16, 16}, f32, "COp");
+
+  // Accumulator init.
+  auto acc = mlir::gpu::SubgroupMmaConstantMatrixOp::create(b, loc, cFragTy,
+                                                           c0f)
+                 .getResult();
+
+  auto ldK = b.getIndexAttr(K);
+  auto ldN = b.getIndexAttr(N);
+  mlir::UnitAttr transposeAttr = bTranspose ? mlir::UnitAttr::get(mlirCtx)
+                                            : mlir::UnitAttr();
+
+  // Unrolled KB/KK loops (global-load path).
+  for (int64_t kb = 0; kb < K; kb += bk) {
+    auto kbC = makeIndexConst(b, loc, kb);
+    for (int64_t kk = 0; kk < bk; kk += 8) {
+      auto kkC = makeIndexConst(b, loc, kk);
+      auto kIdx = b.create<mlir::arith::AddIOp>(loc, kbC, kkC);
+
+      auto aFrag =
+          mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, A2,
+                                                     mlir::ValueRange{gm, kIdx},
+                                                     ldK, /*transpose=*/{})
+              .getResult();
+      auto bFrag =
+          mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, bFragTy, B2,
+                                                     mlir::ValueRange{kIdx, gn},
+                                                     ldN, transposeAttr)
+              .getResult();
+      auto next =
+          mlir::gpu::SubgroupMmaComputeOp::create(b, loc, cFragTy, aFrag, bFrag,
+                                                  acc, /*a_transpose=*/{},
+                                                  /*b_transpose=*/transposeAttr)
+              .getResult();
+      acc = next;
+    }
+  }
+
+  mlir::gpu::SubgroupMmaStoreMatrixOp::create(b, loc, acc, C2,
+                                             mlir::ValueRange{gm, gn}, ldN,
+                                             /*transpose=*/{});
+  b.create<mlir::gpu::ReturnOp>(loc);
+
+  // Annotate for audit (also mirrored into python meta by the driver).
+  ctx.module->setAttr("intentir.compiler_stack",
+                      mlir::StringAttr::get(mlirCtx, "cpp_plugin"));
+  ctx.module->setAttr("intentir.lowering_kind",
+                      mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
+  ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
+                      mlir::StringAttr::get(mlirCtx, "matmul_mma_tf32_global_v1"));
+
+  return mlir::success();
+}
+
+class IntentIRExtractGPUModuleLLVMV1Pass
+    : public mlir::PassWrapper<IntentIRExtractGPUModuleLLVMV1Pass,
+                               mlir::OperationPass<mlir::ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(IntentIRExtractGPUModuleLLVMV1Pass)
+
+  llvm::StringRef getArgument() const final {
+    return "intentir-extract-gpu-module-llvm-v1";
+  }
+  llvm::StringRef getDescription() const final {
+    return "Move LLVM/NVVM IR out of gpu.module so mlir-translate can emit LLVM IR";
+  }
+
+  void runOnOperation() override {
+    auto module = getOperation();
+    mlir::gpu::GPUModuleOp gpuModule;
+    for (auto m : module.getOps<mlir::gpu::GPUModuleOp>()) {
+      gpuModule = m;
+      break;
+    }
+    if (!gpuModule)
+      return;
+
+    auto &topBlock = module.getBodyRegion().front();
+    auto &gpuBlock = gpuModule.getBodyRegion().front();
+    for (auto &op : llvm::make_early_inc_range(gpuBlock)) {
+      op.moveBefore(&topBlock, topBlock.end());
+    }
+    gpuModule.erase();
+  }
+};
+
 class IntentIRLowerRVVCpuLoopsV1Pass
     : public mlir::PassWrapper<IntentIRLowerRVVCpuLoopsV1Pass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -1053,10 +1366,52 @@ public:
   }
 };
 
+class IntentIRLowerCudaFocusV1Pass
+    : public mlir::PassWrapper<IntentIRLowerCudaFocusV1Pass,
+                               mlir::OperationPass<mlir::ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(IntentIRLowerCudaFocusV1Pass)
+
+  llvm::StringRef getArgument() const final { return "intentir-lower-cuda-focus-v1"; }
+  llvm::StringRef getDescription() const final {
+    return "IntentIR CUDA lowering (focus kernels v1) from carrier intent_json_b64";
+  }
+
+  void runOnOperation() override {
+    auto module = getOperation();
+    auto *ctx = module.getContext();
+    ctx->getOrLoadDialect<mlir::gpu::GPUDialect>();
+    ctx->getOrLoadDialect<mlir::arith::ArithDialect>();
+    ctx->getOrLoadDialect<mlir::memref::MemRefDialect>();
+
+    auto ctxOr = parseLoweringContext(module);
+    if (mlir::failed(ctxOr)) {
+      signalPassFailure();
+      return;
+    }
+    LoweringContext &lc = *ctxOr;
+
+    const std::string k = lc.kernelName;
+    mlir::LogicalResult ok = mlir::failure();
+    if (k == "ai_bench_matmul") {
+      ok = lowerCudaAiBenchMatmulMmaTF32GlobalV1(lc);
+    } else {
+      module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
+      ok = mlir::failure();
+    }
+    if (mlir::failed(ok)) {
+      signalPassFailure();
+      return;
+    }
+  }
+};
+
 } // namespace
 
 static void registerIntentIRPasses() {
   mlir::PassRegistration<IntentIRLowerRVVCpuLoopsV1Pass>();
+  mlir::PassRegistration<IntentIRLowerCudaFocusV1Pass>();
+  mlir::PassRegistration<IntentIRExtractGPUModuleLLVMV1Pass>();
 }
 
 extern "C" ::mlir::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
