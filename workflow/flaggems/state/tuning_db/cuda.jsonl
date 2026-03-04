@@ -20,7 +20,7 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_matmul","arch":"sm120","bindings":{"MMA_BM":64,"MMA_BN":16,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v2","note":"wmma tf32 shared+cp.async double-buffer (5090D sm120 ratio~1.50 @ M256,N512,K256, graph)"}
 
 # TensorCore matmul (WMMA TF32) fused-epilogue focus tuning
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"matmul_fused_epilogue2d","arch":"sm90","bindings":{"MMA_BM":32,"MMA_BN":32,"MMA_BK":32,"MMA_ASYNC_COPY":0},"kernel_kind":"matmul_mma_tf32_v1","note":"H100 sm90: small 32x32x32 tile runs faster without async copy; keep global_load for fused epilogue"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"matmul_fused_epilogue2d","arch":"sm90","bindings":{"MMA_BM":32,"MMA_BN":32,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"H100 sm90: fused-epilogue benefits from cp.async double-buffer on canonical 32x32x32 (global_load was slower) "}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"matmul_fused_epilogue2d","arch":"sm120","bindings":{"MMA_BM":32,"MMA_BN":32,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy + epilogue (M=N=K=32 canonical)"}
 
 # Triton-native softmax (graph perf): vec4 mapping with 256 threads per row (baseline so far).
