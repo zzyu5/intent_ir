@@ -2855,19 +2855,44 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     return mlir::failure();
   }
 
-  // Shared layout: [Q(HD), K_tile(blockKV*HD), V_tile(blockKV*HD),
-  // scores(blockKV), weights(blockKV), scalars(m,l,alpha)].
   const int64_t qElems = HD;
   const int64_t tileElems = blockKV * HD;
-  const int64_t offK = qElems;
-  const int64_t offV = offK + tileElems;
-  const int64_t offScores = offV + tileElems;
+
+  bool directKV = false;
+  if (auto it = ctx.shapeBindings.find("FLASH_ATTN_DIRECT_GMEM"); it != ctx.shapeBindings.end()) {
+    directKV = (it->second != 0);
+  }
+  bool asyncCopy = false;
+  if (auto it = ctx.shapeBindings.find("FLASH_ATTN_ASYNC_COPY"); it != ctx.shapeBindings.end()) {
+    asyncCopy = (it->second != 0);
+  }
+  // Guardrails: async-copy uses vector<4xf32> and assumes a single KV tile (no tail).
+  if (asyncCopy) {
+    const int64_t tileVec4 = tileElems / 4;
+    asyncCopy = (!directKV) && (KV == blockKV) && ((HD % 4) == 0) && ((tileVec4 % threads) == 0);
+  }
+
+  // Shared layout:
+  // - default: [Q(HD), K_tile(blockKV*HD), V_tile(blockKV*HD), scores(blockKV), weights(blockKV), scalars, scratch]
+  // - directKV: [Q(HD), scores(blockKV), weights(blockKV), scalars, scratch]  (K/V read from global on demand)
+  int64_t offK = 0;
+  int64_t offV = 0;
+  int64_t offScores = 0;
+  if (!directKV) {
+    offK = qElems;
+    offV = offK + tileElems;
+    offScores = offV + tileElems;
+  } else {
+    offScores = qElems;
+  }
   const int64_t offWeights = offScores + blockKV;
   const int64_t offScalars = offWeights + blockKV;
   const int64_t offM = offScalars;
   const int64_t offL = offScalars + 1;
   const int64_t offAlpha = offScalars + 2;
-  const int64_t shElems = offScalars + 3;
+  // Scratch for per-warp reductions (used by v7 softmax update).
+  const int64_t offWarpSumScratch = offScalars + 3;
+  const int64_t shElems = offWarpSumScratch + blockWarps;
 
   clearModuleBody(ctx.module);
   ctx.module->setAttr("gpu.container_module", mlir::UnitAttr::get(mlirCtx));
@@ -2925,6 +2950,9 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   auto cMOff = makeIndexConst(b, loc, offM);
   auto cLOff = makeIndexConst(b, loc, offL);
   auto cAlphaOff = makeIndexConst(b, loc, offAlpha);
+  const int64_t numWarpsKV = (blockKV + 31) / 32;
+  auto cNumWarpsKV = makeIndexConst(b, loc, numWarpsKV);
+  auto cWarpSumScratch = makeIndexConst(b, loc, offWarpSumScratch);
 
   auto c0f = makeF32Const(b, loc, 0.0f);
   auto c1f = makeF32Const(b, loc, 1.0f);
@@ -2980,31 +3008,85 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   auto tile0 = tileFor.getInductionVar();
   auto accIn = tileFor.getRegionIterArgs()[0];
 
-  // Load K/V tile into shared: i in [0, tileElems).
-  auto cTileElems = makeIndexConst(b, loc, tileElems);
-  auto tileLoad = b.create<mlir::scf::ForOp>(loc, tid, cTileElems, cThreads);
-  b.setInsertionPointToStart(tileLoad.getBody());
-  auto i = tileLoad.getInductionVar();
-  auto kvOff = b.create<mlir::arith::DivUIOp>(loc, i, cHD).getResult();
-  auto d = b.create<mlir::arith::RemUIOp>(loc, i, cHD).getResult();
-  auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, kvOff).getResult();
-  auto predKV = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, kv, cKV).getResult();
-  auto ifKV = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32, f32}, predKV, /*withElse=*/true);
-  b.setInsertionPointToStart(&ifKV.getThenRegion().front());
-  auto mulKV = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
-  auto idxKV = b.create<mlir::arith::AddIOp>(loc, mulKV, d).getResult();
-  auto kVal = b.create<mlir::memref::LoadOp>(loc, KArg, mlir::ValueRange{idxKV}).getResult();
-  auto vVal = b.create<mlir::memref::LoadOp>(loc, VArg, mlir::ValueRange{idxKV}).getResult();
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{kVal, vVal});
-  b.setInsertionPointToStart(&ifKV.getElseRegion().front());
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f, c0f});
-  b.setInsertionPointAfter(ifKV);
-  auto shK = b.create<mlir::arith::AddIOp>(loc, cOffK, i).getResult();
-  auto shV = b.create<mlir::arith::AddIOp>(loc, cOffV, i).getResult();
-  b.create<mlir::memref::StoreOp>(loc, ifKV.getResult(0), Sh, mlir::ValueRange{shK});
-  b.create<mlir::memref::StoreOp>(loc, ifKV.getResult(1), Sh, mlir::ValueRange{shV});
-  b.setInsertionPointAfter(tileLoad);
-  b.create<mlir::gpu::BarrierOp>(loc);
+  if (!directKV) {
+    // Load K/V tile into shared: i in [0, tileElems).
+    if (asyncCopy) {
+      // Async-copy vector<4xf32> into shared for the single-tile case.
+      const int64_t tileVec4 = tileElems / 4;
+    auto c4 = makeIndexConst(b, loc, 4);
+    auto dstElements4 = b.getIndexAttr(4);
+      const int64_t iters = tileVec4 / threads;
+      llvm::SmallVector<mlir::Value, 32> cpTokens;
+      cpTokens.reserve(static_cast<size_t>(iters * 2));
+
+      for (int64_t it = 0; it < iters; ++it) {
+        mlir::Value idx = tid;
+        if (it != 0) {
+          auto off = makeIndexConst(b, loc, it * threads);
+          idx = b.create<mlir::arith::AddIOp>(loc, tid, off).getResult();
+        }
+        auto idx4 = b.create<mlir::arith::MulIOp>(loc, idx, c4).getResult();
+        auto kvOff = b.create<mlir::arith::DivUIOp>(loc, idx4, cHD).getResult();
+        auto d = b.create<mlir::arith::RemUIOp>(loc, idx4, cHD).getResult();
+        auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, kvOff).getResult();
+        auto base = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
+        auto src = b.create<mlir::arith::AddIOp>(loc, base, d).getResult();
+        auto dstK = b.create<mlir::arith::AddIOp>(loc, cOffK, idx4).getResult();
+        auto dstV = b.create<mlir::arith::AddIOp>(loc, cOffV, idx4).getResult();
+
+        auto cpK = b.create<mlir::nvgpu::DeviceAsyncCopyOp>(
+            loc,
+            /*dst=*/Sh,
+            /*dstIndices=*/mlir::ValueRange{dstK},
+            /*src=*/KArg,
+            /*srcIndices=*/mlir::ValueRange{src},
+            /*dstElements=*/dstElements4,
+            /*srcElements=*/mlir::Value(),
+            /*bypassL1=*/mlir::UnitAttr());
+        auto cpV = b.create<mlir::nvgpu::DeviceAsyncCopyOp>(
+            loc,
+            /*dst=*/Sh,
+            /*dstIndices=*/mlir::ValueRange{dstV},
+            /*src=*/VArg,
+            /*srcIndices=*/mlir::ValueRange{src},
+            /*dstElements=*/dstElements4,
+            /*srcElements=*/mlir::Value(),
+            /*bypassL1=*/mlir::UnitAttr());
+        cpTokens.push_back(cpK.getAsyncToken());
+        cpTokens.push_back(cpV.getAsyncToken());
+      }
+
+      auto group = b.create<mlir::nvgpu::DeviceAsyncCreateGroupOp>(loc, cpTokens).getAsyncToken();
+      b.create<mlir::nvgpu::DeviceAsyncWaitOp>(loc, group, mlir::IntegerAttr());
+      b.create<mlir::gpu::BarrierOp>(loc);
+    } else {
+      auto cTileElems = makeIndexConst(b, loc, tileElems);
+      auto tileLoad = b.create<mlir::scf::ForOp>(loc, tid, cTileElems, cThreads);
+      b.setInsertionPointToStart(tileLoad.getBody());
+      auto i = tileLoad.getInductionVar();
+      auto kvOff = b.create<mlir::arith::DivUIOp>(loc, i, cHD).getResult();
+      auto d = b.create<mlir::arith::RemUIOp>(loc, i, cHD).getResult();
+      auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, kvOff).getResult();
+      auto predKV =
+          b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, kv, cKV).getResult();
+      auto ifKV = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32, f32}, predKV, /*withElse=*/true);
+      b.setInsertionPointToStart(&ifKV.getThenRegion().front());
+      auto mulKV = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
+      auto idxKV = b.create<mlir::arith::AddIOp>(loc, mulKV, d).getResult();
+      auto kVal = b.create<mlir::memref::LoadOp>(loc, KArg, mlir::ValueRange{idxKV}).getResult();
+      auto vVal = b.create<mlir::memref::LoadOp>(loc, VArg, mlir::ValueRange{idxKV}).getResult();
+      b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{kVal, vVal});
+      b.setInsertionPointToStart(&ifKV.getElseRegion().front());
+      b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f, c0f});
+      b.setInsertionPointAfter(ifKV);
+      auto shK = b.create<mlir::arith::AddIOp>(loc, cOffK, i).getResult();
+      auto shV = b.create<mlir::arith::AddIOp>(loc, cOffV, i).getResult();
+      b.create<mlir::memref::StoreOp>(loc, ifKV.getResult(0), Sh, mlir::ValueRange{shK});
+      b.create<mlir::memref::StoreOp>(loc, ifKV.getResult(1), Sh, mlir::ValueRange{shV});
+      b.setInsertionPointAfter(tileLoad);
+      b.create<mlir::gpu::BarrierOp>(loc);
+    }
+  }
 
   // Score warps: warps 2.. compute scores[t2] for this tile.
   auto predScoreWarp =
@@ -3026,12 +3108,21 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   auto ifAttend = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, predAttend,
                                            /*withElse=*/true);
   b.setInsertionPointToStart(&ifAttend.getThenRegion().front());
-  auto base = b.create<mlir::arith::MulIOp>(loc, t2, cHD).getResult();
-  auto baseK = b.create<mlir::arith::AddIOp>(loc, cOffK, base).getResult();
-  auto idxK0 = b.create<mlir::arith::AddIOp>(loc, baseK, lane).getResult();
-  auto idxK1 = b.create<mlir::arith::AddIOp>(loc, baseK, lane2).getResult();
-  auto k0 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxK0}).getResult();
-  auto k1 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxK1}).getResult();
+  mlir::Value k0, k1;
+  if (!directKV) {
+    auto base = b.create<mlir::arith::MulIOp>(loc, t2, cHD).getResult();
+    auto baseK = b.create<mlir::arith::AddIOp>(loc, cOffK, base).getResult();
+    auto idxK0 = b.create<mlir::arith::AddIOp>(loc, baseK, lane).getResult();
+    auto idxK1 = b.create<mlir::arith::AddIOp>(loc, baseK, lane2).getResult();
+    k0 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxK0}).getResult();
+    k1 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxK1}).getResult();
+  } else {
+    auto base = b.create<mlir::arith::MulIOp>(loc, kv2, cHD).getResult();
+    auto idxK0 = b.create<mlir::arith::AddIOp>(loc, base, lane).getResult();
+    auto idxK1 = b.create<mlir::arith::AddIOp>(loc, base, lane2).getResult();
+    k0 = b.create<mlir::memref::LoadOp>(loc, KArg, mlir::ValueRange{idxK0}).getResult();
+    k1 = b.create<mlir::memref::LoadOp>(loc, KArg, mlir::ValueRange{idxK1}).getResult();
+  }
   auto q0 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{lane}).getResult();
   auto q1 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{lane2}).getResult();
   auto p0 = b.create<mlir::arith::MulFOp>(loc, q0, k0).getResult();
@@ -3065,8 +3156,6 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     auto tidInKV =
         b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cBlockKV).getResult();
 
-    const int64_t numWarpsKV = (blockKV + 31) / 32;
-    auto cNumWarpsKV = makeIndexConst(b, loc, numWarpsKV);
     auto warpInKV =
         b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, warp, cNumWarpsKV).getResult();
 
@@ -3161,53 +3250,15 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     b.setInsertionPointAfter(ifWeightVal);
     auto wForSum = ifWeightVal.getResult(0);
 
-    // Synchronize before reusing scores[] for reduction scratch. Without this,
-    // a different warp could overwrite scores[0/1] before other warps have read
-    // the corresponding score values to compute weights.
-    b.create<mlir::gpu::BarrierOp>(loc);
-
     auto warpSum = warpAllReduceSumF32(b, loc, wForSum);
     auto predStoreWarpSum = b.create<mlir::arith::AndIOp>(loc, isLane0, warpInKV).getResult();
     auto ifStoreWarpSum =
         b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predStoreWarpSum, /*withElse=*/false);
     b.setInsertionPointToStart(&ifStoreWarpSum.getThenRegion().front());
-    auto idxSum = b.create<mlir::arith::AddIOp>(loc, cScores, warp).getResult();
+    auto idxSum = b.create<mlir::arith::AddIOp>(loc, cWarpSumScratch, warp).getResult();
     b.create<mlir::memref::StoreOp>(loc, warpSum, Sh, mlir::ValueRange{idxSum});
     b.setInsertionPointAfter(ifStoreWarpSum);
-    b.create<mlir::gpu::BarrierOp>(loc);
-
-    // Warp0 reduces across per-warp sums and stores scores[0] = sum(weights).
-    auto ifWarp0Sum = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, isWarp0, /*withElse=*/true);
-    b.setInsertionPointToStart(&ifWarp0Sum.getThenRegion().front());
-    auto ifLaneSum =
-        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, laneInWarps, /*withElse=*/true);
-    b.setInsertionPointToStart(&ifLaneSum.getThenRegion().front());
-    auto idxS = b.create<mlir::arith::AddIOp>(loc, cScores, lane).getResult();
-    auto svSum = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxS}).getResult();
-    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{svSum});
-    b.setInsertionPointToStart(&ifLaneSum.getElseRegion().front());
-    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
-    b.setInsertionPointAfter(ifLaneSum);
-    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{ifLaneSum.getResult(0)});
-    b.setInsertionPointToStart(&ifWarp0Sum.getElseRegion().front());
-    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
-    b.setInsertionPointAfter(ifWarp0Sum);
-    auto sumScratch = ifWarp0Sum.getResult(0);
-    auto sumTile = warpAllReduceSumF32(b, loc, sumScratch);
-    auto ifStoreSum =
-        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predStoreMax, /*withElse=*/false);
-    b.setInsertionPointToStart(&ifStoreSum.getThenRegion().front());
-    b.create<mlir::memref::StoreOp>(loc, sumTile, Sh, mlir::ValueRange{cScores});
-    b.setInsertionPointAfter(ifStoreSum);
-
-    // Thread0 finalizes lNew = lScaled + sum(weights).
-    auto ifFinal = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
-    b.setInsertionPointToStart(&ifFinal.getThenRegion().front());
-    auto lScaled2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
-    auto sumP = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cScores}).getResult();
-    auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled2, sumP).getResult();
-    b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
-    b.setInsertionPointAfter(ifFinal);
+    // Synchronize so all weights[0..blockKV) are visible before output warps read them.
     b.create<mlir::gpu::BarrierOp>(loc);
   } else {
     // Thread 0: update online softmax scalars and write weights[0..blockKV).
@@ -3269,11 +3320,19 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   auto accTile = accTileFor.getRegionIterArgs()[0];
   auto wIdx2 = b.create<mlir::arith::AddIOp>(loc, cWeights, ttt).getResult();
   auto wv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{wIdx2}).getResult();
-  auto baseV = b.create<mlir::arith::MulIOp>(loc, ttt, cHD).getResult();
-  auto idxV = b.create<mlir::arith::AddIOp>(loc, b.create<mlir::arith::AddIOp>(loc, cOffV, baseV).getResult(),
-                                           dim)
-                 .getResult();
-  auto vv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxV}).getResult();
+  mlir::Value vv;
+  if (!directKV) {
+    auto baseV = b.create<mlir::arith::MulIOp>(loc, ttt, cHD).getResult();
+    auto idxV = b.create<mlir::arith::AddIOp>(
+                     loc, b.create<mlir::arith::AddIOp>(loc, cOffV, baseV).getResult(), dim)
+                    .getResult();
+    vv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxV}).getResult();
+  } else {
+    auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, ttt).getResult();
+    auto base = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
+    auto idxV = b.create<mlir::arith::AddIOp>(loc, base, dim).getResult();
+    vv = b.create<mlir::memref::LoadOp>(loc, VArg, mlir::ValueRange{idxV}).getResult();
+  }
   auto prod = b.create<mlir::arith::MulFOp>(loc, wv, vv).getResult();
   auto accTile2 = b.create<mlir::arith::AddFOp>(loc, accTile, prod).getResult();
   b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{accTile2});
@@ -3289,6 +3348,35 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   b.setInsertionPointAfter(ifOut);
 
   b.create<mlir::gpu::BarrierOp>(loc);
+
+  // v7 only: finalize lNew = lScaled + sum(weights) using the per-warp sums we stored in scratch.
+  // This happens after the output stage barrier; the next tile iteration will naturally
+  // synchronize at the next tile-load barrier.
+  if (kernelKind == "attn2d_causal_softmax_v7") {
+    auto isWarp0 =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, warp, c0).getResult();
+    auto laneInWarps =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, lane, cNumWarpsKV).getResult();
+    auto predRead = b.create<mlir::arith::AndIOp>(loc, isWarp0, laneInWarps).getResult();
+
+    auto ifScratch = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, predRead, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifScratch.getThenRegion().front());
+    auto idx = b.create<mlir::arith::AddIOp>(loc, cWarpSumScratch, lane).getResult();
+    auto v = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idx}).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{v});
+    b.setInsertionPointToStart(&ifScratch.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+    b.setInsertionPointAfter(ifScratch);
+
+    auto sumTile = warpAllReduceSumF32(b, loc, ifScratch.getResult(0));
+    auto ifFinal = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifFinal.getThenRegion().front());
+    auto lScaled = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+    auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled, sumTile).getResult();
+    b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
+    b.setInsertionPointAfter(ifFinal);
+  }
+
   b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{ifOut.getResult(0)});
   b.setInsertionPointAfter(tileFor);
   auto accOut = tileFor.getResult(0);
