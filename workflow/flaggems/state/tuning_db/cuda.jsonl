@@ -25,3 +25,7 @@
 
 # Triton-native softmax (graph perf): vec4 mapping with 256 threads per row (baseline so far).
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_softmax","arch":"sm120","bindings":{"SOFTMAX_BLOCK_THREADS":256,"SOFTMAX_VEC4":1},"note":"5090D sm120a graph perf: vec4 load/store + 256 threads"}
+
+# Local sm89 focus overrides (graph perf)
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm89","when":{"HEAD_DIM":64},"bindings":{"ATTN_BLOCK_KV":64},"kernel_kind":"attn2d_causal_softmax_v6","note":"local sm89 focus perf: v6(BKV=64) ratio~0.98 (20260304)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm89","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{},"kernel_kind":"attn2d_causal_softmax_v18","note":"local sm89 focus perf: tiny(Q=16,KV=16,HD=16) v18 ratio~1.00 (20260304)"}
