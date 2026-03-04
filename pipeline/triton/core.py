@@ -480,7 +480,7 @@ def _emit_mlir_shadow_artifacts(
             try:
                 intent.meta = dict(intent.meta or {})
                 intent.meta["shape_bindings"] = {
-                    str(k): max(1, int(v))
+                    str(k): int(v)
                     for k, v in dict(shape_bindings).items()
                     if str(k).strip()
                 }
