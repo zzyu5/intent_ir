@@ -1,10 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-04T11:24:14+00:00
-- Commit: `fc1709873a484cfa57d8c40b33b179d6b95eea38`
+- Timestamp: 2026-03-04T12:03:53+00:00
+- Commit: `5be9b8957c28efc659c2c78c476a0561a5d5a5ca`
 - Lane: `workflow`
-- Summary: remote H100(sm90) cuda cpp_plugin attention: masked~1.02, flash~0.95, _attn_fwd~1.11
+- Summary: remote H100(sm90) cpp_plugin attn v7: flash~0.95 masked~1.00 _attn_fwd~1.11 (strict,llc)
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v2_hd16/run_summary.json`
-- Status Converged: `artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v2_hd16/status_converged.json`
-- Evidence Paths: artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v2_hd16, artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v2_hd16/run_summary.json, artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v2_hd16/status_converged.json, artifacts/validation_rounds/20260304/cuda_h100_cpp_attn_cov_sm90_v7_v2_hd16
+- Run Summary: `artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v7_barrierless_rerun/run_summary.json`
+- Status Converged: `artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v7_barrierless_rerun/status_converged.json`
+- Evidence Paths: artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v7_barrierless_rerun, artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v7_barrierless_rerun/run_summary.json, artifacts/remote_perf/20260304/cuda_h100_cpp_attn_perf_sm90_v7_v7_barrierless_rerun/status_converged.json, artifacts/validation_rounds/20260304/cuda_h100_cpp_attn_cov_sm90_v7_v6_barrierless
