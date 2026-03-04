@@ -410,16 +410,27 @@ def _emit_mlir_shadow_artifacts(
             mlir_report["module_path"] = str(mod_path)
         mlir_report["dialect_version"] = str(mod.dialect_version)
 
-        upstream_mod, upstream_trace = run_mlir_pipeline(
-            mod,
-            "upstream",
-            out_dir=((out_dir / "mlir_upstream") if shadow_enabled else None),
-        )
-        mid_mod, mid_trace = run_mlir_pipeline(
-            upstream_mod,
-            "midend",
-            out_dir=((out_dir / "mlir_midend") if shadow_enabled else None),
-        )
+        stack = _compiler_stack_name()
+        cpp_wave = _compiler_cpp_wave_name() if stack in {"cpp", "cpp_plugin", "c++"} else ""
+        cpp_kernels = _load_compiler_cpp_wave_kernels(cpp_wave) if cpp_wave else set()
+        cpp_bypass = bool(spec_name and str(spec_name) in cpp_kernels and stack in {"cpp", "cpp_plugin", "c++"})
+
+        if cpp_bypass:
+            upstream_mod = mod
+            upstream_trace = {"ok": True, "skipped": True, "reason": "compiler_cpp_bypass"}
+            mid_mod = mod
+            mid_trace = {"ok": True, "skipped": True, "reason": "compiler_cpp_bypass"}
+        else:
+            upstream_mod, upstream_trace = run_mlir_pipeline(
+                mod,
+                "upstream",
+                out_dir=((out_dir / "mlir_upstream") if shadow_enabled else None),
+            )
+            mid_mod, mid_trace = run_mlir_pipeline(
+                upstream_mod,
+                "midend",
+                out_dir=((out_dir / "mlir_midend") if shadow_enabled else None),
+            )
         mlir_report["midend_module_path"] = ""
         if shadow_enabled:
             mid_path = out_dir / f"{spec_name}.intentir.intentdialect.midend.mlir"
@@ -442,7 +453,7 @@ def _emit_mlir_shadow_artifacts(
         down = _downstream_pipeline_name(backend_target)
         lower_ms_total = 0.0
         down_mod = None
-        if down is not None:
+        if down is not None and not cpp_bypass:
             down_mod, down_trace = run_mlir_pipeline(
                 mid_mod,
                 down,
@@ -457,6 +468,8 @@ def _emit_mlir_shadow_artifacts(
                 mlir_report["downstream_module_path"] = str(down_path)
             down_ms = sum(float(p.get("ms") or 0.0) for p in list(down_trace.get("passes") or []))
             lower_ms_total += float(down_ms)
+        elif down is not None and cpp_bypass:
+            mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "compiler_cpp_bypass"}
         else:
             mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
 
