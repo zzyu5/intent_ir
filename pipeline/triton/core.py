@@ -590,7 +590,7 @@ def _emit_mlir_shadow_artifacts(
                     try:
                         mid_mod.meta = dict(mid_mod.meta or {})
                         mid_mod.meta["shape_bindings"] = {
-                            str(k): max(1, int(v))
+                            str(k): int(v)
                             for k, v in dict(shape_bindings).items()
                             if str(k).strip()
                         }
@@ -654,6 +654,45 @@ def _emit_mlir_shadow_artifacts(
                                     "BN": int(bn),
                                     "BK": int(bk),
                                     "mma": "tf32",
+                                    "pipeline": ("cp_async_double_buffer" if async_copy else "global_load"),
+                                }
+                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
+                                    "block": [int(threads), 1, 1],
+                                    "grid": [int(grid_x), int(grid_y), 1],
+                                }
+                    if (
+                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
+                        and str(spec_name) == "matmul_fused_epilogue2d"
+                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
+                    ):
+                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
+                        m = int(sb.get("M") or 0)
+                        n = int(sb.get("N") or 0)
+                        k = int(sb.get("K") or 0)
+                        bm = int(sb.get("MMA_BM") or 32)
+                        bn = int(sb.get("MMA_BN") or 32)
+                        bk = int(sb.get("MMA_BK") or 32)
+                        async_copy = int(sb.get("MMA_ASYNC_COPY") or 0) != 0
+                        if m > 0 and n > 0 and k > 0 and bm > 0 and bn > 0 and bk > 0:
+                            warps_n = max(1, int(bn) // 16)
+                            warps_m = max(1, int(bm) // 16)
+                            warps = int(warps_m) * int(warps_n)
+                            threads = int(warps) * 32
+                            grid_x = int(n) // int(bn) if int(bn) > 0 else 1
+                            grid_y = int(m) // int(bm) if int(bm) > 0 else 1
+                            if threads > 0 and grid_x > 0 and grid_y > 0:
+                                mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
+                                    "matmul_fused_epilogue_mma_tf32_v2"
+                                    if async_copy
+                                    else "matmul_fused_epilogue_mma_tf32_global_v1"
+                                )
+                                mid_mod.meta["cuda_real_mlir_matmul_cfg"] = {
+                                    "BM": int(bm),
+                                    "BN": int(bn),
+                                    "BK": int(bk),
+                                    "mma": "tf32",
+                                    "epilogue": "bias_rowcol_mask",
                                     "pipeline": ("cp_async_double_buffer" if async_copy else "global_load"),
                                 }
                                 mid_mod.meta["cuda_real_mlir_launch_override"] = {

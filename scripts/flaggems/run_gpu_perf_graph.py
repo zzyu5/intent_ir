@@ -2396,6 +2396,8 @@ def _bench_kernel(
         "execution_engine": "",
         "contract_schema_version": "",
         "executable_format": "",
+        "compiler_stack": "",
+        "lowering_kind": "",
         "cuda_ptx_origin": "",
         "runtime_fallback": False,
         "runtime_fallback_detail": "",
@@ -2455,6 +2457,8 @@ def _bench_kernel(
         row["cuda_ptx_cache_hit"] = bool(contract_artifacts.get("cuda_ptx_cache_hit"))
         row["cuda_ptx_cache_key"] = str(contract_artifacts.get("cuda_ptx_cache_key") or "")
         row["intentir_evidence_mode"] = str(contract_artifacts.get("intentir_evidence_mode") or "")
+        row["compiler_stack"] = str(contract_artifacts.get("compiler_stack") or "")
+        row["lowering_kind"] = str(contract_artifacts.get("lowering_kind") or "")
         row["cuda_real_mlir_kernel_kind"] = str(contract_artifacts.get("cuda_real_mlir_kernel_kind") or "")
         tensor_specs = dict(ctx.get("tensor_specs") or {})
         if not tensor_specs:

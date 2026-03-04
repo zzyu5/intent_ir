@@ -8,6 +8,7 @@
     "cat2d",
     "diag2d",
     "flip2d",
-    "ai_bench_matmul"
+    "ai_bench_matmul",
+    "matmul_fused_epilogue2d"
   ]
 }
