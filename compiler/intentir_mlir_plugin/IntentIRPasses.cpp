@@ -17,7 +17,9 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Base64.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -97,6 +99,206 @@ parseShapeBindings(const llvm::json::Value &val) {
     }
     out.emplace(std::move(key), static_cast<int64_t>(*i));
   }
+  return out;
+}
+
+static std::string normalizeCudaArchForTuning(llvm::StringRef raw) {
+  std::string s = raw.trim().lower();
+  if (s.empty())
+    return "";
+
+  bool allDigits = true;
+  for (char c : s) {
+    if (!std::isdigit(static_cast<unsigned char>(c))) {
+      allDigits = false;
+      break;
+    }
+  }
+  if (allDigits) {
+    return std::string("sm") + s;
+  }
+
+  llvm::StringRef sr(s);
+  if (sr.starts_with("sm_")) {
+    s = s.substr(3);
+  } else if (sr.starts_with("sm")) {
+    s = s.substr(2);
+  } else {
+    return "";
+  }
+  std::string digits;
+  for (char c : s) {
+    if (std::isdigit(static_cast<unsigned char>(c)))
+      digits.push_back(c);
+  }
+  if (digits.empty())
+    return "";
+  return std::string("sm") + digits;
+}
+
+static std::string detectCudaArchForTuning() {
+  const char *raw = std::getenv("INTENTIR_CUDA_SM");
+  if (!raw || !*raw)
+    return "";
+  return normalizeCudaArchForTuning(raw);
+}
+
+static bool stackMatchesForCppPlugin(const llvm::json::Object &row) {
+  const llvm::json::Value *v = row.get("compiler_stack");
+  if (!v)
+    v = row.get("stack");
+  if (!v) {
+    // Unspecified => apply to all (backward compatible).
+    return true;
+  }
+
+  auto normalize = [](llvm::StringRef s) -> std::string {
+    std::string out = s.trim().lower();
+    if (out == "cpp" || out == "c++")
+      out = "cpp_plugin";
+    return out;
+  };
+
+  std::set<std::string> allowed;
+  if (auto s = v->getAsString()) {
+    auto n = normalize(*s);
+    if (!n.empty())
+      allowed.insert(std::move(n));
+  } else if (auto arr = v->getAsArray()) {
+    for (const auto &it : *arr) {
+      auto s = it.getAsString();
+      if (!s)
+        continue;
+      auto n = normalize(*s);
+      if (!n.empty())
+        allowed.insert(std::move(n));
+    }
+  } else {
+    // Unknown type => do not match.
+    return false;
+  }
+  if (allowed.empty())
+    return true;
+  return allowed.count("cpp_plugin") != 0;
+}
+
+static bool matchWhen(const llvm::json::Object &when,
+                      const std::map<std::string, int64_t> &shapeBindings) {
+  for (const auto &kv : when) {
+    const std::string key = kv.first.str();
+    auto it = shapeBindings.find(key);
+    if (it == shapeBindings.end())
+      return false;
+    const int64_t v = it->second;
+
+    const llvm::json::Value &cond = kv.second;
+    if (auto i = cond.getAsInteger()) {
+      if (v != static_cast<int64_t>(*i))
+        return false;
+      continue;
+    }
+    if (auto arr = cond.getAsArray()) {
+      bool ok = false;
+      for (const auto &it2 : *arr) {
+        auto ii = it2.getAsInteger();
+        if (!ii)
+          continue;
+        if (v == static_cast<int64_t>(*ii)) {
+          ok = true;
+          break;
+        }
+      }
+      if (!ok)
+        return false;
+      continue;
+    }
+    auto obj = cond.getAsObject();
+    if (!obj)
+      return false;
+
+    auto getI = [&](llvm::StringRef name) -> std::optional<int64_t> {
+      auto ii = obj->getInteger(name);
+      if (!ii)
+        return std::nullopt;
+      return static_cast<int64_t>(*ii);
+    };
+
+    if (auto eq = getI("eq"); eq && v != *eq)
+      return false;
+    if (auto ne = getI("ne"); ne && v == *ne)
+      return false;
+    if (auto lt = getI("lt"); lt && v >= *lt)
+      return false;
+    if (auto le = getI("le"); le && v > *le)
+      return false;
+    if (auto gt = getI("gt"); gt && v <= *gt)
+      return false;
+    if (auto ge = getI("ge"); ge && v < *ge)
+      return false;
+
+    if (auto inArr = obj->getArray("in")) {
+      bool ok = false;
+      for (const auto &it2 : *inArr) {
+        auto ii = it2.getAsInteger();
+        if (!ii)
+          continue;
+        if (v == static_cast<int64_t>(*ii)) {
+          ok = true;
+          break;
+        }
+      }
+      if (!ok)
+        return false;
+    }
+
+    if (auto notInArr = obj->getArray("not_in")) {
+      for (const auto &it2 : *notInArr) {
+        auto ii = it2.getAsInteger();
+        if (!ii)
+          continue;
+        if (v == static_cast<int64_t>(*ii))
+          return false;
+      }
+    }
+
+    if (auto d = getI("divisible_by")) {
+      if (*d <= 0)
+        return false;
+      if ((v % *d) != 0)
+        return false;
+    }
+
+    if (auto m = getI("mod")) {
+      if (*m <= 0)
+        return false;
+      int64_t eq = 0;
+      if (auto me = getI("mod_eq")) {
+        eq = *me;
+      } else if (auto eq2 = getI("eq")) {
+        eq = *eq2;
+      }
+      if ((v % *m) != eq)
+        return false;
+    }
+  }
+  return true;
+}
+
+static std::string encodeShapeBindingsJson(const std::map<std::string, int64_t> &shapeBindings) {
+  // Keys are stable and simple (A-Z0-9_). Encode compact JSON with sorted keys.
+  std::string out;
+  out.push_back('{');
+  bool first = true;
+  for (const auto &kv : shapeBindings) {
+    if (!first)
+      out.push_back(',');
+    first = false;
+    out.push_back('"');
+    out.append(kv.first);
+    out.append("\":");
+    out.append(std::to_string(static_cast<long long>(kv.second)));
+  }
+  out.push_back('}');
   return out;
 }
 
@@ -4310,6 +4512,181 @@ public:
   }
 };
 
+class IntentIRApplyTuningDbCudaV1Pass
+    : public mlir::PassWrapper<IntentIRApplyTuningDbCudaV1Pass,
+                               mlir::OperationPass<mlir::ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(IntentIRApplyTuningDbCudaV1Pass)
+
+  llvm::StringRef getArgument() const final { return "intentir-apply-tuning-db-cuda-v1"; }
+  llvm::StringRef getDescription() const final {
+    return "Apply tuning_db (bindings + optional kernel_kind override) into carrier module attrs";
+  }
+
+  void runOnOperation() override {
+    auto module = getOperation();
+    auto *mlirCtx = module.getContext();
+
+    std::string kernel;
+    if (auto attr = module->getAttrOfType<mlir::StringAttr>("intentir.intent_name")) {
+      kernel = attr.str();
+    }
+    if (kernel.empty()) {
+      return;
+    }
+
+    auto sbAttr = module->getAttrOfType<mlir::StringAttr>("intentir.shape_bindings_b64");
+    if (!sbAttr) {
+      // Without concrete shape bindings we cannot match tuning_db conditions.
+      return;
+    }
+    auto decodedOr = decodeB64(sbAttr.str());
+    if (mlir::failed(decodedOr)) {
+      module.emitError() << "invalid intentir.shape_bindings_b64 (base64 decode failed)";
+      signalPassFailure();
+      return;
+    }
+    auto parsedOr = parseJson(*decodedOr);
+    if (mlir::failed(parsedOr)) {
+      module.emitError() << "invalid intentir.shape_bindings_b64 (JSON parse failed)";
+      signalPassFailure();
+      return;
+    }
+    auto baseBindingsOr = parseShapeBindings(*parsedOr);
+    if (mlir::failed(baseBindingsOr)) {
+      module.emitError() << "invalid intentir.shape_bindings_b64 (expected JSON object of ints)";
+      signalPassFailure();
+      return;
+    }
+    const std::map<std::string, int64_t> baseBindings = *baseBindingsOr;
+
+    const std::string arch = detectCudaArchForTuning();
+    if (arch.empty()) {
+      // Arch-specific tuning requires INTENTIR_CUDA_SM to be set (or skip).
+      return;
+    }
+
+    const char *envPath = std::getenv("INTENTIR_CUDA_TUNING_DB");
+    if (!envPath || !*envPath)
+      envPath = std::getenv("INTENTIR_TUNING_DB");
+    const bool explicitPath = (envPath && *envPath);
+
+    std::string path = explicitPath ? std::string(envPath)
+                                    : "workflow/flaggems/state/tuning_db/cuda.jsonl";
+    if (!llvm::sys::fs::exists(path)) {
+      if (explicitPath) {
+        module.emitError() << "INTENTIR_CUDA_TUNING_DB points to missing file: " << path;
+        signalPassFailure();
+      }
+      return;
+    }
+
+    auto bufOr = llvm::MemoryBuffer::getFile(path);
+    if (!bufOr) {
+      module.emitError() << "failed to read tuning_db: " << path;
+      signalPassFailure();
+      return;
+    }
+    llvm::StringRef rest = (*bufOr)->getBuffer();
+
+    std::map<std::string, int64_t> applied;
+    std::string kernelKind;
+    int lineNo = 0;
+    while (true) {
+      ++lineNo;
+      auto parts = rest.split('\n');
+      llvm::StringRef line = parts.first.trim();
+      rest = parts.second;
+
+      if (!line.empty() && !line.starts_with("#")) {
+        auto parsedLine = llvm::json::parse(line);
+        if (!parsedLine) {
+          module.emitError() << "tuning_db parse error at " << path << ":" << lineNo;
+          signalPassFailure();
+          return;
+        }
+        const auto *obj = parsedLine->getAsObject();
+        if (!obj) {
+          module.emitError() << "tuning_db invalid row (expected JSON object) at " << path
+                             << ":" << lineNo;
+          signalPassFailure();
+          return;
+        }
+
+        auto backend = obj->getString("backend");
+        if (backend && backend->trim().lower() != "cuda") {
+          goto next_line;
+        }
+        auto k = obj->getString("kernel");
+        auto a = obj->getString("arch");
+        if (!k || !a) {
+          goto next_line;
+        }
+        if (k->trim() != kernel) {
+          goto next_line;
+        }
+        if (a->trim().lower() != arch) {
+          goto next_line;
+        }
+        if (!stackMatchesForCppPlugin(*obj)) {
+          goto next_line;
+        }
+
+        const llvm::json::Value *whenVal = obj->get("when");
+        if (!whenVal)
+          whenVal = obj->get("shape");
+        if (whenVal) {
+          auto whenObj = whenVal->getAsObject();
+          if (!whenObj)
+            goto next_line;
+          if (!matchWhen(*whenObj, baseBindings))
+            goto next_line;
+        }
+
+        if (auto bindingsObj = obj->getObject("bindings")) {
+          for (const auto &kv : *bindingsObj) {
+            auto ii = kv.second.getAsInteger();
+            if (!ii)
+              continue;
+            applied[kv.first.str()] = static_cast<int64_t>(*ii);
+          }
+        }
+
+        auto kk = obj->getString("kernel_kind");
+        if (!kk)
+          kk = obj->getString("variant");
+        if (kk) {
+          std::string s = kk->trim().str();
+          if (!s.empty())
+            kernelKind = std::move(s);
+        }
+      }
+
+    next_line:
+      if (rest.empty())
+        break;
+    }
+
+    if (applied.empty() && kernelKind.empty()) {
+      return;
+    }
+
+    std::map<std::string, int64_t> merged = baseBindings;
+    for (const auto &kv : applied) {
+      merged[kv.first] = kv.second;
+    }
+
+    const std::string jsonText = encodeShapeBindingsJson(merged);
+    const std::string b64 = llvm::encodeBase64(llvm::StringRef(jsonText));
+    module->setAttr("intentir.shape_bindings_b64", mlir::StringAttr::get(mlirCtx, b64));
+
+    if (!kernelKind.empty() && !module->hasAttr("intentir.kernel_kind_override")) {
+      module->setAttr("intentir.kernel_kind_override",
+                      mlir::StringAttr::get(mlirCtx, kernelKind));
+    }
+  }
+};
+
 class IntentIRLowerCudaFocusV1Pass
     : public mlir::PassWrapper<IntentIRLowerCudaFocusV1Pass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -4430,6 +4807,7 @@ public:
 
 static void registerIntentIRPasses() {
   mlir::PassRegistration<IntentIRLowerRVVCpuLoopsV1Pass>();
+  mlir::PassRegistration<IntentIRApplyTuningDbCudaV1Pass>();
   mlir::PassRegistration<IntentIRLowerCudaFocusV1Pass>();
   mlir::PassRegistration<IntentIRExtractGPUModuleLLVMV1Pass>();
 }
