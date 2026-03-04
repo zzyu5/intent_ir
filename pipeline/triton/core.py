@@ -215,6 +215,40 @@ def _real_mlir_enabled() -> bool:
 
 _CUDA_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
 _RVV_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
+_COMPILER_CPP_WAVE_KERNELS: dict[str, set[str]] = {}
+
+
+def _compiler_stack_name() -> str:
+    return str(os.getenv("INTENTIR_COMPILER_STACK", "python")).strip().lower()
+
+
+def _compiler_cpp_wave_name() -> str:
+    return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave1")).strip().lower()
+
+
+def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
+    wave_name = str(wave or "").strip().lower()
+    if not wave_name:
+        return set()
+    cached = _COMPILER_CPP_WAVE_KERNELS.get(wave_name)
+    if cached is not None:
+        return cached
+
+    path = ROOT / "workflow" / "flaggems" / "state" / f"compiler_cpp_{wave_name}_kernels.json"
+    kernels: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            rows = payload.get("kernels")
+            if isinstance(rows, list):
+                for x in rows:
+                    name = str(x).strip()
+                    if name:
+                        kernels.add(name)
+    except Exception:
+        kernels = set()
+    _COMPILER_CPP_WAVE_KERNELS[wave_name] = kernels
+    return kernels
 
 
 def _cuda_real_mlir_wave_name() -> str:
@@ -291,6 +325,17 @@ def _downstream_llvm_pipeline(
 ) -> tuple[str | None, str | None]:
     target = str(backend_target or "").strip().lower()
     if not target:
+        return None, None
+    stack = _compiler_stack_name()
+    if stack in {"cpp", "cpp_plugin", "c++"}:
+        wave = _compiler_cpp_wave_name()
+        kernels = _load_compiler_cpp_wave_kernels(wave) if wave else set()
+        if spec_name and str(spec_name) in kernels:
+            if target.startswith("rvv"):
+                return "downstream_rvv_std_llvm_cpp", "rvv"
+            # CUDA C++ stack will be introduced incrementally; do not fall back
+            # implicitly to Python lowering when INTENTIR_COMPILER_STACK=cpp.
+            return None, None
         return None, None
     if target.startswith("cuda"):
         wave = _cuda_real_mlir_wave_name()
@@ -409,7 +454,16 @@ def _emit_mlir_shadow_artifacts(
         if llvm_pipeline is None:
             mlir_report["llvm_emit_ok"] = False
             mlir_report["llvm_ir_path"] = ""
-            if _cuda_real_mlir_wave_name() and _real_mlir_enabled() and str(backend_target or "").strip().lower().startswith(
+            if _compiler_stack_name() in {"cpp", "cpp_plugin", "c++"} and _compiler_cpp_wave_name() and str(
+                backend_target or ""
+            ).strip().lower().startswith(("cuda", "rvv")):
+                cpp_wave = _compiler_cpp_wave_name()
+                cpp_kernels = _load_compiler_cpp_wave_kernels(cpp_wave) if cpp_wave else set()
+                if spec_name and str(spec_name) in cpp_kernels and str(backend_target or "").strip().lower().startswith("cuda"):
+                    mlir_report["llvm_skip_reason"] = "compiler_cpp_cuda_unimplemented"
+                else:
+                    mlir_report["llvm_skip_reason"] = "compiler_cpp_wave_excludes_kernel"
+            elif _cuda_real_mlir_wave_name() and _real_mlir_enabled() and str(backend_target or "").strip().lower().startswith(
                 "cuda"
             ):
                 mlir_report["llvm_skip_reason"] = "cuda_real_mlir_wave_excludes_kernel"
@@ -439,6 +493,15 @@ def _emit_mlir_shadow_artifacts(
                     # stable exported symbol name (e.g., RVV remote runner expects this).
                     mid_mod.meta.setdefault("kernel", str(spec_name))
                     mid_mod.meta.setdefault("spec_name", str(spec_name))
+                    # Compiler stack provenance (python vs cpp_plugin). This is used
+                    # by backend contracts and perf reports for auditability.
+                    stack = _compiler_stack_name()
+                    if stack in {"cpp", "cpp_plugin", "c++"}:
+                        mid_mod.meta["compiler_stack"] = "cpp_plugin"
+                        if str(llvm_pipeline) == "downstream_rvv_std_llvm_cpp":
+                            mid_mod.meta["lowering_kind"] = "rvv_cpu_loops_v1"
+                    else:
+                        mid_mod.meta.setdefault("compiler_stack", "python")
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:

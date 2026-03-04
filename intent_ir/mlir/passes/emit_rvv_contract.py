@@ -25,6 +25,12 @@ def build_rvv_contract_from_intent(
     if source_module is not None:
         artifacts["dialect_version"] = str(source_module.dialect_version)
         artifacts["symbols"] = [str(x) for x in list(source_module.symbols or []) if str(x).strip()]
+        meta = dict(source_module.meta or {})
+        for key in ("compiler_stack", "lowering_kind"):
+            val = meta.get(key)
+            if val is None:
+                continue
+            artifacts[key] = str(val)
     if artifact_module_path:
         artifacts["mlir_module_path"] = str(artifact_module_path)
     exe = _resolve_executable(

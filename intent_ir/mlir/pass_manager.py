@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import tempfile
@@ -286,8 +287,14 @@ def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) ->
     if not arg_tokens:
         raise RuntimeError("mlir-opt pass selector missing pass argument")
     cli_args = [x if str(x).startswith("-") else f"--{x}" for x in arg_tokens]
+    plugin = str(os.getenv("INTENTIR_MLIR_PASS_PLUGIN", "")).strip()
+    plugin_arg: list[str] = []
+    if plugin:
+        if not Path(plugin).is_file():
+            raise RuntimeError(f"INTENTIR_MLIR_PASS_PLUGIN points to missing file: {plugin}")
+        plugin_arg = [f"-load-pass-plugin={plugin}"]
     p = subprocess.run(
-        [tool, *cli_args],
+        [tool, *plugin_arg, *cli_args],
         input=str(module.module_text),
         capture_output=True,
         text=True,

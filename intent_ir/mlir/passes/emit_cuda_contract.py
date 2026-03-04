@@ -173,6 +173,8 @@ def build_cuda_contract_from_intent(
         artifacts["symbols"] = [str(x) for x in list(source_module.symbols or []) if str(x).strip()]
         meta = dict(source_module.meta or {})
         for key in (
+            "compiler_stack",
+            "lowering_kind",
             "cuda_real_mlir_kernel_kind",
             "cuda_real_mlir_elems_per_thread",
             "cuda_real_mlir_output_total",
@@ -193,6 +195,8 @@ def build_cuda_contract_from_intent(
             elif key in {"cuda_real_mlir_launch_override", "cuda_real_mlir_attention_cfg", "cuda_real_mlir_matmul_cfg"}:
                 if isinstance(val, Mapping):
                     artifacts[key] = dict(val)
+            elif key in {"compiler_stack", "lowering_kind"}:
+                artifacts[key] = str(val)
             else:
                 artifacts[key] = str(val)
     if artifact_module_path:

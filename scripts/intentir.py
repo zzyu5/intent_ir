@@ -1267,6 +1267,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "upstream_std",
             "midend_std",
             "downstream_rvv_std_llvm",
+            "downstream_rvv_std_llvm_cpp",
         ],
     )
     mlir_pass.add_argument(
@@ -1290,10 +1291,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "downstream_cuda_llvm",
             "downstream_rvv_llvm",
             "downstream_rvv_std_llvm",
+            "downstream_rvv_std_llvm_cpp",
         ],
         default="auto",
         help="Downstream LLVM pipeline selector for emit-llvm. "
-        "Use downstream_rvv_std_llvm for real-MLIR RVV proof runs.",
+        "Use downstream_rvv_std_llvm[_cpp] for real-MLIR RVV proof runs.",
     )
     mlir_emit.add_argument(
         "--shape",

@@ -50,6 +50,24 @@ def emit_std_mlir(
     attrs: list[str] = []
     attrs.append('intentir.format = "std_mlir_v1"')
     attrs.append(f'intentir.intent_name = "{_escape_mlir_string(intent.name)}"')
+    # Shape bindings are required for backend lowering and should be available
+    # to non-Python MLIR passes via module attributes.
+    bindings_raw = (intent.meta or {}).get("shape_bindings")
+    if isinstance(bindings_raw, dict) and bindings_raw:
+        bindings: dict[str, int] = {}
+        for k, v in dict(bindings_raw).items():
+            key = str(k).strip()
+            if not key:
+                continue
+            try:
+                bindings[key] = int(v)
+            except Exception:
+                continue
+        if bindings:
+            b64 = base64.b64encode(
+                json.dumps(bindings, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            ).decode("ascii")
+            attrs.append(f'intentir.shape_bindings_b64 = "{b64}"')
     if include_json_payload:
         attrs.append(f'intentir.intent_json_b64 = "{encoded}"')
     if symbols:
