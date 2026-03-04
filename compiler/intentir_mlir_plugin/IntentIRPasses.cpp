@@ -2232,6 +2232,301 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &c
   return mlir::success();
 }
 
+static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV2(LoweringContext &ctx,
+                                                              llvm::StringRef kernelKind) {
+  // Two-pass causal attention for triton-native 2D kernels (stable softmax).
+  //
+  // Compared to warp_v1 (online softmax), warp_v2 does:
+  //   pass1: compute m = max(scores)
+  //   pass2: compute weights = exp(scores - m), l = sum(weights), acc = sum(weights * V)
+  //
+  // This matches the triton-native masked_attention2d structure more closely and
+  // reduces per-kv rescaling overhead for small KV_CTX.
+
+  auto *mlirCtx = ctx.module.getContext();
+  auto loc = ctx.module.getLoc();
+  auto &b = ctx.builder;
+
+  const std::string qName = "Q";
+  const std::string kName = "K";
+  const std::string vName = "V";
+  const std::string scaleName = "sm_scale";
+  const std::string outName = "Out";
+  if (ctx.tensors.find(qName) == ctx.tensors.end() || ctx.tensors.find(kName) == ctx.tensors.end() ||
+      ctx.tensors.find(vName) == ctx.tensors.end() || ctx.tensors.find(outName) == ctx.tensors.end()) {
+    ctx.module.emitError("attn2d(warp_v2): missing tensor specs for Q/K/V/Out");
+    return mlir::failure();
+  }
+
+  auto shapeQOr = resolveShape(ctx.tensors[qName], ctx.shapeBindings);
+  auto shapeKOr = resolveShape(ctx.tensors[kName], ctx.shapeBindings);
+  auto shapeVOr = resolveShape(ctx.tensors[vName], ctx.shapeBindings);
+  auto shapeOOr = resolveShape(ctx.tensors[outName], ctx.shapeBindings);
+  if (mlir::failed(shapeQOr) || mlir::failed(shapeKOr) || mlir::failed(shapeVOr) ||
+      mlir::failed(shapeOOr)) {
+    ctx.module.emitError("attn2d(warp_v2): failed to resolve shapes");
+    return mlir::failure();
+  }
+  if (shapeQOr->size() != 2 || shapeKOr->size() != 2 || shapeVOr->size() != 2 ||
+      shapeOOr->size() != 2) {
+    ctx.module.emitError("attn2d(warp_v2): expected rank-2 tensors");
+    return mlir::failure();
+  }
+  const int64_t Q = (*shapeQOr)[0];
+  const int64_t HD = (*shapeQOr)[1];
+  const int64_t KV = (*shapeKOr)[0];
+  const int64_t HD2 = (*shapeKOr)[1];
+  if (KV != (*shapeVOr)[0] || HD2 != (*shapeVOr)[1]) {
+    ctx.module.emitError("attn2d(warp_v2): K/V shape mismatch");
+    return mlir::failure();
+  }
+  if ((*shapeOOr)[0] != Q || (*shapeOOr)[1] != HD) {
+    ctx.module.emitError("attn2d(warp_v2): Out shape mismatch");
+    return mlir::failure();
+  }
+  if (Q <= 0 || KV <= 0 || HD <= 0) {
+    ctx.module.emitError("attn2d(warp_v2): invalid dims");
+    return mlir::failure();
+  }
+  if (KV > 64) {
+    ctx.module.emitError("attn2d(warp_v2): KV_CTX>64 not supported");
+    return mlir::failure();
+  }
+  if (HD > 64) {
+    ctx.module.emitError("attn2d(warp_v2): HEAD_DIM>64 not supported by warp kernel");
+    return mlir::failure();
+  }
+
+  clearModuleBody(ctx.module);
+
+  ctx.module->setAttr("gpu.container_module", mlir::UnitAttr::get(mlirCtx));
+  if (!ctx.module->hasAttr("llvm.target_triple")) {
+    ctx.module->setAttr("llvm.target_triple",
+                        mlir::StringAttr::get(mlirCtx, "nvptx64-nvidia-cuda"));
+  }
+
+  b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
+  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
+
+  auto f32 = b.getF32Type();
+  auto globalMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+  const int64_t threads = 32;
+
+  auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
+  if (mlir::failed(fnOr))
+    return mlir::failure();
+  auto fn = *fnOr;
+
+  auto QArg = getArgByName(ctx, fn, qName);
+  auto KArg = getArgByName(ctx, fn, kName);
+  auto VArg = getArgByName(ctx, fn, vName);
+  auto SArg = getArgByName(ctx, fn, scaleName);
+  auto OutArg = getArgByName(ctx, fn, outName);
+  if (!QArg || !KArg || !VArg || !SArg || !OutArg) {
+    ctx.module.emitError("attn2d(warp_v2): failed to map kernel args");
+    return mlir::failure();
+  }
+
+  auto qTy =
+      mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto kvTy =
+      mlir::MemRefType::get({KV, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto outTy =
+      mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto Q2 = mlir::memref::ReinterpretCastOp::create(b, loc, qTy, QArg, 0, {Q, HD}, {HD, 1})
+                .getResult();
+  auto K2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, KArg, 0, {KV, HD}, {HD, 1})
+                .getResult();
+  auto V2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, VArg, 0, {KV, HD}, {HD, 1})
+                .getResult();
+  auto Out2 =
+      mlir::memref::ReinterpretCastOp::create(b, loc, outTy, OutArg, 0, {Q, HD}, {HD, 1})
+          .getResult();
+
+  auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
+  auto qRow = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
+
+  auto c0 = makeIndexConst(b, loc, 0);
+  auto c1 = makeIndexConst(b, loc, 1);
+  auto cKV = makeIndexConst(b, loc, KV);
+  auto c32 = makeIndexConst(b, loc, 32);
+  auto cHD = makeIndexConst(b, loc, HD);
+  auto c0f = makeF32Const(b, loc, 0.0f);
+  auto c1f = makeF32Const(b, loc, 1.0f);
+  auto negInf = makeF32Const(b, loc, -std::numeric_limits<float>::infinity());
+  auto cLOG2E = makeF32Const(b, loc, 1.44269504f);
+
+  auto d0 = tid;
+  auto d1 = b.create<mlir::arith::AddIOp>(loc, tid, c32).getResult();
+  auto d0In =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, d0, cHD).getResult();
+  auto d1In =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, d1, cHD).getResult();
+
+  auto scale = b.create<mlir::memref::LoadOp>(loc, SArg, mlir::ValueRange{c0}).getResult();
+
+  // Load Q once (two columns per lane).
+  auto ifQ0 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d0In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifQ0.getThenRegion().front());
+  auto q0 = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, d0}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{q0});
+  b.setInsertionPointToStart(&ifQ0.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifQ0);
+  auto q0v = ifQ0.getResult(0);
+
+  auto ifQ1 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d1In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifQ1.getThenRegion().front());
+  auto q1 = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, d1}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{q1});
+  b.setInsertionPointToStart(&ifQ1.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifQ1);
+  auto q1v = ifQ1.getResult(0);
+
+  // Pass 1: m = max(scores).
+  auto kvForMax = b.create<mlir::scf::ForOp>(loc, c0, cKV, c1, mlir::ValueRange{negInf});
+  b.setInsertionPointToStart(kvForMax.getBody());
+  auto kv = kvForMax.getInductionVar();
+  auto m = kvForMax.getRegionIterArgs()[0];
+
+  auto ifK0 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d0In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifK0.getThenRegion().front());
+  auto k0 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv, d0}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{k0});
+  b.setInsertionPointToStart(&ifK0.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifK0);
+
+  auto ifK1 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d1In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifK1.getThenRegion().front());
+  auto k1 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv, d1}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{k1});
+  b.setInsertionPointToStart(&ifK1.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifK1);
+
+  auto p0 = b.create<mlir::arith::MulFOp>(loc, q0v, ifK0.getResult(0)).getResult();
+  auto p1 = b.create<mlir::arith::MulFOp>(loc, q1v, ifK1.getResult(0)).getResult();
+  auto partial = b.create<mlir::arith::AddFOp>(loc, p0, p1).getResult();
+
+  auto dot = warpAllReduceSumF32(b, loc, partial);
+  auto score = b.create<mlir::arith::MulFOp>(loc, dot, scale).getResult();
+
+  auto masked =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ugt, kv, qRow).getResult();
+  auto scoreMasked = b.create<mlir::arith::SelectOp>(loc, masked, negInf, score).getResult();
+  auto mNew = b.create<mlir::arith::MaximumFOp>(loc, m, scoreMasked).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mNew});
+  b.setInsertionPointAfter(kvForMax);
+  auto mFinal = kvForMax.getResult(0);
+
+  // Pass 2: weights/sum + acc.
+  auto kvFor = b.create<mlir::scf::ForOp>(loc, c0, cKV, c1, mlir::ValueRange{c0f, c0f, c0f});
+  b.setInsertionPointToStart(kvFor.getBody());
+  auto kv2 = kvFor.getInductionVar();
+  auto l = kvFor.getRegionIterArgs()[0];
+  auto out0 = kvFor.getRegionIterArgs()[1];
+  auto out1 = kvFor.getRegionIterArgs()[2];
+
+  auto ifK20 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d0In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifK20.getThenRegion().front());
+  auto kk0 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv2, d0}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{kk0});
+  b.setInsertionPointToStart(&ifK20.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifK20);
+
+  auto ifK21 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d1In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifK21.getThenRegion().front());
+  auto kk1 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv2, d1}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{kk1});
+  b.setInsertionPointToStart(&ifK21.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifK21);
+
+  auto pp0 = b.create<mlir::arith::MulFOp>(loc, q0v, ifK20.getResult(0)).getResult();
+  auto pp1 = b.create<mlir::arith::MulFOp>(loc, q1v, ifK21.getResult(0)).getResult();
+  auto partial2 = b.create<mlir::arith::AddFOp>(loc, pp0, pp1).getResult();
+  auto dot2 = warpAllReduceSumF32(b, loc, partial2);
+  auto score2 = b.create<mlir::arith::MulFOp>(loc, dot2, scale).getResult();
+  auto masked2 =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ugt, kv2, qRow).getResult();
+  auto scoreMasked2 = b.create<mlir::arith::SelectOp>(loc, masked2, negInf, score2).getResult();
+  auto w = b.create<mlir::math::Exp2Op>(
+               loc,
+               b.create<mlir::arith::MulFOp>(
+                   loc, b.create<mlir::arith::SubFOp>(loc, scoreMasked2, mFinal).getResult(), cLOG2E)
+                   .getResult())
+               .getResult();
+  auto lNew2 = b.create<mlir::arith::AddFOp>(loc, l, w).getResult();
+
+  auto ifV0 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d0In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifV0.getThenRegion().front());
+  auto v0 = b.create<mlir::memref::LoadOp>(loc, V2, mlir::ValueRange{kv2, d0}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{v0});
+  b.setInsertionPointToStart(&ifV0.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifV0);
+  auto out0New2 =
+      b.create<mlir::arith::AddFOp>(loc, out0, b.create<mlir::arith::MulFOp>(loc, w, ifV0.getResult(0)).getResult())
+          .getResult();
+
+  auto ifV1 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d1In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifV1.getThenRegion().front());
+  auto v1 = b.create<mlir::memref::LoadOp>(loc, V2, mlir::ValueRange{kv2, d1}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{v1});
+  b.setInsertionPointToStart(&ifV1.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifV1);
+  auto out1New2 =
+      b.create<mlir::arith::AddFOp>(loc, out1, b.create<mlir::arith::MulFOp>(loc, w, ifV1.getResult(0)).getResult())
+          .getResult();
+
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{lNew2, out0New2, out1New2});
+  b.setInsertionPointAfter(kvFor);
+  auto lFinal = kvFor.getResult(0);
+  auto out0Final = kvFor.getResult(1);
+  auto out1Final = kvFor.getResult(2);
+
+  auto nz =
+      b.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::ONE, lFinal, c0f).getResult();
+  auto lSafe = b.create<mlir::arith::SelectOp>(loc, nz, lFinal, c1f).getResult();
+  auto invL = b.create<mlir::arith::DivFOp>(loc, c1f, lSafe).getResult();
+  auto y0 = b.create<mlir::arith::MulFOp>(loc, out0Final, invL).getResult();
+  auto y1 = b.create<mlir::arith::MulFOp>(loc, out1Final, invL).getResult();
+
+  auto store0 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, d0In, /*withElse=*/false);
+  b.setInsertionPointToStart(&store0.getThenRegion().front());
+  b.create<mlir::memref::StoreOp>(loc, y0, Out2, mlir::ValueRange{qRow, d0});
+  b.setInsertionPointAfter(store0);
+
+  auto store1 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, d1In, /*withElse=*/false);
+  b.setInsertionPointToStart(&store1.getThenRegion().front());
+  b.create<mlir::memref::StoreOp>(loc, y1, Out2, mlir::ValueRange{qRow, d1});
+  b.setInsertionPointAfter(store1);
+
+  // Note: launch_override must enforce block_x=32 and grid_x=Q.
+  b.create<mlir::gpu::ReturnOp>(loc);
+
+  ctx.module->setAttr("intentir.compiler_stack",
+                      mlir::StringAttr::get(mlirCtx, "cpp_plugin"));
+  ctx.module->setAttr("intentir.lowering_kind",
+                      mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
+  ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
+                      mlir::StringAttr::get(mlirCtx, kernelKind));
+  return mlir::success();
+}
+
 static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringContext &ctx,
                                                                     llvm::StringRef kernelKind) {
   // Port of the python real-MLIR "attn2d_causal_softmax_v6" strategy:
@@ -2513,53 +2808,151 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   b.setInsertionPointAfter(ifScoreWarp);
   b.create<mlir::gpu::BarrierOp>(loc);
 
-  // Thread 0: update online softmax scalars and write weights[0..blockKV).
-  auto ifSoftmax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
-  b.setInsertionPointToStart(&ifSoftmax.getThenRegion().front());
-  auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
-  auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
-  auto maxFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{negInf});
-  b.setInsertionPointToStart(maxFor.getBody());
-  auto t = maxFor.getInductionVar();
-  auto curMax = maxFor.getRegionIterArgs()[0];
-  auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, t).getResult();
-  auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
-  auto mx = b.create<mlir::arith::MaximumFOp>(loc, curMax, sv).getResult();
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mx});
-  b.setInsertionPointAfter(maxFor);
-  auto mTile = maxFor.getResult(0);
-  auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
-  auto alpha = b.create<mlir::math::Exp2Op>(
-                   loc,
-                   b.create<mlir::arith::MulFOp>(
-                       loc, b.create<mlir::arith::SubFOp>(loc, mPrev, mNew).getResult(), cLOG2E)
-                       .getResult())
-                   .getResult();
-  auto lScaled = b.create<mlir::arith::MulFOp>(loc, lPrev, alpha).getResult();
-  auto sumFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{c0f});
-  b.setInsertionPointToStart(sumFor.getBody());
-  auto tt = sumFor.getInductionVar();
-  auto curSum = sumFor.getRegionIterArgs()[0];
-  auto sIdx3 = b.create<mlir::arith::AddIOp>(loc, cScores, tt).getResult();
-  auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx3}).getResult();
-  auto w = b.create<mlir::math::Exp2Op>(
-               loc,
-               b.create<mlir::arith::MulFOp>(
-                   loc, b.create<mlir::arith::SubFOp>(loc, sv2, mNew).getResult(), cLOG2E)
-                   .getResult())
-               .getResult();
-  auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tt).getResult();
-  b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx});
-  auto sum2 = b.create<mlir::arith::AddFOp>(loc, curSum, w).getResult();
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{sum2});
-  b.setInsertionPointAfter(sumFor);
-  auto sumP = sumFor.getResult(0);
-  auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled, sumP).getResult();
-  b.create<mlir::memref::StoreOp>(loc, mNew, Sh, mlir::ValueRange{cMOff});
-  b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
-  b.create<mlir::memref::StoreOp>(loc, alpha, Sh, mlir::ValueRange{cAlphaOff});
-  b.setInsertionPointAfter(ifSoftmax);
-  b.create<mlir::gpu::BarrierOp>(loc);
+  // Softmax update:
+  // - v6: thread0 serial max/sum (simpler, ok on small GPUs)
+  // - v7: parallel reductions across threads tid<blockKV (better on large GPUs)
+  if (kernelKind == "attn2d_causal_softmax_v7") {
+    auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+
+    // Max reduction scratch in weights[0..blockKV): init from scores[0..blockKV).
+    auto tidInKV =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cBlockKV).getResult();
+    auto ifInitMax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, tidInKV, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifInitMax.getThenRegion().front());
+    auto sIdx = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
+    auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx}).getResult();
+    auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
+    b.create<mlir::memref::StoreOp>(loc, sv, Sh, mlir::ValueRange{wIdx});
+    b.setInsertionPointAfter(ifInitMax);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    // weights[0] <- max(scores)
+    for (int64_t stride = blockKV / 2; stride >= 1; stride /= 2) {
+      auto cStride = makeIndexConst(b, loc, stride);
+      auto pred = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cStride).getResult();
+      auto ifRed = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, pred, /*withElse=*/false);
+      b.setInsertionPointToStart(&ifRed.getThenRegion().front());
+      auto idxA = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
+      auto idxB = b.create<mlir::arith::AddIOp>(loc, idxA, cStride).getResult();
+      auto a = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxA}).getResult();
+      auto bval = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxB}).getResult();
+      auto mx = b.create<mlir::arith::MaximumFOp>(loc, a, bval).getResult();
+      b.create<mlir::memref::StoreOp>(loc, mx, Sh, mlir::ValueRange{idxA});
+      b.setInsertionPointAfter(ifRed);
+      b.create<mlir::gpu::BarrierOp>(loc);
+    }
+
+    // Thread0 computes mNew/alpha and stores scalars.
+    auto ifScalar = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifScalar.getThenRegion().front());
+    auto mTile = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cWeights}).getResult();
+    auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
+    auto alpha = b.create<mlir::math::Exp2Op>(
+                     loc,
+                     b.create<mlir::arith::MulFOp>(
+                         loc, b.create<mlir::arith::SubFOp>(loc, mPrev, mNew).getResult(), cLOG2E)
+                         .getResult())
+                     .getResult();
+    auto lScaled = b.create<mlir::arith::MulFOp>(loc, lPrev, alpha).getResult();
+    b.create<mlir::memref::StoreOp>(loc, mNew, Sh, mlir::ValueRange{cMOff});
+    b.create<mlir::memref::StoreOp>(loc, lScaled, Sh, mlir::ValueRange{cLOff}); // temp
+    b.create<mlir::memref::StoreOp>(loc, alpha, Sh, mlir::ValueRange{cAlphaOff});
+    b.setInsertionPointAfter(ifScalar);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    // Compute weights and init sum scratch in scores[0..blockKV).
+    auto ifWeights = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, tidInKV, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifWeights.getThenRegion().front());
+    auto mNew2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
+    auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
+    auto w = b.create<mlir::math::Exp2Op>(
+                 loc,
+                 b.create<mlir::arith::MulFOp>(
+                     loc, b.create<mlir::arith::SubFOp>(loc, sv2, mNew2).getResult(), cLOG2E)
+                     .getResult())
+                 .getResult();
+    auto wIdx2 = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
+    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx2});
+    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{sIdx2}); // sum scratch
+    b.setInsertionPointAfter(ifWeights);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    // scores[0] <- sum(weights)
+    for (int64_t stride = blockKV / 2; stride >= 1; stride /= 2) {
+      auto cStride = makeIndexConst(b, loc, stride);
+      auto pred = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cStride).getResult();
+      auto ifRed = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, pred, /*withElse=*/false);
+      b.setInsertionPointToStart(&ifRed.getThenRegion().front());
+      auto idxA = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
+      auto idxB = b.create<mlir::arith::AddIOp>(loc, idxA, cStride).getResult();
+      auto a = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxA}).getResult();
+      auto bval = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxB}).getResult();
+      auto sum = b.create<mlir::arith::AddFOp>(loc, a, bval).getResult();
+      b.create<mlir::memref::StoreOp>(loc, sum, Sh, mlir::ValueRange{idxA});
+      b.setInsertionPointAfter(ifRed);
+      b.create<mlir::gpu::BarrierOp>(loc);
+    }
+
+    // Thread0 finalizes lNew = lScaled + sum(weights).
+    auto ifFinal = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifFinal.getThenRegion().front());
+    auto lScaled2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+    auto sumP = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cScores}).getResult();
+    auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled2, sumP).getResult();
+    b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
+    b.setInsertionPointAfter(ifFinal);
+    b.create<mlir::gpu::BarrierOp>(loc);
+  } else {
+    // Thread 0: update online softmax scalars and write weights[0..blockKV).
+    auto ifSoftmax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifSoftmax.getThenRegion().front());
+    auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+    auto maxFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{negInf});
+    b.setInsertionPointToStart(maxFor.getBody());
+    auto t = maxFor.getInductionVar();
+    auto curMax = maxFor.getRegionIterArgs()[0];
+    auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, t).getResult();
+    auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
+    auto mx = b.create<mlir::arith::MaximumFOp>(loc, curMax, sv).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mx});
+    b.setInsertionPointAfter(maxFor);
+    auto mTile = maxFor.getResult(0);
+    auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
+    auto alpha = b.create<mlir::math::Exp2Op>(
+                     loc,
+                     b.create<mlir::arith::MulFOp>(
+                         loc, b.create<mlir::arith::SubFOp>(loc, mPrev, mNew).getResult(), cLOG2E)
+                         .getResult())
+                     .getResult();
+    auto lScaled = b.create<mlir::arith::MulFOp>(loc, lPrev, alpha).getResult();
+    auto sumFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{c0f});
+    b.setInsertionPointToStart(sumFor.getBody());
+    auto tt = sumFor.getInductionVar();
+    auto curSum = sumFor.getRegionIterArgs()[0];
+    auto sIdx3 = b.create<mlir::arith::AddIOp>(loc, cScores, tt).getResult();
+    auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx3}).getResult();
+    auto w = b.create<mlir::math::Exp2Op>(
+                 loc,
+                 b.create<mlir::arith::MulFOp>(
+                     loc, b.create<mlir::arith::SubFOp>(loc, sv2, mNew).getResult(), cLOG2E)
+                     .getResult())
+                 .getResult();
+    auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tt).getResult();
+    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx});
+    auto sum2 = b.create<mlir::arith::AddFOp>(loc, curSum, w).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{sum2});
+    b.setInsertionPointAfter(sumFor);
+    auto sumP = sumFor.getResult(0);
+    auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled, sumP).getResult();
+    b.create<mlir::memref::StoreOp>(loc, mNew, Sh, mlir::ValueRange{cMOff});
+    b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
+    b.create<mlir::memref::StoreOp>(loc, alpha, Sh, mlir::ValueRange{cAlphaOff});
+    b.setInsertionPointAfter(ifSoftmax);
+    b.create<mlir::gpu::BarrierOp>(loc);
+  }
 
   // Output warps: accumulate acc = acc*alpha + sum(weights * V_tile).
   auto ifOut = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, predOut, /*withElse=*/true);
@@ -2933,53 +3326,145 @@ static mlir::LogicalResult lowerCudaAttnFwdSoftmaxV6(LoweringContext &ctx, llvm:
   b.setInsertionPointAfter(ifScoreWarp);
   b.create<mlir::gpu::BarrierOp>(loc);
 
-  // Thread 0: update online softmax scalars and write weights[0..blockKV).
-  auto ifSoftmax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
-  b.setInsertionPointToStart(&ifSoftmax.getThenRegion().front());
-  auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
-  auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
-  auto maxFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{negInf});
-  b.setInsertionPointToStart(maxFor.getBody());
-  auto t = maxFor.getInductionVar();
-  auto curMax = maxFor.getRegionIterArgs()[0];
-  auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, t).getResult();
-  auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
-  auto mx = b.create<mlir::arith::MaximumFOp>(loc, curMax, sv).getResult();
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mx});
-  b.setInsertionPointAfter(maxFor);
-  auto mTile = maxFor.getResult(0);
-  auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
-  auto alpha = b.create<mlir::math::Exp2Op>(
-                   loc,
-                   b.create<mlir::arith::MulFOp>(
-                       loc, b.create<mlir::arith::SubFOp>(loc, mPrev, mNew).getResult(), cLOG2E)
-                       .getResult())
-                   .getResult();
-  auto lScaled = b.create<mlir::arith::MulFOp>(loc, lPrev, alpha).getResult();
-  auto sumFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{c0f});
-  b.setInsertionPointToStart(sumFor.getBody());
-  auto tt = sumFor.getInductionVar();
-  auto curSum = sumFor.getRegionIterArgs()[0];
-  auto sIdx3 = b.create<mlir::arith::AddIOp>(loc, cScores, tt).getResult();
-  auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx3}).getResult();
-  auto w = b.create<mlir::math::Exp2Op>(
-               loc,
-               b.create<mlir::arith::MulFOp>(
-                   loc, b.create<mlir::arith::SubFOp>(loc, sv2, mNew).getResult(), cLOG2E)
-                   .getResult())
-               .getResult();
-  auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tt).getResult();
-  b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx});
-  auto sum2 = b.create<mlir::arith::AddFOp>(loc, curSum, w).getResult();
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{sum2});
-  b.setInsertionPointAfter(sumFor);
-  auto sumP = sumFor.getResult(0);
-  auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled, sumP).getResult();
-  b.create<mlir::memref::StoreOp>(loc, mNew, Sh, mlir::ValueRange{cMOff});
-  b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
-  b.create<mlir::memref::StoreOp>(loc, alpha, Sh, mlir::ValueRange{cAlphaOff});
-  b.setInsertionPointAfter(ifSoftmax);
-  b.create<mlir::gpu::BarrierOp>(loc);
+  // Softmax update:
+  // - v6: thread0 serial max/sum
+  // - v7: parallel reductions across threads tid<blockKV (better on large GPUs)
+  if (kernelKind == "attn_fwd_softmax_v7") {
+    auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+
+    auto tidInKV =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cBlockKV).getResult();
+    auto ifInitMax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, tidInKV, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifInitMax.getThenRegion().front());
+    auto sIdx = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
+    auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx}).getResult();
+    auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
+    b.create<mlir::memref::StoreOp>(loc, sv, Sh, mlir::ValueRange{wIdx});
+    b.setInsertionPointAfter(ifInitMax);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    for (int64_t stride = blockKV / 2; stride >= 1; stride /= 2) {
+      auto cStride = makeIndexConst(b, loc, stride);
+      auto pred = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cStride).getResult();
+      auto ifRed = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, pred, /*withElse=*/false);
+      b.setInsertionPointToStart(&ifRed.getThenRegion().front());
+      auto idxA = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
+      auto idxB = b.create<mlir::arith::AddIOp>(loc, idxA, cStride).getResult();
+      auto a = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxA}).getResult();
+      auto bval = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxB}).getResult();
+      auto mx = b.create<mlir::arith::MaximumFOp>(loc, a, bval).getResult();
+      b.create<mlir::memref::StoreOp>(loc, mx, Sh, mlir::ValueRange{idxA});
+      b.setInsertionPointAfter(ifRed);
+      b.create<mlir::gpu::BarrierOp>(loc);
+    }
+
+    auto ifScalar = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifScalar.getThenRegion().front());
+    auto mTile = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cWeights}).getResult();
+    auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
+    auto alpha = b.create<mlir::math::Exp2Op>(
+                     loc,
+                     b.create<mlir::arith::MulFOp>(
+                         loc, b.create<mlir::arith::SubFOp>(loc, mPrev, mNew).getResult(), cLOG2E)
+                         .getResult())
+                     .getResult();
+    auto lScaled = b.create<mlir::arith::MulFOp>(loc, lPrev, alpha).getResult();
+    b.create<mlir::memref::StoreOp>(loc, mNew, Sh, mlir::ValueRange{cMOff});
+    b.create<mlir::memref::StoreOp>(loc, lScaled, Sh, mlir::ValueRange{cLOff}); // temp
+    b.create<mlir::memref::StoreOp>(loc, alpha, Sh, mlir::ValueRange{cAlphaOff});
+    b.setInsertionPointAfter(ifScalar);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    auto ifWeights = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, tidInKV, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifWeights.getThenRegion().front());
+    auto mNew2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
+    auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
+    auto w = b.create<mlir::math::Exp2Op>(
+                 loc,
+                 b.create<mlir::arith::MulFOp>(
+                     loc, b.create<mlir::arith::SubFOp>(loc, sv2, mNew2).getResult(), cLOG2E)
+                     .getResult())
+                 .getResult();
+    auto wIdx2 = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
+    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx2});
+    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{sIdx2}); // sum scratch
+    b.setInsertionPointAfter(ifWeights);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    for (int64_t stride = blockKV / 2; stride >= 1; stride /= 2) {
+      auto cStride = makeIndexConst(b, loc, stride);
+      auto pred = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cStride).getResult();
+      auto ifRed = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, pred, /*withElse=*/false);
+      b.setInsertionPointToStart(&ifRed.getThenRegion().front());
+      auto idxA = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
+      auto idxB = b.create<mlir::arith::AddIOp>(loc, idxA, cStride).getResult();
+      auto a = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxA}).getResult();
+      auto bval = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxB}).getResult();
+      auto sum = b.create<mlir::arith::AddFOp>(loc, a, bval).getResult();
+      b.create<mlir::memref::StoreOp>(loc, sum, Sh, mlir::ValueRange{idxA});
+      b.setInsertionPointAfter(ifRed);
+      b.create<mlir::gpu::BarrierOp>(loc);
+    }
+
+    auto ifFinal = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifFinal.getThenRegion().front());
+    auto lScaled2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+    auto sumP = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cScores}).getResult();
+    auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled2, sumP).getResult();
+    b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
+    b.setInsertionPointAfter(ifFinal);
+    b.create<mlir::gpu::BarrierOp>(loc);
+  } else {
+    // Thread 0: update online softmax scalars and write weights[0..blockKV).
+    auto ifSoftmax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifSoftmax.getThenRegion().front());
+    auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+    auto maxFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{negInf});
+    b.setInsertionPointToStart(maxFor.getBody());
+    auto t = maxFor.getInductionVar();
+    auto curMax = maxFor.getRegionIterArgs()[0];
+    auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, t).getResult();
+    auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
+    auto mx = b.create<mlir::arith::MaximumFOp>(loc, curMax, sv).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mx});
+    b.setInsertionPointAfter(maxFor);
+    auto mTile = maxFor.getResult(0);
+    auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
+    auto alpha = b.create<mlir::math::Exp2Op>(
+                     loc,
+                     b.create<mlir::arith::MulFOp>(
+                         loc, b.create<mlir::arith::SubFOp>(loc, mPrev, mNew).getResult(), cLOG2E)
+                         .getResult())
+                     .getResult();
+    auto lScaled = b.create<mlir::arith::MulFOp>(loc, lPrev, alpha).getResult();
+    auto sumFor = b.create<mlir::scf::ForOp>(loc, c0, cBlockKV, c1, mlir::ValueRange{c0f});
+    b.setInsertionPointToStart(sumFor.getBody());
+    auto tt = sumFor.getInductionVar();
+    auto curSum = sumFor.getRegionIterArgs()[0];
+    auto sIdx3 = b.create<mlir::arith::AddIOp>(loc, cScores, tt).getResult();
+    auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx3}).getResult();
+    auto w = b.create<mlir::math::Exp2Op>(
+                 loc,
+                 b.create<mlir::arith::MulFOp>(
+                     loc, b.create<mlir::arith::SubFOp>(loc, sv2, mNew).getResult(), cLOG2E)
+                     .getResult())
+                 .getResult();
+    auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tt).getResult();
+    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx});
+    auto sum2 = b.create<mlir::arith::AddFOp>(loc, curSum, w).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{sum2});
+    b.setInsertionPointAfter(sumFor);
+    auto sumP = sumFor.getResult(0);
+    auto lNew = b.create<mlir::arith::AddFOp>(loc, lScaled, sumP).getResult();
+    b.create<mlir::memref::StoreOp>(loc, mNew, Sh, mlir::ValueRange{cMOff});
+    b.create<mlir::memref::StoreOp>(loc, lNew, Sh, mlir::ValueRange{cLOff});
+    b.create<mlir::memref::StoreOp>(loc, alpha, Sh, mlir::ValueRange{cAlphaOff});
+    b.setInsertionPointAfter(ifSoftmax);
+    b.create<mlir::gpu::BarrierOp>(loc);
+  }
 
   // Output warps: accumulate acc = acc*alpha + sum(weights * V_tile).
   auto ifOut = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, predOut, /*withElse=*/true);
@@ -3462,11 +3947,25 @@ public:
 	    } else if (k == "rms_norm2d") {
 	      ok = lowerCudaRmsNorm2dRowwiseV1(lc);
 	    } else if (k == "flash_attention2d") {
-	      ok = lowerCudaFlashAttention2dCausalSoftmaxV6(lc, "attn2d_causal_softmax_v6");
+	      bool parallel = false;
+	      if (auto it = lc.shapeBindings.find("ATTN_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {
+	        parallel = (it->second != 0);
+	      }
+	      ok = lowerCudaFlashAttention2dCausalSoftmaxV6(
+	          lc, parallel ? "attn2d_causal_softmax_v7" : "attn2d_causal_softmax_v6");
 	    } else if (k == "masked_attention2d") {
-	      ok = lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1");
+	      bool v2 = false;
+	      if (auto it = lc.shapeBindings.find("ATTN_MASKED_SOFTMAX_V2"); it != lc.shapeBindings.end()) {
+	        v2 = (it->second != 0);
+	      }
+	      ok = v2 ? lowerCudaAttn2dCausalSoftmaxWarpV2(lc, "attn2d_causal_softmax_warp_v2")
+	              : lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1");
 	    } else if (k == "_attn_fwd") {
-	      ok = lowerCudaAttnFwdSoftmaxV6(lc, "attn_fwd_softmax_v6");
+	      bool parallel = false;
+	      if (auto it = lc.shapeBindings.find("ATTN_FWD_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {
+	        parallel = (it->second != 0);
+	      }
+	      ok = lowerCudaAttnFwdSoftmaxV6(lc, parallel ? "attn_fwd_softmax_v7" : "attn_fwd_softmax_v6");
 	    } else {
 	      module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
 	      ok = mlir::failure();

@@ -738,7 +738,10 @@ def _emit_mlir_shadow_artifacts(
                                     block_kv = 32
                                 block_warps = int(2 + score_warps)
                                 block_x = int(block_warps * 32)
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn2d_causal_softmax_v6"
+                                parallel = int(sb.get("ATTN_PARALLEL_SOFTMAX") or 0) != 0
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
+                                    "attn2d_causal_softmax_v7" if parallel else "attn2d_causal_softmax_v6"
+                                )
                                 mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
                                     "block_x": int(block_x),
                                     "block_kv": int(block_kv),
@@ -748,7 +751,7 @@ def _emit_mlir_shadow_artifacts(
                                     "q_ctx": int(q),
                                     "kv_ctx": int(kv),
                                     "mask": "causal",
-                                    "softmax": "online_v1",
+                                    "softmax": ("online_v1_parallel_reduce" if parallel else "online_v1_serial_t0"),
                                 }
                                 mid_mod.meta["cuda_real_mlir_launch_override"] = {
                                     "block": [int(block_x), 1, 1],
@@ -756,14 +759,17 @@ def _emit_mlir_shadow_artifacts(
                                 }
                             else:
                                 # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn2d_causal_softmax_warp_v1"
+                                use_v2 = int(sb.get("ATTN_MASKED_SOFTMAX_V2") or 0) != 0
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
+                                    "attn2d_causal_softmax_warp_v2" if use_v2 else "attn2d_causal_softmax_warp_v1"
+                                )
                                 mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
                                     "block_x": 32,
                                     "head_dim": int(hd),
                                     "q_ctx": int(q),
                                     "kv_ctx": int(kv),
                                     "mask": "causal",
-                                    "softmax": "online_v1",
+                                    "softmax": ("two_pass_v1" if use_v2 else "online_v1"),
                                 }
                                 mid_mod.meta["cuda_real_mlir_launch_override"] = {
                                     "block": [32, 1, 1],
@@ -783,7 +789,10 @@ def _emit_mlir_shadow_artifacts(
                         hd = int(sb.get("HEAD_DIM") or 0)
                         if z > 0 and qh > 0 and q > 0 and kv > 0 and hd > 0 and qh == kh:
                             mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn_fwd_softmax_v6"
+                            parallel = int(sb.get("ATTN_FWD_PARALLEL_SOFTMAX") or 0) != 0
+                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
+                                "attn_fwd_softmax_v7" if parallel else "attn_fwd_softmax_v6"
+                            )
                             mid_mod.meta["cuda_real_mlir_output_total"] = int(z) * int(qh) * int(q) * int(hd)
 
                             # NOTE: C++ attn_fwd_softmax_v6 is compiled for block_x=(2+score_warps)*32.
@@ -810,7 +819,7 @@ def _emit_mlir_shadow_artifacts(
                                 # attn_mask is all-zeros for the perf suites we run; the kernel
                                 # ignores it for performance.
                                 "attn_mask": "ignored",
-                                "softmax": "online_v1",
+                                "softmax": ("online_v1_parallel_reduce" if parallel else "online_v1_serial_t0"),
                             }
                             mid_mod.meta["cuda_real_mlir_launch_override"] = {
                                 "block": [int(block_x), 1, 1],
