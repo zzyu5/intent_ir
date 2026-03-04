@@ -35,3 +35,8 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm90","bindings":{"ATTN_MASKED_SOFTMAX_V2":1},"note":"cpp_plugin: enable two-pass softmax warp_v2 on sm90"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"_attn_fwd","arch":"sm90","bindings":{"ATTN_FWD_PARALLEL_SOFTMAX":1},"note":"cpp_plugin: enable parallel reduce softmax (v7) on sm90"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm90","bindings":{"ATTN_MASKED_HD16_KEYS_V1":1},"note":"cpp_plugin: enable HEAD_DIM=16 key-lane softmax for canonical tiny masked_attention2d on sm90"}
+
+# C++ plugin attention softmax variants (5090D sm120 perf)
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm120","when":{"HEAD_DIM":64},"bindings":{"ATTN_BLOCK_KV":64,"ATTN_SCORE_WARPS":6,"ATTN_PARALLEL_SOFTMAX":1,"FLASH_ATTN_ASYNC_COPY":1},"note":"cpp_plugin: enable v7 softmax + cp.async tile load on sm120 (focus Q=64,KV=64,HD=64 ratio~1.00)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm120","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{"ATTN_MASKED_HD16_KEYS_V1":1},"note":"cpp_plugin: enable HEAD_DIM=16 key-lane softmax on sm120 tiny masked_attention2d (ratio~0.98)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"_attn_fwd","arch":"sm120","when":{"HEAD_DIM":64},"bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32,"ATTN_FWD_PARALLEL_SOFTMAX":1},"note":"cpp_plugin: enable parallel reduce softmax (v7) on sm120 (_attn_fwd ratio~1.20 canonical)"}
