@@ -68,6 +68,12 @@ def emit_std_mlir(
                 json.dumps(bindings, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             ).decode("ascii")
             attrs.append(f'intentir.shape_bindings_b64 = "{b64}"')
+
+    # Optional kernel-kind override (used by the C++ pass plugin to pick
+    # a specific lowering variant under strict, no-fallback policies).
+    kk = str((intent.meta or {}).get("intentir_kernel_kind_override") or "").strip()
+    if kk:
+        attrs.append(f'intentir.kernel_kind_override = "{_escape_mlir_string(kk)}"')
     if include_json_payload:
         attrs.append(f'intentir.intent_json_b64 = "{encoded}"')
     if symbols:

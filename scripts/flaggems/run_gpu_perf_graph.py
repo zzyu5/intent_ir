@@ -298,7 +298,12 @@ def _intentir_perf_binding_overrides_for_kernel(
     a = str(arch or "").strip()
     if k and a:
         entries = _TUNING_DB_BY_KERNEL_ARCH.get((k, a)) or []
-        merged, _kernel_kind = resolve_tuning_entries(list(entries), shape_bindings=dict(shape_bindings))
+        compiler_stack = str(os.getenv("INTENTIR_COMPILER_STACK", "python") or "").strip().lower()
+        merged, _kernel_kind = resolve_tuning_entries(
+            list(entries),
+            shape_bindings=dict(shape_bindings),
+            compiler_stack=compiler_stack,
+        )
         if bool(merged):
             return dict(merged), "tuning_db"
 

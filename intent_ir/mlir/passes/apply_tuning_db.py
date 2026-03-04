@@ -91,7 +91,12 @@ def apply_tuning_db(module: IntentMLIRModule, *, backend: str | None = None, **_
     kernel_kind_override = ""
     if kernel and arch:
         entries = db.get((kernel, arch)) or []
-        merged, kernel_kind_override = resolve_tuning_entries(entries, shape_bindings=shape_bindings)
+        compiler_stack = str(os.getenv("INTENTIR_COMPILER_STACK", "python") or "").strip().lower()
+        merged, kernel_kind_override = resolve_tuning_entries(
+            entries,
+            shape_bindings=shape_bindings,
+            compiler_stack=compiler_stack,
+        )
         for k, v in dict(merged).items():
             key = str(k).strip()
             if not key:

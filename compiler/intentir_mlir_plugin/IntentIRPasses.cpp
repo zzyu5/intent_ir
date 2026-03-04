@@ -306,6 +306,7 @@ struct LoweringContext {
   std::vector<std::string> outputs;
   std::vector<std::string> argOrder;
   std::string kernelName;
+  std::string kernelKindOverride;
 };
 
 static mlir::Value makeIndexConst(mlir::OpBuilder &b, mlir::Location loc, int64_t v) {
@@ -410,6 +411,11 @@ static mlir::FailureOr<LoweringContext> parseLoweringContext(mlir::ModuleOp modu
   if (kernelName.empty())
     kernelName = "intent";
 
+  std::string kernelKindOverride;
+  if (auto attr = module->getAttrOfType<mlir::StringAttr>("intentir.kernel_kind_override")) {
+    kernelKindOverride = attr.str();
+  }
+
   LoweringContext ctx{
       module,
       mlir::OpBuilder(module.getContext()),
@@ -420,6 +426,7 @@ static mlir::FailureOr<LoweringContext> parseLoweringContext(mlir::ModuleOp modu
       *outsOr,
       {},
       kernelName,
+      kernelKindOverride,
   };
   ctx.argOrder = computeIOArgOrder(ctx.tensors, ctx.ops, ctx.outputs);
   return ctx;
@@ -4333,43 +4340,85 @@ public:
 
     const std::string k = lc.kernelName;
     mlir::LogicalResult ok = mlir::failure();
-	    if (k == "ai_bench_matmul") {
-	      ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
-	    } else if (k == "matmul_fused_epilogue2d") {
-	      ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
-	    } else if (k == "rms_norm2d") {
-	      ok = lowerCudaRmsNorm2dRowwiseV1(lc);
-	    } else if (k == "flash_attention2d") {
-	      bool parallel = false;
-	      if (auto it = lc.shapeBindings.find("ATTN_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {
-	        parallel = (it->second != 0);
-	      }
-	      ok = lowerCudaFlashAttention2dCausalSoftmaxV6(
-	          lc, parallel ? "attn2d_causal_softmax_v7" : "attn2d_causal_softmax_v6");
-	    } else if (k == "masked_attention2d") {
-	      bool hd16_keys = false;
-	      if (auto it = lc.shapeBindings.find("ATTN_MASKED_HD16_KEYS_V1"); it != lc.shapeBindings.end()) {
-	        hd16_keys = (it->second != 0);
-	      }
-	      bool v2 = false;
-	      if (auto it = lc.shapeBindings.find("ATTN_MASKED_SOFTMAX_V2"); it != lc.shapeBindings.end()) {
-	        v2 = (it->second != 0);
-	      }
-	      ok = hd16_keys
-	               ? lowerCudaMaskedAttention2dHd16KeysV1(
-	                     lc, "attn2d_causal_softmax_masked_hd16_keys_v1")
-	               : (v2 ? lowerCudaAttn2dCausalSoftmaxWarpV2(lc, "attn2d_causal_softmax_warp_v2")
-	                     : lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1"));
-	    } else if (k == "_attn_fwd") {
-	      bool parallel = false;
-	      if (auto it = lc.shapeBindings.find("ATTN_FWD_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {
-	        parallel = (it->second != 0);
-	      }
-	      ok = lowerCudaAttnFwdSoftmaxV6(lc, parallel ? "attn_fwd_softmax_v7" : "attn_fwd_softmax_v6");
-	    } else {
-	      module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
-	      ok = mlir::failure();
-	    }
+
+    llvm::StringRef kindOverride = llvm::StringRef(lc.kernelKindOverride).trim();
+
+    if (k == "ai_bench_matmul") {
+      ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
+    } else if (k == "matmul_fused_epilogue2d") {
+      ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
+    } else if (k == "rms_norm2d") {
+      ok = lowerCudaRmsNorm2dRowwiseV1(lc);
+    } else if (k == "flash_attention2d") {
+      llvm::StringRef kind = "attn2d_causal_softmax_v6";
+      bool valid = true;
+      if (!kindOverride.empty()) {
+        if (kindOverride == "attn2d_causal_softmax_v6" || kindOverride == "attn2d_causal_softmax_v7") {
+          kind = kindOverride;
+        } else {
+          module.emitError() << "invalid intentir.kernel_kind_override for flash_attention2d: "
+                             << kindOverride << "; allowed=[attn2d_causal_softmax_v6, attn2d_causal_softmax_v7]";
+          valid = false;
+        }
+      } else {
+        bool parallel = false;
+        if (auto it = lc.shapeBindings.find("ATTN_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {
+          parallel = (it->second != 0);
+        }
+        kind = parallel ? "attn2d_causal_softmax_v7" : "attn2d_causal_softmax_v6";
+      }
+      ok = valid ? lowerCudaFlashAttention2dCausalSoftmaxV6(lc, kind) : mlir::failure();
+    } else if (k == "masked_attention2d") {
+      if (!kindOverride.empty()) {
+        if (kindOverride == "attn2d_causal_softmax_masked_hd16_keys_v1") {
+          ok = lowerCudaMaskedAttention2dHd16KeysV1(lc, kindOverride);
+        } else if (kindOverride == "attn2d_causal_softmax_warp_v2") {
+          ok = lowerCudaAttn2dCausalSoftmaxWarpV2(lc, kindOverride);
+        } else if (kindOverride == "attn2d_causal_softmax_warp_v1") {
+          ok = lowerCudaAttn2dCausalSoftmaxWarpV1(lc, kindOverride);
+        } else {
+          module.emitError() << "invalid intentir.kernel_kind_override for masked_attention2d: "
+                             << kindOverride
+                             << "; allowed=[attn2d_causal_softmax_masked_hd16_keys_v1, attn2d_causal_softmax_warp_v2, "
+                                "attn2d_causal_softmax_warp_v1]";
+          ok = mlir::failure();
+        }
+      } else {
+        bool hd16_keys = false;
+        if (auto it = lc.shapeBindings.find("ATTN_MASKED_HD16_KEYS_V1"); it != lc.shapeBindings.end()) {
+          hd16_keys = (it->second != 0);
+        }
+        bool v2 = false;
+        if (auto it = lc.shapeBindings.find("ATTN_MASKED_SOFTMAX_V2"); it != lc.shapeBindings.end()) {
+          v2 = (it->second != 0);
+        }
+        ok = hd16_keys ? lowerCudaMaskedAttention2dHd16KeysV1(lc, "attn2d_causal_softmax_masked_hd16_keys_v1")
+                       : (v2 ? lowerCudaAttn2dCausalSoftmaxWarpV2(lc, "attn2d_causal_softmax_warp_v2")
+                             : lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1"));
+      }
+    } else if (k == "_attn_fwd") {
+      llvm::StringRef kind = "attn_fwd_softmax_v6";
+      bool valid = true;
+      if (!kindOverride.empty()) {
+        if (kindOverride == "attn_fwd_softmax_v6" || kindOverride == "attn_fwd_softmax_v7") {
+          kind = kindOverride;
+        } else {
+          module.emitError() << "invalid intentir.kernel_kind_override for _attn_fwd: " << kindOverride
+                             << "; allowed=[attn_fwd_softmax_v6, attn_fwd_softmax_v7]";
+          valid = false;
+        }
+      } else {
+        bool parallel = false;
+        if (auto it = lc.shapeBindings.find("ATTN_FWD_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {
+          parallel = (it->second != 0);
+        }
+        kind = parallel ? "attn_fwd_softmax_v7" : "attn_fwd_softmax_v6";
+      }
+      ok = valid ? lowerCudaAttnFwdSoftmaxV6(lc, kind) : mlir::failure();
+    } else {
+      module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
+      ok = mlir::failure();
+    }
     if (mlir::failed(ok)) {
       signalPassFailure();
       return;

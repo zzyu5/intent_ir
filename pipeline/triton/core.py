@@ -286,7 +286,11 @@ def _apply_cuda_tuning_db_for_cpp_stack(
         return dict(shape_bindings), meta
 
     entries = db.get((str(kernel), str(arch))) or []
-    merged, kernel_kind_override = resolve_tuning_entries(list(entries), shape_bindings=dict(shape_bindings))
+    merged, kernel_kind_override = resolve_tuning_entries(
+        list(entries),
+        shape_bindings=dict(shape_bindings),
+        compiler_stack=_compiler_stack_name(),
+    )
 
     applied: dict[str, int] = {}
     for k, v in dict(merged).items():
@@ -486,6 +490,14 @@ def _emit_mlir_shadow_artifacts(
                 }
             except Exception:
                 pass
+        if isinstance(tuning_meta, dict) and tuning_meta:
+            kk = str(tuning_meta.get("intentir_kernel_kind_override") or "").strip()
+            if kk:
+                try:
+                    intent.meta = dict(intent.meta or {})
+                    intent.meta["intentir_kernel_kind_override"] = kk
+                except Exception:
+                    pass
         mod = to_mlir(intent)
         mlir_report["module_path"] = ""
         if shadow_enabled:
@@ -722,6 +734,7 @@ def _emit_mlir_shadow_artifacts(
                         and isinstance(mid_mod.meta.get("shape_bindings"), dict)
                     ):
                         sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
+                        kind_override = str(mid_mod.meta.get("intentir_kernel_kind_override") or "").strip()
                         q = int(sb.get("Q_CTX") or 0)
                         kv = int(sb.get("KV_CTX") or 0)
                         hd = int(sb.get("HEAD_DIM") or 0)
@@ -738,10 +751,14 @@ def _emit_mlir_shadow_artifacts(
                                     block_kv = 32
                                 block_warps = int(2 + score_warps)
                                 block_x = int(block_warps * 32)
-                                parallel = int(sb.get("ATTN_PARALLEL_SOFTMAX") or 0) != 0
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
-                                    "attn2d_causal_softmax_v7" if parallel else "attn2d_causal_softmax_v6"
-                                )
+                                kind = ""
+                                if kind_override in {"attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"}:
+                                    kind = kind_override
+                                if not kind:
+                                    parallel = int(sb.get("ATTN_PARALLEL_SOFTMAX") or 0) != 0
+                                    kind = "attn2d_causal_softmax_v7" if parallel else "attn2d_causal_softmax_v6"
+                                parallel = kind == "attn2d_causal_softmax_v7"
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = str(kind)
                                 mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
                                     "block_x": int(block_x),
                                     "block_kv": int(block_kv),
@@ -759,24 +776,38 @@ def _emit_mlir_shadow_artifacts(
                                 }
                             else:
                                 # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
-                                use_hd16 = int(sb.get("ATTN_MASKED_HD16_KEYS_V1") or 0) != 0
-                                use_v2 = int(sb.get("ATTN_MASKED_SOFTMAX_V2") or 0) != 0
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
-                                    "attn2d_causal_softmax_masked_hd16_keys_v1"
-                                    if use_hd16
-                                    else ("attn2d_causal_softmax_warp_v2" if use_v2 else "attn2d_causal_softmax_warp_v1")
-                                )
+                                kind = ""
+                                if kind_override in {
+                                    "attn2d_causal_softmax_masked_hd16_keys_v1",
+                                    "attn2d_causal_softmax_warp_v2",
+                                    "attn2d_causal_softmax_warp_v1",
+                                }:
+                                    kind = kind_override
+                                if not kind:
+                                    use_hd16 = int(sb.get("ATTN_MASKED_HD16_KEYS_V1") or 0) != 0
+                                    use_v2 = int(sb.get("ATTN_MASKED_SOFTMAX_V2") or 0) != 0
+                                    kind = (
+                                        "attn2d_causal_softmax_masked_hd16_keys_v1"
+                                        if use_hd16
+                                        else (
+                                            "attn2d_causal_softmax_warp_v2"
+                                            if use_v2
+                                            else "attn2d_causal_softmax_warp_v1"
+                                        )
+                                    )
+                                softmax = "online_v1"
+                                if kind == "attn2d_causal_softmax_masked_hd16_keys_v1":
+                                    softmax = "masked_hd16_keys_v1"
+                                elif kind == "attn2d_causal_softmax_warp_v2":
+                                    softmax = "two_pass_v1"
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = str(kind)
                                 mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
                                     "block_x": 32,
                                     "head_dim": int(hd),
                                     "q_ctx": int(q),
                                     "kv_ctx": int(kv),
                                     "mask": "causal",
-                                    "softmax": (
-                                        "masked_hd16_keys_v1"
-                                        if use_hd16
-                                        else ("two_pass_v1" if use_v2 else "online_v1")
-                                    ),
+                                    "softmax": str(softmax),
                                 }
                                 mid_mod.meta["cuda_real_mlir_launch_override"] = {
                                     "block": [32, 1, 1],
@@ -788,6 +819,7 @@ def _emit_mlir_shadow_artifacts(
                         and isinstance(mid_mod.meta.get("shape_bindings"), dict)
                     ):
                         sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
+                        kind_override = str(mid_mod.meta.get("intentir_kernel_kind_override") or "").strip()
                         z = int(sb.get("Z") or 0)
                         qh = int(sb.get("q_numhead") or 0)
                         kh = int(sb.get("kv_numhead") or 0)
@@ -796,10 +828,14 @@ def _emit_mlir_shadow_artifacts(
                         hd = int(sb.get("HEAD_DIM") or 0)
                         if z > 0 and qh > 0 and q > 0 and kv > 0 and hd > 0 and qh == kh:
                             mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                            parallel = int(sb.get("ATTN_FWD_PARALLEL_SOFTMAX") or 0) != 0
-                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
-                                "attn_fwd_softmax_v7" if parallel else "attn_fwd_softmax_v6"
-                            )
+                            kind = ""
+                            if kind_override in {"attn_fwd_softmax_v6", "attn_fwd_softmax_v7"}:
+                                kind = kind_override
+                            if not kind:
+                                parallel = int(sb.get("ATTN_FWD_PARALLEL_SOFTMAX") or 0) != 0
+                                kind = "attn_fwd_softmax_v7" if parallel else "attn_fwd_softmax_v6"
+                            parallel = kind == "attn_fwd_softmax_v7"
+                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = str(kind)
                             mid_mod.meta["cuda_real_mlir_output_total"] = int(z) * int(qh) * int(q) * int(hd)
 
                             # NOTE: C++ attn_fwd_softmax_v6 is compiled for block_x=(2+score_warps)*32.

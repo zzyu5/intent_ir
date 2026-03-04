@@ -17,6 +17,7 @@ class TuningDBEntry:
     bindings: dict[str, Any]
     kernel_kind: str = ""
     when: dict[str, Any] = field(default_factory=dict)
+    compiler_stacks: tuple[str, ...] = field(default_factory=tuple)
 
 
 def _to_repo_rel(path: Path) -> str:
@@ -109,7 +110,10 @@ def _match_when(when: dict[str, Any], shape_bindings: dict[str, int]) -> bool:
 
 
 def resolve_tuning_entries(
-    entries: list[TuningDBEntry], *, shape_bindings: dict[str, int]
+    entries: list[TuningDBEntry],
+    *,
+    shape_bindings: dict[str, int],
+    compiler_stack: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     """
     Apply all matching entries in file order (last-match wins).
@@ -117,11 +121,19 @@ def resolve_tuning_entries(
     Returns (merged_bindings, kernel_kind_override_or_empty).
     """
 
+    stack = str(compiler_stack or "").strip().lower()
+    if stack in {"cpp", "c++"}:
+        stack = "cpp_plugin"
+
     merged: dict[str, Any] = {}
     kernel_kind = ""
     for e in list(entries or []):
         if not isinstance(e, TuningDBEntry):
             continue
+        if e.compiler_stacks:
+            allowed = {str(x).strip().lower() for x in e.compiler_stacks if str(x).strip()}
+            if stack not in allowed:
+                continue
         if not _match_when(dict(e.when or {}), shape_bindings=shape_bindings):
             continue
         merged.update(dict(e.bindings or {}))
@@ -176,8 +188,28 @@ def load_tuning_db_jsonl(*, path: Path, backend: str | None = None) -> dict[tupl
         if when is None:
             when = row.get("shape")  # legacy/alt spelling
         when_dict = dict(when) if isinstance(when, dict) else {}
+
+        stacks_raw = row.get("compiler_stack")
+        if stacks_raw is None:
+            stacks_raw = row.get("stack")
+        stacks: list[str] = []
+        if isinstance(stacks_raw, str):
+            s = str(stacks_raw).strip()
+            if s:
+                stacks = [s]
+        elif isinstance(stacks_raw, (list, tuple, set)):
+            for x in list(stacks_raw):
+                s = str(x).strip()
+                if s:
+                    stacks.append(s)
+
         out.setdefault((kernel, arch), []).append(
-            TuningDBEntry(bindings=dict(bindings), kernel_kind=str(kernel_kind), when=when_dict)
+            TuningDBEntry(
+                bindings=dict(bindings),
+                kernel_kind=str(kernel_kind),
+                when=when_dict,
+                compiler_stacks=tuple(stacks),
+            )
         )
     return out
 
