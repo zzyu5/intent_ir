@@ -302,6 +302,77 @@ static std::string encodeShapeBindingsJson(const std::map<std::string, int64_t> 
   return out;
 }
 
+static llvm::json::Object loadIntentirMetaJson(mlir::ModuleOp module) {
+  llvm::json::Object out;
+  auto attr = module->getAttrOfType<mlir::StringAttr>("intentir.meta_json_b64");
+  if (!attr) {
+    return out;
+  }
+  auto decodedOr = decodeB64(attr.str());
+  if (mlir::failed(decodedOr)) {
+    return out;
+  }
+  auto parsedOr = parseJson(*decodedOr);
+  if (mlir::failed(parsedOr)) {
+    return out;
+  }
+  const auto *obj = (*parsedOr).getAsObject();
+  if (!obj) {
+    return out;
+  }
+  for (const auto &kv : *obj) {
+    out[kv.first] = kv.second;
+  }
+  return out;
+}
+
+static void storeIntentirMetaJson(mlir::ModuleOp module, const llvm::json::Object &obj) {
+  auto *mlirCtx = module.getContext();
+  std::string jsonText;
+  llvm::raw_string_ostream os(jsonText);
+  llvm::json::Object tmp;
+  for (const auto &kv : obj) {
+    tmp[kv.first] = kv.second;
+  }
+  os << llvm::json::Value(std::move(tmp));
+  os.flush();
+  const std::string b64 = llvm::encodeBase64(llvm::StringRef(jsonText));
+  module->setAttr("intentir.meta_json_b64", mlir::StringAttr::get(mlirCtx, b64));
+}
+
+static void mergeIntentirMetaJson(mlir::ModuleOp module,
+                                  llvm::function_ref<void(llvm::json::Object &)> update) {
+  llvm::json::Object meta = loadIntentirMetaJson(module);
+  update(meta);
+  storeIntentirMetaJson(module, meta);
+}
+
+static llvm::json::Object makeCudaLaunchOverride(int64_t bx, int64_t by, int64_t bz, int64_t gx,
+                                                 int64_t gy, int64_t gz,
+                                                 int64_t sharedMem = 0) {
+  llvm::json::Object out;
+  llvm::json::Array block;
+  block.push_back(static_cast<int64_t>(bx));
+  block.push_back(static_cast<int64_t>(by));
+  block.push_back(static_cast<int64_t>(bz));
+  llvm::json::Array grid;
+  grid.push_back(static_cast<int64_t>(gx));
+  grid.push_back(static_cast<int64_t>(gy));
+  grid.push_back(static_cast<int64_t>(gz));
+  out["block"] = std::move(block);
+  out["grid"] = std::move(grid);
+  out["shared_mem"] = static_cast<int64_t>(sharedMem);
+  return out;
+}
+
+static llvm::json::Object makeJsonIntObject(const std::map<std::string, int64_t> &vals) {
+  llvm::json::Object out;
+  for (const auto &kv : vals) {
+    out[kv.first] = static_cast<int64_t>(kv.second);
+  }
+  return out;
+}
+
 static std::optional<int64_t> resolveDimToken(llvm::json::Value tok,
                                               const std::map<std::string, int64_t> &bindings) {
   if (auto i = tok.getAsInteger()) {
@@ -1693,6 +1764,27 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
 
+  const int64_t gridX = N / bn;
+  const int64_t gridY = M / bm;
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind;
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/gridX, /*gy=*/gridY, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(M * N);
+    llvm::json::Object cfg;
+    cfg["BM"] = static_cast<int64_t>(bm);
+    cfg["BN"] = static_cast<int64_t>(bn);
+    cfg["BK"] = static_cast<int64_t>(bk);
+    cfg["mma"] = "tf32";
+    cfg["pipeline"] = asyncCopyRequested ? "cp_async_double_buffer" : "global_load";
+    cfg["b_transpose"] = static_cast<bool>(bTranspose);
+    meta["cuda_real_mlir_matmul_cfg"] = std::move(cfg);
+  });
+
   return mlir::success();
 }
 
@@ -2181,6 +2273,27 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
+
+  const int64_t gridX = N / bn;
+  const int64_t gridY = M / bm;
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind;
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/gridX, /*gy=*/gridY, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(M * N);
+    llvm::json::Object cfg;
+    cfg["BM"] = static_cast<int64_t>(bm);
+    cfg["BN"] = static_cast<int64_t>(bn);
+    cfg["BK"] = static_cast<int64_t>(bk);
+    cfg["mma"] = "tf32";
+    cfg["pipeline"] = asyncCopyRequested ? "cp_async_double_buffer" : "global_load";
+    cfg["epilogue"] = "bias_rowmask_colmask";
+    meta["cuda_real_mlir_matmul_cfg"] = std::move(cfg);
+  });
   return mlir::success();
 }
 
@@ -2450,6 +2563,23 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &c
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind.str();
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/Q, /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(Q * HD);
+    llvm::json::Object cfg;
+    cfg["block_x"] = static_cast<int64_t>(threads);
+    cfg["q_ctx"] = static_cast<int64_t>(Q);
+    cfg["kv_ctx"] = static_cast<int64_t>(KV);
+    cfg["head_dim"] = static_cast<int64_t>(HD);
+    cfg["softmax"] = "online_v1_warp";
+    meta["cuda_real_mlir_attention_cfg"] = std::move(cfg);
+  });
   return mlir::success();
 }
 
@@ -2745,6 +2875,23 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV2(LoweringContext &c
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind.str();
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/Q, /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(Q * HD);
+    llvm::json::Object cfg;
+    cfg["block_x"] = static_cast<int64_t>(threads);
+    cfg["q_ctx"] = static_cast<int64_t>(Q);
+    cfg["kv_ctx"] = static_cast<int64_t>(KV);
+    cfg["head_dim"] = static_cast<int64_t>(HD);
+    cfg["softmax"] = "two_pass_warp";
+    meta["cuda_real_mlir_attention_cfg"] = std::move(cfg);
+  });
   return mlir::success();
 }
 
@@ -2978,6 +3125,23 @@ static mlir::LogicalResult lowerCudaMaskedAttention2dHd16KeysV1(LoweringContext 
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind.str();
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/32, /*by=*/1, /*bz=*/1, /*gx=*/Q, /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(Q * HD);
+    llvm::json::Object cfg;
+    cfg["block_x"] = static_cast<int64_t>(32);
+    cfg["q_ctx"] = static_cast<int64_t>(Q);
+    cfg["kv_ctx"] = static_cast<int64_t>(KV);
+    cfg["head_dim"] = static_cast<int64_t>(HD);
+    cfg["softmax"] = "hd16_keys_warp";
+    meta["cuda_real_mlir_attention_cfg"] = std::move(cfg);
+  });
   return mlir::success();
 }
 
@@ -3609,6 +3773,29 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind.str();
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/Q, /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(Q * HD);
+    llvm::json::Object cfg;
+    cfg["block_x"] = static_cast<int64_t>(threads);
+    cfg["block_kv"] = static_cast<int64_t>(blockKV);
+    cfg["out_warps"] = static_cast<int64_t>(outWarps);
+    cfg["score_warps"] = static_cast<int64_t>(scoreWarps);
+    cfg["head_dim"] = static_cast<int64_t>(HD);
+    cfg["q_ctx"] = static_cast<int64_t>(Q);
+    cfg["kv_ctx"] = static_cast<int64_t>(KV);
+    cfg["direct_kv"] = static_cast<bool>(directKV);
+    cfg["async_copy"] = static_cast<bool>(asyncCopy);
+    cfg["softmax"] =
+        (kernelKind == "attn2d_causal_softmax_v7") ? "online_v1_parallel_reduce" : "online_v1_serial_t0";
+    meta["cuda_real_mlir_attention_cfg"] = std::move(cfg);
+  });
   return mlir::success();
 }
 
@@ -4121,6 +4308,31 @@ static mlir::LogicalResult lowerCudaAttnFwdSoftmaxV6(LoweringContext &ctx, llvm:
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, kernelKind));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = kernelKind.str();
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/(Z * QH * QCTX), /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(Z * QH * QCTX * HD);
+    llvm::json::Object cfg;
+    cfg["block_x"] = static_cast<int64_t>(threads);
+    cfg["block_kv"] = static_cast<int64_t>(blockKV);
+    cfg["out_warps"] = static_cast<int64_t>(outWarps);
+    cfg["score_warps"] = static_cast<int64_t>(scoreWarps);
+    cfg["head_dim"] = static_cast<int64_t>(HD);
+    cfg["q_ctx"] = static_cast<int64_t>(QCTX);
+    cfg["kv_ctx"] = static_cast<int64_t>(KVCTX);
+    cfg["z"] = static_cast<int64_t>(Z);
+    cfg["q_numhead"] = static_cast<int64_t>(QH);
+    cfg["kv_numhead"] = static_cast<int64_t>(KH);
+    cfg["softmax"] =
+        (kernelKind == "attn_fwd_softmax_v7") ? "online_v1_parallel_reduce" : "online_v1_serial_t0";
+    cfg["attn_mask"] = "ignored";
+    meta["cuda_real_mlir_attention_cfg"] = std::move(cfg);
+  });
   return mlir::success();
 }
 
@@ -4420,6 +4632,16 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
                       mlir::StringAttr::get(mlirCtx, "rms_norm2d_rowwise_v1"));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = "rms_norm2d_rowwise_v1";
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/M, /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(M * N);
+  });
   return mlir::success();
 }
 
@@ -4663,27 +4885,42 @@ public:
       }
 
     next_line:
-      if (rest.empty())
+    if (rest.empty())
         break;
     }
 
-    if (applied.empty() && kernelKind.empty()) {
-      return;
+    const bool anyTuning = (!applied.empty() || !kernelKind.empty());
+    if (anyTuning) {
+      std::map<std::string, int64_t> merged = baseBindings;
+      for (const auto &kv : applied) {
+        merged[kv.first] = kv.second;
+      }
+
+      const std::string jsonText = encodeShapeBindingsJson(merged);
+      const std::string b64 = llvm::encodeBase64(llvm::StringRef(jsonText));
+      module->setAttr("intentir.shape_bindings_b64", mlir::StringAttr::get(mlirCtx, b64));
+
+      if (!kernelKind.empty() && !module->hasAttr("intentir.kernel_kind_override")) {
+        module->setAttr("intentir.kernel_kind_override",
+                        mlir::StringAttr::get(mlirCtx, kernelKind));
+      }
     }
 
-    std::map<std::string, int64_t> merged = baseBindings;
-    for (const auto &kv : applied) {
-      merged[kv.first] = kv.second;
+    std::string finalKindOverride;
+    if (auto kkAttr = module->getAttrOfType<mlir::StringAttr>("intentir.kernel_kind_override")) {
+      finalKindOverride = kkAttr.str();
     }
-
-    const std::string jsonText = encodeShapeBindingsJson(merged);
-    const std::string b64 = llvm::encodeBase64(llvm::StringRef(jsonText));
-    module->setAttr("intentir.shape_bindings_b64", mlir::StringAttr::get(mlirCtx, b64));
-
-    if (!kernelKind.empty() && !module->hasAttr("intentir.kernel_kind_override")) {
-      module->setAttr("intentir.kernel_kind_override",
-                      mlir::StringAttr::get(mlirCtx, kernelKind));
-    }
+    mergeIntentirMetaJson(module, [&](llvm::json::Object &meta) {
+      meta["schema_version"] = "intentir_meta_v1";
+      meta["compiler_stack"] = "cpp_plugin";
+      meta["intentir_tuning_source"] = anyTuning ? "tuning_db" : "none";
+      meta["intentir_tuning_arch"] = arch;
+      meta["intentir_tuning_db"] = path;
+      meta["intentir_tuning_applied"] = makeJsonIntObject(applied);
+      if (!finalKindOverride.empty()) {
+        meta["intentir_kernel_kind_override"] = finalKindOverride;
+      }
+    });
   }
 };
 
