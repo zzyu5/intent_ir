@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-03-04T18:13:59+00:00",
+  "updated_at": "2026-03-04T19:06:45+00:00",
   "branch": "compiler-cleanup-v1",
   "head_commit": "cb5deb16fdcc9203adf080ff4554ae203d421f56",
   "mode": "maintenance",
@@ -136,8 +136,8 @@
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v6/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v6/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/status_converged.json"
   },
   "lanes": {
     "coverage": {
