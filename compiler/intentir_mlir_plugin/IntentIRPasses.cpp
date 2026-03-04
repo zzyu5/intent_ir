@@ -332,6 +332,18 @@ static mlir::Value warpAllReduceSumF32(mlir::OpBuilder &b, mlir::Location loc, m
   return cur;
 }
 
+static mlir::Value warpAllReduceMaxF32(mlir::OpBuilder &b, mlir::Location loc, mlir::Value v) {
+  auto c32 = makeI32Const(b, loc, 32);
+  mlir::Value cur = v;
+  for (int32_t offset : {16, 8, 4, 2, 1}) {
+    auto off = makeI32Const(b, loc, offset);
+    auto sh = b.create<mlir::gpu::ShuffleOp>(loc, cur, off, c32, mlir::gpu::ShuffleMode::XOR);
+    auto val = sh.getResult(0);
+    cur = b.create<mlir::arith::MaximumFOp>(loc, cur, val).getResult();
+  }
+  return cur;
+}
+
 static mlir::FailureOr<LoweringContext> parseLoweringContext(mlir::ModuleOp module) {
   auto jsonB64Or = getRequiredStringAttr(module, "intentir.intent_json_b64");
   if (mlir::failed(jsonB64Or)) {
@@ -2527,6 +2539,239 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV2(LoweringContext &c
   return mlir::success();
 }
 
+static mlir::LogicalResult lowerCudaMaskedAttention2dHd16KeysV1(LoweringContext &ctx,
+                                                                llvm::StringRef kernelKind) {
+  // masked_attention2d specialization for canonical tiny shapes:
+  // - HEAD_DIM==16
+  // - KV_CTX<=32 (one warp handles keys)
+  //
+  // Thread mapping:
+  // - tid in [0..KV): key lane computes score[k] (full dot in-thread), participates in warp softmax.
+  // - tid in [0..16): output lane computes Out[d] = sum_k prob[k] * V[k,d]
+
+  auto *mlirCtx = ctx.module.getContext();
+  auto loc = ctx.module.getLoc();
+  auto &b = ctx.builder;
+
+  const std::string qName = "Q";
+  const std::string kName = "K";
+  const std::string vName = "V";
+  const std::string scaleName = "sm_scale";
+  const std::string outName = "Out";
+  if (ctx.tensors.find(qName) == ctx.tensors.end() || ctx.tensors.find(kName) == ctx.tensors.end() ||
+      ctx.tensors.find(vName) == ctx.tensors.end() || ctx.tensors.find(outName) == ctx.tensors.end()) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): missing tensor specs for Q/K/V/Out");
+    return mlir::failure();
+  }
+
+  auto shapeQOr = resolveShape(ctx.tensors[qName], ctx.shapeBindings);
+  auto shapeKOr = resolveShape(ctx.tensors[kName], ctx.shapeBindings);
+  auto shapeVOr = resolveShape(ctx.tensors[vName], ctx.shapeBindings);
+  auto shapeOOr = resolveShape(ctx.tensors[outName], ctx.shapeBindings);
+  if (mlir::failed(shapeQOr) || mlir::failed(shapeKOr) || mlir::failed(shapeVOr) ||
+      mlir::failed(shapeOOr)) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): failed to resolve shapes");
+    return mlir::failure();
+  }
+  if (shapeQOr->size() != 2 || shapeKOr->size() != 2 || shapeVOr->size() != 2 ||
+      shapeOOr->size() != 2) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): expected rank-2 tensors");
+    return mlir::failure();
+  }
+  const int64_t Q = (*shapeQOr)[0];
+  const int64_t HD = (*shapeQOr)[1];
+  const int64_t KV = (*shapeKOr)[0];
+  const int64_t HD2 = (*shapeKOr)[1];
+  if (KV != (*shapeVOr)[0] || HD2 != (*shapeVOr)[1]) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): K/V shape mismatch");
+    return mlir::failure();
+  }
+  if ((*shapeOOr)[0] != Q || (*shapeOOr)[1] != HD) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): Out shape mismatch");
+    return mlir::failure();
+  }
+  if (Q <= 0 || KV <= 0 || HD <= 0) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): invalid dims");
+    return mlir::failure();
+  }
+  if (HD != 16) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): requires HEAD_DIM==16");
+    return mlir::failure();
+  }
+  if (KV > 32) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): requires KV_CTX<=32");
+    return mlir::failure();
+  }
+
+  clearModuleBody(ctx.module);
+  ctx.module->setAttr("gpu.container_module", mlir::UnitAttr::get(mlirCtx));
+  if (!ctx.module->hasAttr("llvm.target_triple")) {
+    ctx.module->setAttr("llvm.target_triple",
+                        mlir::StringAttr::get(mlirCtx, "nvptx64-nvidia-cuda"));
+  }
+
+  b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
+  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
+
+  auto f32 = b.getF32Type();
+  auto globalMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+  auto sharedMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 3);
+
+  // Shared layout: q[16] + probs[32].
+  const int64_t qElems = 16;
+  const int64_t probBase = qElems;
+  const int64_t probElems = 32;
+  const int64_t shElems = probBase + probElems;
+  auto shTy = mlir::MemRefType::get({shElems}, f32, mlir::MemRefLayoutAttrInterface{}, sharedMemSpace);
+  std::string shName = "__intentir_sh_" + sanitizeSymbolName(ctx.kernelName) + "_hd16";
+  auto align16 = b.getI64IntegerAttr(16);
+  (void)mlir::memref::GlobalOp::create(b, loc, shName, b.getStringAttr("private"), shTy,
+                                      /*initial_value=*/{}, /*constant=*/false, align16);
+
+  auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
+  if (mlir::failed(fnOr))
+    return mlir::failure();
+  auto fn = *fnOr;
+
+  auto QArg = getArgByName(ctx, fn, qName);
+  auto KArg = getArgByName(ctx, fn, kName);
+  auto VArg = getArgByName(ctx, fn, vName);
+  auto SArg = getArgByName(ctx, fn, scaleName);
+  auto OutArg = getArgByName(ctx, fn, outName);
+  if (!QArg || !KArg || !VArg || !SArg || !OutArg) {
+    ctx.module.emitError("masked_attention2d(hd16_keys_v1): failed to map kernel args");
+    return mlir::failure();
+  }
+
+  auto qTy =
+      mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto kvTy =
+      mlir::MemRefType::get({KV, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto outTy =
+      mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto Q2 = mlir::memref::ReinterpretCastOp::create(b, loc, qTy, QArg, 0, {Q, HD}, {HD, 1})
+                .getResult();
+  auto K2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, KArg, 0, {KV, HD}, {HD, 1})
+                .getResult();
+  auto V2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, VArg, 0, {KV, HD}, {HD, 1})
+                .getResult();
+  auto Out2 =
+      mlir::memref::ReinterpretCastOp::create(b, loc, outTy, OutArg, 0, {Q, HD}, {HD, 1})
+          .getResult();
+
+  auto Sh = mlir::memref::GetGlobalOp::create(b, loc, shTy, shName).getResult();
+
+  auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
+  auto qRow = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
+
+  auto c0 = makeIndexConst(b, loc, 0);
+  auto c1 = makeIndexConst(b, loc, 1);
+  auto c16 = makeIndexConst(b, loc, 16);
+  auto cKV = makeIndexConst(b, loc, KV);
+  auto cProbBase = makeIndexConst(b, loc, probBase);
+  auto c0f = makeF32Const(b, loc, 0.0f);
+  auto c1f = makeF32Const(b, loc, 1.0f);
+  auto negInf = makeF32Const(b, loc, -3.402823466e+38f);
+  auto cLOG2E = makeF32Const(b, loc, 1.44269504f);
+
+  auto scale = b.create<mlir::memref::LoadOp>(loc, SArg, mlir::ValueRange{c0}).getResult();
+
+  // Load q[0..16) into shared (tid<16).
+  auto predQ =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, c16).getResult();
+  auto ifQ = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predQ, /*withElse=*/false);
+  b.setInsertionPointToStart(&ifQ.getThenRegion().front());
+  auto qv = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, tid}).getResult();
+  b.create<mlir::memref::StoreOp>(loc, qv, Sh, mlir::ValueRange{tid});
+  b.setInsertionPointAfter(ifQ);
+  b.create<mlir::gpu::BarrierOp>(loc);
+
+  // tid in [0..KV) computes score for key=tid, else contributes -inf/0.
+  auto predKey =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cKV).getResult();
+  auto ifScore = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, predKey, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifScore.getThenRegion().front());
+  auto dotFor = b.create<mlir::scf::ForOp>(loc, c0, c16, c1, mlir::ValueRange{c0f});
+  b.setInsertionPointToStart(dotFor.getBody());
+  auto d = dotFor.getInductionVar();
+  auto acc = dotFor.getRegionIterArgs()[0];
+  auto qd = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{d}).getResult();
+  auto kd = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{tid, d}).getResult();
+  auto acc2 = b.create<mlir::arith::AddFOp>(loc, acc, b.create<mlir::arith::MulFOp>(loc, qd, kd).getResult())
+                  .getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{acc2});
+  b.setInsertionPointAfter(dotFor);
+  auto dot = dotFor.getResult(0);
+  auto score = b.create<mlir::arith::MulFOp>(loc, dot, scale).getResult();
+  auto masked =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ugt, tid, qRow).getResult();
+  auto scoreMasked = b.create<mlir::arith::SelectOp>(loc, masked, negInf, score).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{scoreMasked});
+  b.setInsertionPointToStart(&ifScore.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{negInf});
+  b.setInsertionPointAfter(ifScore);
+  auto scoreVal = ifScore.getResult(0);
+
+  auto mx = warpAllReduceMaxF32(b, loc, scoreVal);
+  auto w = b.create<mlir::math::Exp2Op>(
+               loc,
+               b.create<mlir::arith::MulFOp>(
+                   loc, b.create<mlir::arith::SubFOp>(loc, scoreVal, mx).getResult(), cLOG2E)
+                   .getResult())
+               .getResult();
+  // Sum weights across warp.
+  auto sumW = warpAllReduceSumF32(b, loc, w);
+  auto nz =
+      b.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::ONE, sumW, c0f).getResult();
+  auto sumSafe = b.create<mlir::arith::SelectOp>(loc, nz, sumW, c1f).getResult();
+  auto prob = b.create<mlir::arith::DivFOp>(loc, w, sumSafe).getResult();
+
+  // Store prob to shared at probBase+tid (or 0 for tid>=KV).
+  auto ifStoreProb = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predKey, /*withElse=*/false);
+  b.setInsertionPointToStart(&ifStoreProb.getThenRegion().front());
+  auto pIdx = b.create<mlir::arith::AddIOp>(loc, cProbBase, tid).getResult();
+  b.create<mlir::memref::StoreOp>(loc, prob, Sh, mlir::ValueRange{pIdx});
+  b.setInsertionPointAfter(ifStoreProb);
+  b.create<mlir::gpu::BarrierOp>(loc);
+
+  // Output lanes tid<16 compute Out[qRow, d=tid].
+  auto ifOut = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, predQ, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifOut.getThenRegion().front());
+  auto accFor = b.create<mlir::scf::ForOp>(loc, c0, cKV, c1, mlir::ValueRange{c0f});
+  b.setInsertionPointToStart(accFor.getBody());
+  auto kv = accFor.getInductionVar();
+  auto accO = accFor.getRegionIterArgs()[0];
+  auto pIdx2 = b.create<mlir::arith::AddIOp>(loc, cProbBase, kv).getResult();
+  auto pv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{pIdx2}).getResult();
+  auto vv = b.create<mlir::memref::LoadOp>(loc, V2, mlir::ValueRange{kv, tid}).getResult();
+  auto accO2 =
+      b.create<mlir::arith::AddFOp>(loc, accO, b.create<mlir::arith::MulFOp>(loc, pv, vv).getResult())
+          .getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{accO2});
+  b.setInsertionPointAfter(accFor);
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{accFor.getResult(0)});
+  b.setInsertionPointToStart(&ifOut.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(ifOut);
+
+  auto ifStore = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predQ, /*withElse=*/false);
+  b.setInsertionPointToStart(&ifStore.getThenRegion().front());
+  b.create<mlir::memref::StoreOp>(loc, ifOut.getResult(0), Out2, mlir::ValueRange{qRow, tid});
+  b.setInsertionPointAfter(ifStore);
+
+  // Note: launch_override must enforce block_x=32 and grid_x=Q.
+  b.create<mlir::gpu::ReturnOp>(loc);
+
+  ctx.module->setAttr("intentir.compiler_stack",
+                      mlir::StringAttr::get(mlirCtx, "cpp_plugin"));
+  ctx.module->setAttr("intentir.lowering_kind",
+                      mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
+  ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
+                      mlir::StringAttr::get(mlirCtx, kernelKind));
+  return mlir::success();
+}
+
 static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringContext &ctx,
                                                                     llvm::StringRef kernelKind) {
   // Port of the python real-MLIR "attn2d_causal_softmax_v6" strategy:
@@ -3954,12 +4199,19 @@ public:
 	      ok = lowerCudaFlashAttention2dCausalSoftmaxV6(
 	          lc, parallel ? "attn2d_causal_softmax_v7" : "attn2d_causal_softmax_v6");
 	    } else if (k == "masked_attention2d") {
+	      bool hd16_keys = false;
+	      if (auto it = lc.shapeBindings.find("ATTN_MASKED_HD16_KEYS_V1"); it != lc.shapeBindings.end()) {
+	        hd16_keys = (it->second != 0);
+	      }
 	      bool v2 = false;
 	      if (auto it = lc.shapeBindings.find("ATTN_MASKED_SOFTMAX_V2"); it != lc.shapeBindings.end()) {
 	        v2 = (it->second != 0);
 	      }
-	      ok = v2 ? lowerCudaAttn2dCausalSoftmaxWarpV2(lc, "attn2d_causal_softmax_warp_v2")
-	              : lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1");
+	      ok = hd16_keys
+	               ? lowerCudaMaskedAttention2dHd16KeysV1(
+	                     lc, "attn2d_causal_softmax_masked_hd16_keys_v1")
+	               : (v2 ? lowerCudaAttn2dCausalSoftmaxWarpV2(lc, "attn2d_causal_softmax_warp_v2")
+	                     : lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1"));
 	    } else if (k == "_attn_fwd") {
 	      bool parallel = false;
 	      if (auto it = lc.shapeBindings.find("ATTN_FWD_PARALLEL_SOFTMAX"); it != lc.shapeBindings.end()) {

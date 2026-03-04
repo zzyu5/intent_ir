@@ -34,3 +34,4 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"flash_attention2d","arch":"sm90","bindings":{"ATTN_PARALLEL_SOFTMAX":1},"note":"cpp_plugin: enable parallel reduce softmax (v7) on sm90"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm90","bindings":{"ATTN_MASKED_SOFTMAX_V2":1},"note":"cpp_plugin: enable two-pass softmax warp_v2 on sm90"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"_attn_fwd","arch":"sm90","bindings":{"ATTN_FWD_PARALLEL_SOFTMAX":1},"note":"cpp_plugin: enable parallel reduce softmax (v7) on sm90"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"masked_attention2d","arch":"sm90","bindings":{"ATTN_MASKED_HD16_KEYS_V1":1},"note":"cpp_plugin: enable HEAD_DIM=16 key-lane softmax for canonical tiny masked_attention2d on sm90"}

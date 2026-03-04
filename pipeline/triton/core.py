@@ -759,9 +759,12 @@ def _emit_mlir_shadow_artifacts(
                                 }
                             else:
                                 # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
+                                use_hd16 = int(sb.get("ATTN_MASKED_HD16_KEYS_V1") or 0) != 0
                                 use_v2 = int(sb.get("ATTN_MASKED_SOFTMAX_V2") or 0) != 0
                                 mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
-                                    "attn2d_causal_softmax_warp_v2" if use_v2 else "attn2d_causal_softmax_warp_v1"
+                                    "attn2d_causal_softmax_masked_hd16_keys_v1"
+                                    if use_hd16
+                                    else ("attn2d_causal_softmax_warp_v2" if use_v2 else "attn2d_causal_softmax_warp_v1")
                                 )
                                 mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
                                     "block_x": 32,
@@ -769,7 +772,11 @@ def _emit_mlir_shadow_artifacts(
                                     "q_ctx": int(q),
                                     "kv_ctx": int(kv),
                                     "mask": "causal",
-                                    "softmax": ("two_pass_v1" if use_v2 else "online_v1"),
+                                    "softmax": (
+                                        "masked_hd16_keys_v1"
+                                        if use_hd16
+                                        else ("two_pass_v1" if use_v2 else "online_v1")
+                                    ),
                                 }
                                 mid_mod.meta["cuda_real_mlir_launch_override"] = {
                                     "block": [32, 1, 1],
