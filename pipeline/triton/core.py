@@ -699,6 +699,23 @@ def _emit_mlir_shadow_artifacts(
                                     "block": [int(threads), 1, 1],
                                     "grid": [int(grid_x), int(grid_y), 1],
                                 }
+                    if (
+                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
+                        and str(spec_name) == "rms_norm2d"
+                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
+                    ):
+                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
+                        m = int(sb.get("M") or 0)
+                        n = int(sb.get("N") or 0)
+                        if m > 0 and n > 0:
+                            # NOTE: C++ rms_norm2d_rowwise_v1 is compiled for a fixed block_x=256.
+                            mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
+                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = "rms_norm2d_rowwise_v1"
+                            mid_mod.meta["cuda_real_mlir_output_total"] = int(m) * int(n)
+                            mid_mod.meta["cuda_real_mlir_launch_override"] = {
+                                "block": [256, 1, 1],
+                                "grid": [int(m), 1, 1],
+                            }
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
