@@ -43,7 +43,6 @@ from verify.tolerances import infer_tolerances
 from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from pipeline.common.evidence_mode import evidence_enabled, evidence_mode
-from pipeline.common.tuning_db import load_tuning_db, resolve_tuning_entries, tuning_db_path_from_env
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
@@ -228,89 +227,6 @@ def _compiler_cpp_wave_name() -> str:
     # include aspirational kernels that are not yet implemented in the plugin.
     return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave2")).strip().lower()
 
-
-def _normalize_cuda_arch_for_tuning(raw: str) -> str:
-    s = str(raw or "").strip().lower()
-    if not s:
-        return ""
-    if s.isdigit():
-        return f"sm{s}"
-    if s.startswith("sm_"):
-        s = s[3:]
-    elif s.startswith("sm"):
-        s = s[2:]
-    else:
-        return ""
-    digits = "".join(ch for ch in s if ch.isdigit())
-    return f"sm{digits}" if digits else ""
-
-
-def _detect_cuda_arch_for_tuning() -> str:
-    env = _normalize_cuda_arch_for_tuning(os.getenv("INTENTIR_CUDA_SM", ""))
-    if env:
-        return env
-    try:  # pragma: no cover - depends on CUDA env
-        if torch.cuda.is_available():
-            major, minor = torch.cuda.get_device_capability(0)
-            if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
-                return f"sm{int(major)}{int(minor)}"
-    except Exception:
-        pass
-    return ""
-
-
-def _apply_cuda_tuning_db_for_cpp_stack(
-    *,
-    kernel: str,
-    shape_bindings: dict[str, int],
-) -> tuple[dict[str, int], dict[str, object]]:
-    """
-    Apply tuning_db entries early enough that cpp_plugin lowering (which reads
-    carrier module attributes) can see them.
-
-    Returns (merged_shape_bindings, tuning_meta).
-    """
-
-    arch = _detect_cuda_arch_for_tuning()
-    db_path = tuning_db_path_from_env(backend="cuda")
-    db, db_rel_path = load_tuning_db(path=db_path, backend="cuda")
-
-    meta: dict[str, object] = {
-        "intentir_tuning_source": "none",
-        "intentir_tuning_applied": {},
-        "intentir_tuning_arch": str(arch),
-        "intentir_tuning_db": str(db_rel_path),
-        "intentir_kernel_kind_override": "",
-    }
-    if not kernel or not arch:
-        return dict(shape_bindings), meta
-
-    entries = db.get((str(kernel), str(arch))) or []
-    merged, kernel_kind_override = resolve_tuning_entries(
-        list(entries),
-        shape_bindings=dict(shape_bindings),
-        compiler_stack=_compiler_stack_name(),
-    )
-
-    applied: dict[str, int] = {}
-    for k, v in dict(merged).items():
-        key = str(k).strip()
-        if not key:
-            continue
-        try:
-            applied[key] = int(v)
-        except Exception:
-            continue
-    if applied or str(kernel_kind_override or "").strip():
-        out = dict(shape_bindings)
-        out.update(dict(applied))
-        meta["intentir_tuning_source"] = "tuning_db"
-        meta["intentir_tuning_applied"] = dict(applied)
-        meta["intentir_kernel_kind_override"] = str(kernel_kind_override or "").strip()
-        return out, meta
-    return dict(shape_bindings), meta
-
-
 def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
     wave_name = str(wave or "").strip().lower()
     if not wave_name:
@@ -464,7 +380,6 @@ def _emit_mlir_shadow_artifacts(
     report: Dict[str, object],
     backend_target: str | None,
     shape_bindings: Dict[str, int] | None = None,
-    tuning_meta: dict[str, object] | None = None,
 ) -> None:
     shadow_enabled = bool(_mlir_shadow_mode_enabled())
     if (not shadow_enabled) and _execution_ir_mode() != "mlir":
@@ -475,8 +390,6 @@ def _emit_mlir_shadow_artifacts(
     mlir_report["shadow_mode"] = bool(shadow_enabled)
     mlir_report["evidence_mode"] = str(evidence_mode())
     mlir_report["toolchain"] = detect_mlir_toolchain()
-    if isinstance(tuning_meta, dict) and tuning_meta:
-        mlir_report["tuning"] = dict(tuning_meta)
     try:
         # For C++ plugin lowering (and remote audit), persist concrete shape
         # bindings into the carrier module attributes via std_emitter.
@@ -490,14 +403,6 @@ def _emit_mlir_shadow_artifacts(
                 }
             except Exception:
                 pass
-        if isinstance(tuning_meta, dict) and tuning_meta:
-            kk = str(tuning_meta.get("intentir_kernel_kind_override") or "").strip()
-            if kk:
-                try:
-                    intent.meta = dict(intent.meta or {})
-                    intent.meta["intentir_kernel_kind_override"] = kk
-                except Exception:
-                    pass
         mod = to_mlir(intent)
         mlir_report["module_path"] = ""
         if shadow_enabled:
@@ -614,260 +519,9 @@ def _emit_mlir_shadow_artifacts(
                     # stable exported symbol name (e.g., RVV remote runner expects this).
                     mid_mod.meta.setdefault("kernel", str(spec_name))
                     mid_mod.meta.setdefault("spec_name", str(spec_name))
-                    # Compiler stack provenance (python vs cpp_plugin). This is used
-                    # by backend contracts and perf reports for auditability.
-                    stack = _compiler_stack_name()
-                    if stack in {"cpp", "cpp_plugin", "c++"}:
-                        mid_mod.meta["compiler_stack"] = "cpp_plugin"
-                        if str(llvm_pipeline) == "downstream_rvv_std_llvm_cpp":
-                            mid_mod.meta["lowering_kind"] = "rvv_cpu_loops_v1"
-                        elif str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm":
-                            mid_mod.meta["lowering_kind"] = "cuda_focus_v1"
-                    else:
-                        mid_mod.meta.setdefault("compiler_stack", "python")
-
-                    if isinstance(tuning_meta, dict) and tuning_meta:
-                        for k, v in dict(tuning_meta).items():
-                            key = str(k).strip()
-                            if key:
-                                mid_mod.meta[key] = v
-
-                    # Minimal CUDA C++ stack meta for auditability and runtime launch.
-                    #
-                    # NOTE: These are duplicated in the C++ plugin (module attrs),
-                    # but backend contracts currently consume `module.meta`.
-                    if (
-                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
-                        and str(spec_name) == "ai_bench_matmul"
-                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
-                    ):
-                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
-                        m = int(sb.get("M") or 0)
-                        n = int(sb.get("N") or 0)
-                        k = int(sb.get("K") or 0)
-                        bm = int(sb.get("MMA_BM") or 64)
-                        bn = int(sb.get("MMA_BN") or 16)
-                        bk = int(sb.get("MMA_BK") or 32)
-                        async_copy = int(sb.get("MMA_ASYNC_COPY") or 0) != 0
-                        if m > 0 and n > 0 and k > 0 and bm > 0 and bn > 0 and bk > 0:
-                            warps_n = max(1, int(bn) // 16)
-                            warps_m = max(1, int(bm) // 16)
-                            warps = int(warps_m) * int(warps_n)
-                            threads = int(warps) * 32
-                            grid_x = int(n) // int(bn) if int(bn) > 0 else 1
-                            grid_y = int(m) // int(bm) if int(bm) > 0 else 1
-                            if threads > 0 and grid_x > 0 and grid_y > 0:
-                                mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
-                                    "matmul_mma_tf32_v2" if async_copy else "matmul_mma_tf32_global_v1"
-                                )
-                                mid_mod.meta["cuda_real_mlir_matmul_cfg"] = {
-                                    "BM": int(bm),
-                                    "BN": int(bn),
-                                    "BK": int(bk),
-                                    "mma": "tf32",
-                                    "pipeline": ("cp_async_double_buffer" if async_copy else "global_load"),
-                                }
-                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                    "block": [int(threads), 1, 1],
-                                    "grid": [int(grid_x), int(grid_y), 1],
-                                }
-                    if (
-                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
-                        and str(spec_name) == "matmul_fused_epilogue2d"
-                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
-                    ):
-                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
-                        m = int(sb.get("M") or 0)
-                        n = int(sb.get("N") or 0)
-                        k = int(sb.get("K") or 0)
-                        bm = int(sb.get("MMA_BM") or 32)
-                        bn = int(sb.get("MMA_BN") or 32)
-                        bk = int(sb.get("MMA_BK") or 32)
-                        async_copy = int(sb.get("MMA_ASYNC_COPY") or 0) != 0
-                        if m > 0 and n > 0 and k > 0 and bm > 0 and bn > 0 and bk > 0:
-                            warps_n = max(1, int(bn) // 16)
-                            warps_m = max(1, int(bm) // 16)
-                            warps = int(warps_m) * int(warps_n)
-                            threads = int(warps) * 32
-                            grid_x = int(n) // int(bn) if int(bn) > 0 else 1
-                            grid_y = int(m) // int(bm) if int(bm) > 0 else 1
-                            if threads > 0 and grid_x > 0 and grid_y > 0:
-                                mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
-                                    "matmul_fused_epilogue_mma_tf32_v2"
-                                    if async_copy
-                                    else "matmul_fused_epilogue_mma_tf32_global_v1"
-                                )
-                                mid_mod.meta["cuda_real_mlir_matmul_cfg"] = {
-                                    "BM": int(bm),
-                                    "BN": int(bn),
-                                    "BK": int(bk),
-                                    "mma": "tf32",
-                                    "epilogue": "bias_rowcol_mask",
-                                    "pipeline": ("cp_async_double_buffer" if async_copy else "global_load"),
-                                }
-                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                    "block": [int(threads), 1, 1],
-                                    "grid": [int(grid_x), int(grid_y), 1],
-                                }
-                    if (
-                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
-                        and str(spec_name) == "rms_norm2d"
-                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
-                    ):
-                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
-                        m = int(sb.get("M") or 0)
-                        n = int(sb.get("N") or 0)
-                        if m > 0 and n > 0:
-                            # NOTE: C++ rms_norm2d_rowwise_v1 is compiled for a fixed block_x=256.
-                            mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = "rms_norm2d_rowwise_v1"
-                            mid_mod.meta["cuda_real_mlir_output_total"] = int(m) * int(n)
-                            mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                "block": [256, 1, 1],
-                                "grid": [int(m), 1, 1],
-                            }
-                    if (
-                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
-                        and str(spec_name) in {"flash_attention2d", "masked_attention2d"}
-                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
-                    ):
-                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
-                        kind_override = str(mid_mod.meta.get("intentir_kernel_kind_override") or "").strip()
-                        q = int(sb.get("Q_CTX") or 0)
-                        kv = int(sb.get("KV_CTX") or 0)
-                        hd = int(sb.get("HEAD_DIM") or 0)
-                        if q > 0 and kv > 0 and hd > 0:
-                            mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                            mid_mod.meta["cuda_real_mlir_output_total"] = int(q) * int(hd)
-                            if str(spec_name) == "flash_attention2d":
-                                # NOTE: C++ attn2d_causal_softmax_v6 is compiled for block_x=(2+score_warps)*32.
-                                score_warps = int(sb.get("ATTN_SCORE_WARPS") or 6)
-                                if score_warps not in (2, 4, 6):
-                                    score_warps = 6
-                                block_kv = int(sb.get("ATTN_BLOCK_KV") or 32)
-                                if block_kv not in (16, 32, 64):
-                                    block_kv = 32
-                                block_warps = int(2 + score_warps)
-                                block_x = int(block_warps * 32)
-                                kind = ""
-                                if kind_override in {"attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"}:
-                                    kind = kind_override
-                                if not kind:
-                                    parallel = int(sb.get("ATTN_PARALLEL_SOFTMAX") or 0) != 0
-                                    kind = "attn2d_causal_softmax_v7" if parallel else "attn2d_causal_softmax_v6"
-                                parallel = kind == "attn2d_causal_softmax_v7"
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = str(kind)
-                                mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
-                                    "block_x": int(block_x),
-                                    "block_kv": int(block_kv),
-                                    "out_warps": 2,
-                                    "score_warps": int(score_warps),
-                                    "head_dim": int(hd),
-                                    "q_ctx": int(q),
-                                    "kv_ctx": int(kv),
-                                    "mask": "causal",
-                                    "softmax": ("online_v1_parallel_reduce" if parallel else "online_v1_serial_t0"),
-                                }
-                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                    "block": [int(block_x), 1, 1],
-                                    "grid": [int(q), 1, 1],
-                                }
-                            else:
-                                # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
-                                kind = ""
-                                if kind_override in {
-                                    "attn2d_causal_softmax_masked_hd16_keys_v1",
-                                    "attn2d_causal_softmax_warp_v2",
-                                    "attn2d_causal_softmax_warp_v1",
-                                }:
-                                    kind = kind_override
-                                if not kind:
-                                    use_hd16 = int(sb.get("ATTN_MASKED_HD16_KEYS_V1") or 0) != 0
-                                    use_v2 = int(sb.get("ATTN_MASKED_SOFTMAX_V2") or 0) != 0
-                                    kind = (
-                                        "attn2d_causal_softmax_masked_hd16_keys_v1"
-                                        if use_hd16
-                                        else (
-                                            "attn2d_causal_softmax_warp_v2"
-                                            if use_v2
-                                            else "attn2d_causal_softmax_warp_v1"
-                                        )
-                                    )
-                                softmax = "online_v1"
-                                if kind == "attn2d_causal_softmax_masked_hd16_keys_v1":
-                                    softmax = "masked_hd16_keys_v1"
-                                elif kind == "attn2d_causal_softmax_warp_v2":
-                                    softmax = "two_pass_v1"
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = str(kind)
-                                mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
-                                    "block_x": 32,
-                                    "head_dim": int(hd),
-                                    "q_ctx": int(q),
-                                    "kv_ctx": int(kv),
-                                    "mask": "causal",
-                                    "softmax": str(softmax),
-                                }
-                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                    "block": [32, 1, 1],
-                                    "grid": [int(q), 1, 1],
-                                }
-                    if (
-                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
-                        and str(spec_name) == "_attn_fwd"
-                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
-                    ):
-                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
-                        kind_override = str(mid_mod.meta.get("intentir_kernel_kind_override") or "").strip()
-                        z = int(sb.get("Z") or 0)
-                        qh = int(sb.get("q_numhead") or 0)
-                        kh = int(sb.get("kv_numhead") or 0)
-                        q = int(sb.get("Q_CTX") or 0)
-                        kv = int(sb.get("KV_CTX") or 0)
-                        hd = int(sb.get("HEAD_DIM") or 0)
-                        if z > 0 and qh > 0 and q > 0 and kv > 0 and hd > 0 and qh == kh:
-                            mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                            kind = ""
-                            if kind_override in {"attn_fwd_softmax_v6", "attn_fwd_softmax_v7"}:
-                                kind = kind_override
-                            if not kind:
-                                parallel = int(sb.get("ATTN_FWD_PARALLEL_SOFTMAX") or 0) != 0
-                                kind = "attn_fwd_softmax_v7" if parallel else "attn_fwd_softmax_v6"
-                            parallel = kind == "attn_fwd_softmax_v7"
-                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = str(kind)
-                            mid_mod.meta["cuda_real_mlir_output_total"] = int(z) * int(qh) * int(q) * int(hd)
-
-                            # NOTE: C++ attn_fwd_softmax_v6 is compiled for block_x=(2+score_warps)*32.
-                            score_warps = int(sb.get("ATTN_FWD_SCORE_WARPS") or sb.get("ATTN_SCORE_WARPS") or 6)
-                            if score_warps not in (2, 4, 6):
-                                score_warps = 6
-                            block_kv = int(sb.get("ATTN_FWD_BLOCK_KV") or sb.get("ATTN_BLOCK_KV") or 32)
-                            if block_kv not in (16, 32, 64):
-                                block_kv = 32
-                            block_warps = int(2 + score_warps)
-                            block_x = int(block_warps * 32)
-                            mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
-                                "block_x": int(block_x),
-                                "block_kv": int(block_kv),
-                                "out_warps": 2,
-                                "score_warps": int(score_warps),
-                                "head_dim": int(hd),
-                                "q_ctx": int(q),
-                                "kv_ctx": int(kv),
-                                "z": int(z),
-                                "q_numhead": int(qh),
-                                "kv_numhead": int(kh),
-                                # NOTE: intent graph includes `scores + attn_mask`, but in practice
-                                # attn_mask is all-zeros for the perf suites we run; the kernel
-                                # ignores it for performance.
-                                "attn_mask": "ignored",
-                                "softmax": ("online_v1_parallel_reduce" if parallel else "online_v1_serial_t0"),
-                            }
-                            mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                "block": [int(block_x), 1, 1],
-                                "grid": [int(z) * int(qh) * int(q), 1, 1],
-                            }
+                    # NOTE: For cpp_plugin flows, lowering/tuning/launch metadata is emitted
+                    # by the C++ pass plugin as module attributes and harvested into `module.meta`
+                    # by intent_ir.mlir.pass_manager. Keep this site free of duplicated heuristics.
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
@@ -4445,20 +4099,6 @@ def run_pipeline_for_spec(
         shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
     )
 
-    tuning_meta: dict[str, object] | None = None
-    try:
-        if (
-            backend_target is not None
-            and str(backend_target).strip().lower().startswith("cuda")
-            and _compiler_stack_name() in {"cpp", "cpp_plugin", "c++"}
-        ):
-            shape_bindings, tuning_meta = _apply_cuda_tuning_db_for_cpp_stack(
-                kernel=str(spec.name),
-                shape_bindings=dict(shape_bindings),
-            )
-    except Exception:
-        tuning_meta = None
-
     _emit_mlir_shadow_artifacts(
         spec_name=spec.name,
         out_dir=out_dir,
@@ -4466,7 +4106,6 @@ def run_pipeline_for_spec(
         report=report,
         backend_target=backend_target,
         shape_bindings=dict(shape_bindings),
-        tuning_meta=tuning_meta,
     )
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can
