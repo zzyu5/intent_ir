@@ -3,6 +3,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -1128,6 +1129,7 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
   int64_t bn = getBind("MMA_BN", 16);
   int64_t bk = getBind("MMA_BK", 32);
   bool bTranspose = getBind("MMA_B_TRANSPOSE", 0) != 0;
+  bool asyncCopyRequested = getBind("MMA_ASYNC_COPY", 0) != 0;
 
   if (bm <= 0 || bn <= 0 || bk <= 0) {
     ctx.module.emitError("ai_bench_matmul: invalid MMA_BM/MMA_BN/MMA_BK");
@@ -1167,6 +1169,56 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
   // Types.
   auto f32 = b.getF32Type();
   auto globalMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+
+  // Optional static shared tiles for async-copy MMA path (v2).
+  mlir::MemRefType shATy;
+  mlir::MemRefType shBTy;
+  std::string shA0Name, shA1Name, shB0Name, shB1Name;
+  int64_t tileA4 = 0;
+  int64_t tileB4 = 0;
+  if (asyncCopyRequested) {
+    // Double-buffered static shared memory footprint:
+    // bytes = 2*(BM*BK*4) + 2*(BK*BN*4) = 8*BK*(BM+BN).
+    int64_t staticSharedBytes = 8 * bk * (bm + bn);
+    if (staticSharedBytes > (48 * 1024)) {
+      ctx.module.emitError("ai_bench_matmul: matmul_mma_tf32_v2 requires static_shared_bytes<=49152 (48KiB)");
+      return mlir::failure();
+    }
+    bool vecCopy = (bk % 4) == 0 && (bn % 4) == 0 && ((bm * bk) % 4) == 0 && ((bk * bn) % 4) == 0;
+    tileA4 = vecCopy ? ((bm * bk) / 4) : 0;
+    tileB4 = vecCopy ? ((bk * bn) / 4) : 0;
+    if (!vecCopy || tileA4 <= 0 || tileB4 <= 0 || (tileA4 % threads) != 0 || (tileB4 % threads) != 0) {
+      ctx.module.emitError("ai_bench_matmul: matmul_mma_tf32_v2 requires vectorized async copy eligibility");
+      return mlir::failure();
+    }
+
+    auto sharedMemSpace =
+        mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 3);
+    shATy = mlir::MemRefType::get({bm, bk}, f32,
+                                  mlir::MemRefLayoutAttrInterface{},
+                                  sharedMemSpace);
+    shBTy = mlir::MemRefType::get({bk, bn}, f32,
+                                  mlir::MemRefLayoutAttrInterface{},
+                                  sharedMemSpace);
+    shA0Name = "__intentir_sh_a0_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
+    shA1Name = "__intentir_sh_a1_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
+    shB0Name = "__intentir_sh_b0_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
+    shB1Name = "__intentir_sh_b1_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
+
+    auto align16 = b.getI64IntegerAttr(16);
+    (void)mlir::memref::GlobalOp::create(
+        b, loc, shA0Name, b.getStringAttr("private"), shATy,
+        /*initial_value=*/{}, /*constant=*/false, align16);
+    (void)mlir::memref::GlobalOp::create(
+        b, loc, shA1Name, b.getStringAttr("private"), shATy,
+        /*initial_value=*/{}, /*constant=*/false, align16);
+    (void)mlir::memref::GlobalOp::create(
+        b, loc, shB0Name, b.getStringAttr("private"), shBTy,
+        /*initial_value=*/{}, /*constant=*/false, align16);
+    (void)mlir::memref::GlobalOp::create(
+        b, loc, shB1Name, b.getStringAttr("private"), shBTy,
+        /*initial_value=*/{}, /*constant=*/false, align16);
+  }
 
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule,
                                                sanitizeSymbolName(ctx.kernelName));
@@ -1244,27 +1296,150 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
   mlir::UnitAttr transposeAttr = bTranspose ? mlir::UnitAttr::get(mlirCtx)
                                             : mlir::UnitAttr();
 
-  // Unrolled KB/KK loops (global-load WMMA path).
-  for (int64_t kb = 0; kb < K; kb += bk) {
-    auto kbC = makeIndexConst(b, loc, kb);
+  std::string kernelKind = "matmul_mma_tf32_global_v1";
+  if (asyncCopyRequested) {
+    kernelKind = "matmul_mma_tf32_v2";
 
-    for (int64_t kk = 0; kk < bk; kk += 8) {
-      auto kkC = makeIndexConst(b, loc, kk);
-      auto kIdx = b.create<mlir::arith::AddIOp>(loc, kbC, kkC);
-      auto aFrag =
-          mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, A2,
-                                                     mlir::ValueRange{gm, kIdx},
-                                                     ldK, /*transpose=*/{})
-              .getResult();
-      auto bFrag =
-          mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, bFragTy, B2,
-                                                     mlir::ValueRange{kIdx, gn},
-                                                     ldN, transposeAttr)
-              .getResult();
-      acc = mlir::gpu::SubgroupMmaComputeOp::create(
-                b, loc, cFragTy, aFrag, bFrag, acc,
-                /*a_transpose=*/{}, /*b_transpose=*/transposeAttr)
+    // Double-buffered static shared tiles.
+    auto As0 =
+        mlir::memref::GetGlobalOp::create(b, loc, shATy, shA0Name).getResult();
+    auto As1 =
+        mlir::memref::GetGlobalOp::create(b, loc, shATy, shA1Name).getResult();
+    auto Bs0 =
+        mlir::memref::GetGlobalOp::create(b, loc, shBTy, shB0Name).getResult();
+    auto Bs1 =
+        mlir::memref::GetGlobalOp::create(b, loc, shBTy, shB1Name).getResult();
+
+    auto c4 = makeIndexConst(b, loc, 4);
+    int64_t aIters = tileA4 / threads;
+    int64_t bIters = tileB4 / threads;
+    auto dstElements4 = b.getIndexAttr(4);
+
+    auto emitTile = [&](int64_t kbBase, mlir::Value As, mlir::Value Bs) -> mlir::Value {
+      auto kbC = makeIndexConst(b, loc, kbBase);
+      llvm::SmallVector<mlir::Value, 16> cpTokens;
+      cpTokens.reserve(static_cast<size_t>(aIters + bIters));
+
+      // Copy A tile: each async copies vector<4xf32> (dstElements=4).
+      for (int64_t it = 0; it < aIters; ++it) {
+        mlir::Value idx = tid;
+        if (it != 0) {
+          auto off = makeIndexConst(b, loc, it * threads);
+          idx = b.create<mlir::arith::AddIOp>(loc, tid, off);
+        }
+        auto idx4 = b.create<mlir::arith::MulIOp>(loc, idx, c4);
+        auto r = b.create<mlir::arith::DivUIOp>(loc, idx4, cBK);
+        auto c = b.create<mlir::arith::RemUIOp>(loc, idx4, cBK);
+        auto gr = b.create<mlir::arith::AddIOp>(loc, row0, r);
+        auto gk = b.create<mlir::arith::AddIOp>(loc, kbC, c);
+        auto cp = b.create<mlir::nvgpu::DeviceAsyncCopyOp>(
+            loc,
+            /*dst=*/As,
+            /*dstIndices=*/mlir::ValueRange{r, c},
+            /*src=*/A2,
+            /*srcIndices=*/mlir::ValueRange{gr, gk},
+            /*dstElements=*/dstElements4,
+            /*srcElements=*/mlir::Value(),
+            /*bypassL1=*/mlir::UnitAttr());
+        cpTokens.push_back(cp.getAsyncToken());
+      }
+
+      // Copy B tile: each async copies vector<4xf32> (dstElements=4).
+      for (int64_t it = 0; it < bIters; ++it) {
+        mlir::Value idx = tid;
+        if (it != 0) {
+          auto off = makeIndexConst(b, loc, it * threads);
+          idx = b.create<mlir::arith::AddIOp>(loc, tid, off);
+        }
+        auto idx4 = b.create<mlir::arith::MulIOp>(loc, idx, c4);
+        auto r = b.create<mlir::arith::DivUIOp>(loc, idx4, cBN);
+        auto c = b.create<mlir::arith::RemUIOp>(loc, idx4, cBN);
+        auto gk = b.create<mlir::arith::AddIOp>(loc, kbC, r);
+        auto gn4 = b.create<mlir::arith::AddIOp>(loc, col0, c);
+        auto cp = b.create<mlir::nvgpu::DeviceAsyncCopyOp>(
+            loc,
+            /*dst=*/Bs,
+            /*dstIndices=*/mlir::ValueRange{r, c},
+            /*src=*/B2,
+            /*srcIndices=*/mlir::ValueRange{gk, gn4},
+            /*dstElements=*/dstElements4,
+            /*srcElements=*/mlir::Value(),
+            /*bypassL1=*/mlir::UnitAttr());
+        cpTokens.push_back(cp.getAsyncToken());
+      }
+
+      return b.create<mlir::nvgpu::DeviceAsyncCreateGroupOp>(loc, cpTokens)
+          .getAsyncToken();
+    };
+
+    // Preload first tile into buffer0.
+    auto group0 = emitTile(/*kbBase=*/0, As0, Bs0);
+    b.create<mlir::nvgpu::DeviceAsyncWaitOp>(loc, group0, mlir::IntegerAttr());
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    auto ldBK = b.getIndexAttr(bk);
+    auto ldBN = b.getIndexAttr(bn);
+
+    // Main pipelined loop (unrolled).
+    int64_t idx = 0;
+    for (int64_t kb = 0; kb < K; kb += bk, ++idx) {
+      mlir::Value curAs = (idx % 2) == 0 ? As0 : As1;
+      mlir::Value curBs = (idx % 2) == 0 ? Bs0 : Bs1;
+
+      bool hasNext = (kb + bk) < K;
+      mlir::Value nextGroup;
+      if (hasNext) {
+        mlir::Value nextAs = (idx % 2) == 0 ? As1 : As0;
+        mlir::Value nextBs = (idx % 2) == 0 ? Bs1 : Bs0;
+        nextGroup = emitTile(kb + bk, nextAs, nextBs);
+      }
+
+      for (int64_t kk = 0; kk < bk; kk += 8) {
+        auto kkC = makeIndexConst(b, loc, kk);
+        auto aFrag = mlir::gpu::SubgroupMmaLoadMatrixOp::create(
+                         b, loc, aFragTy, curAs,
+                         mlir::ValueRange{rowW, kkC}, ldBK,
+                         /*transpose=*/{})
+                         .getResult();
+        auto bFrag = mlir::gpu::SubgroupMmaLoadMatrixOp::create(
+                         b, loc, bFragTy, curBs,
+                         mlir::ValueRange{kkC, colW}, ldBN,
+                         transposeAttr)
+                         .getResult();
+        acc = mlir::gpu::SubgroupMmaComputeOp::create(
+                  b, loc, cFragTy, aFrag, bFrag, acc,
+                  /*a_transpose=*/{}, /*b_transpose=*/transposeAttr)
+                  .getResult();
+      }
+
+      if (hasNext) {
+        b.create<mlir::nvgpu::DeviceAsyncWaitOp>(loc, nextGroup, mlir::IntegerAttr());
+        b.create<mlir::gpu::BarrierOp>(loc);
+      }
+    }
+  } else {
+    // Unrolled KB/KK loops (global-load WMMA path).
+    for (int64_t kb = 0; kb < K; kb += bk) {
+      auto kbC = makeIndexConst(b, loc, kb);
+
+      for (int64_t kk = 0; kk < bk; kk += 8) {
+        auto kkC = makeIndexConst(b, loc, kk);
+        auto kIdx = b.create<mlir::arith::AddIOp>(loc, kbC, kkC);
+        auto aFrag =
+            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, A2,
+                                                       mlir::ValueRange{gm, kIdx},
+                                                       ldK, /*transpose=*/{})
                 .getResult();
+        auto bFrag =
+            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, bFragTy, B2,
+                                                       mlir::ValueRange{kIdx, gn},
+                                                       ldN, transposeAttr)
+                .getResult();
+        acc = mlir::gpu::SubgroupMmaComputeOp::create(
+                  b, loc, cFragTy, aFrag, bFrag, acc,
+                  /*a_transpose=*/{}, /*b_transpose=*/transposeAttr)
+                  .getResult();
+      }
     }
   }
 
@@ -1279,7 +1454,7 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
   ctx.module->setAttr("intentir.lowering_kind",
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
-                      mlir::StringAttr::get(mlirCtx, "matmul_mma_tf32_v1"));
+                      mlir::StringAttr::get(mlirCtx, kernelKind));
 
   return mlir::success();
 }
@@ -1388,6 +1563,7 @@ public:
     auto module = getOperation();
     auto *ctx = module.getContext();
     ctx->getOrLoadDialect<mlir::gpu::GPUDialect>();
+    ctx->getOrLoadDialect<mlir::nvgpu::NVGPUDialect>();
     ctx->getOrLoadDialect<mlir::arith::ArithDialect>();
     ctx->getOrLoadDialect<mlir::memref::MemRefDialect>();
 

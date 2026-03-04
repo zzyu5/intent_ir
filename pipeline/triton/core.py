@@ -43,6 +43,7 @@ from verify.tolerances import infer_tolerances
 from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from pipeline.common.evidence_mode import evidence_enabled, evidence_mode
+from pipeline.common.tuning_db import load_tuning_db, resolve_tuning_entries, tuning_db_path_from_env
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
@@ -228,6 +229,84 @@ def _compiler_cpp_wave_name() -> str:
     return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave2")).strip().lower()
 
 
+def _normalize_cuda_arch_for_tuning(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return ""
+    if s.isdigit():
+        return f"sm{s}"
+    if s.startswith("sm_"):
+        s = s[3:]
+    elif s.startswith("sm"):
+        s = s[2:]
+    else:
+        return ""
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return f"sm{digits}" if digits else ""
+
+
+def _detect_cuda_arch_for_tuning() -> str:
+    env = _normalize_cuda_arch_for_tuning(os.getenv("INTENTIR_CUDA_SM", ""))
+    if env:
+        return env
+    try:  # pragma: no cover - depends on CUDA env
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
+                return f"sm{int(major)}{int(minor)}"
+    except Exception:
+        pass
+    return ""
+
+
+def _apply_cuda_tuning_db_for_cpp_stack(
+    *,
+    kernel: str,
+    shape_bindings: dict[str, int],
+) -> tuple[dict[str, int], dict[str, object]]:
+    """
+    Apply tuning_db entries early enough that cpp_plugin lowering (which reads
+    carrier module attributes) can see them.
+
+    Returns (merged_shape_bindings, tuning_meta).
+    """
+
+    arch = _detect_cuda_arch_for_tuning()
+    db_path = tuning_db_path_from_env(backend="cuda")
+    db, db_rel_path = load_tuning_db(path=db_path, backend="cuda")
+
+    meta: dict[str, object] = {
+        "intentir_tuning_source": "none",
+        "intentir_tuning_applied": {},
+        "intentir_tuning_arch": str(arch),
+        "intentir_tuning_db": str(db_rel_path),
+        "intentir_kernel_kind_override": "",
+    }
+    if not kernel or not arch:
+        return dict(shape_bindings), meta
+
+    entries = db.get((str(kernel), str(arch))) or []
+    merged, kernel_kind_override = resolve_tuning_entries(list(entries), shape_bindings=dict(shape_bindings))
+
+    applied: dict[str, int] = {}
+    for k, v in dict(merged).items():
+        key = str(k).strip()
+        if not key:
+            continue
+        try:
+            applied[key] = int(v)
+        except Exception:
+            continue
+    if applied or str(kernel_kind_override or "").strip():
+        out = dict(shape_bindings)
+        out.update(dict(applied))
+        meta["intentir_tuning_source"] = "tuning_db"
+        meta["intentir_tuning_applied"] = dict(applied)
+        meta["intentir_kernel_kind_override"] = str(kernel_kind_override or "").strip()
+        return out, meta
+    return dict(shape_bindings), meta
+
+
 def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
     wave_name = str(wave or "").strip().lower()
     if not wave_name:
@@ -381,6 +460,7 @@ def _emit_mlir_shadow_artifacts(
     report: Dict[str, object],
     backend_target: str | None,
     shape_bindings: Dict[str, int] | None = None,
+    tuning_meta: dict[str, object] | None = None,
 ) -> None:
     shadow_enabled = bool(_mlir_shadow_mode_enabled())
     if (not shadow_enabled) and _execution_ir_mode() != "mlir":
@@ -391,6 +471,8 @@ def _emit_mlir_shadow_artifacts(
     mlir_report["shadow_mode"] = bool(shadow_enabled)
     mlir_report["evidence_mode"] = str(evidence_mode())
     mlir_report["toolchain"] = detect_mlir_toolchain()
+    if isinstance(tuning_meta, dict) and tuning_meta:
+        mlir_report["tuning"] = dict(tuning_meta)
     try:
         # For C++ plugin lowering (and remote audit), persist concrete shape
         # bindings into the carrier module attributes via std_emitter.
@@ -532,6 +614,12 @@ def _emit_mlir_shadow_artifacts(
                     else:
                         mid_mod.meta.setdefault("compiler_stack", "python")
 
+                    if isinstance(tuning_meta, dict) and tuning_meta:
+                        for k, v in dict(tuning_meta).items():
+                            key = str(k).strip()
+                            if key:
+                                mid_mod.meta[key] = v
+
                     # Minimal CUDA C++ stack meta for auditability and runtime launch.
                     #
                     # NOTE: These are duplicated in the C++ plugin (module attrs),
@@ -548,6 +636,7 @@ def _emit_mlir_shadow_artifacts(
                         bm = int(sb.get("MMA_BM") or 64)
                         bn = int(sb.get("MMA_BN") or 16)
                         bk = int(sb.get("MMA_BK") or 32)
+                        async_copy = int(sb.get("MMA_ASYNC_COPY") or 0) != 0
                         if m > 0 and n > 0 and k > 0 and bm > 0 and bn > 0 and bk > 0:
                             warps_n = max(1, int(bn) // 16)
                             warps_m = max(1, int(bm) // 16)
@@ -557,13 +646,15 @@ def _emit_mlir_shadow_artifacts(
                             grid_y = int(m) // int(bm) if int(bm) > 0 else 1
                             if threads > 0 and grid_x > 0 and grid_y > 0:
                                 mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "matmul_mma_tf32_v1"
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = (
+                                    "matmul_mma_tf32_v2" if async_copy else "matmul_mma_tf32_global_v1"
+                                )
                                 mid_mod.meta["cuda_real_mlir_matmul_cfg"] = {
                                     "BM": int(bm),
                                     "BN": int(bn),
                                     "BK": int(bk),
                                     "mma": "tf32",
-                                    "global_load": True,
+                                    "pipeline": ("cp_async_double_buffer" if async_copy else "global_load"),
                                 }
                                 mid_mod.meta["cuda_real_mlir_launch_override"] = {
                                     "block": [int(threads), 1, 1],
@@ -3193,7 +3284,15 @@ def run_pipeline_for_spec(
     if desc.meta.get("descriptor_path"):
         report["descriptor_path"] = str(desc.meta.get("descriptor_path"))
 
-    ttir_path = find_latest_ttir(dump_dir, spec.name)
+    ttir_path = None
+    try:
+        ttir_copy = Path(str(getattr(desc.artifacts, "ttir_path", "") or ""))
+        if ttir_copy.is_file():
+            ttir_path = ttir_copy
+    except Exception:
+        ttir_path = None
+    if ttir_path is None:
+        ttir_path = find_latest_ttir(dump_dir, spec.name) or find_latest_ttir(cache_dir, spec.name)
     constraints = None
     cert = None
     cert_v2: SemanticCertificateV2 | None = None
@@ -4138,6 +4237,20 @@ def run_pipeline_for_spec(
         shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
     )
 
+    tuning_meta: dict[str, object] | None = None
+    try:
+        if (
+            backend_target is not None
+            and str(backend_target).strip().lower().startswith("cuda")
+            and _compiler_stack_name() in {"cpp", "cpp_plugin", "c++"}
+        ):
+            shape_bindings, tuning_meta = _apply_cuda_tuning_db_for_cpp_stack(
+                kernel=str(spec.name),
+                shape_bindings=dict(shape_bindings),
+            )
+    except Exception:
+        tuning_meta = None
+
     _emit_mlir_shadow_artifacts(
         spec_name=spec.name,
         out_dir=out_dir,
@@ -4145,6 +4258,7 @@ def run_pipeline_for_spec(
         report=report,
         backend_target=backend_target,
         shape_bindings=dict(shape_bindings),
+        tuning_meta=tuning_meta,
     )
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can

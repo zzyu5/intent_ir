@@ -149,6 +149,9 @@ class TritonAdapter:
             desc.meta["triton_cache_dir"] = str(cache_dir)
 
         ttir_path = find_latest_ttir(dump_dir, desc.name)
+        if ttir_path is None:
+            # Some Triton builds only persist TTIR into the cache directory.
+            ttir_path = find_latest_ttir(cache_dir, desc.name)
         # If missing, try a single compile-triggering run (best-effort) for KernelSpec-like inputs.
         if ttir_path is None and hasattr(kernel, "runner") and hasattr(kernel, "canonical_shapes"):
             try:
@@ -162,6 +165,8 @@ class TritonAdapter:
             except Exception:
                 pass
             ttir_path = find_latest_ttir(dump_dir, desc.name)
+            if ttir_path is None:
+                ttir_path = find_latest_ttir(cache_dir, desc.name)
 
         if ttir_path and ttir_path.exists():
             ttir_copy = artifact_dir / f"{desc.name}.ttir"
