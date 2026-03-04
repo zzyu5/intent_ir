@@ -2935,6 +2935,8 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   auto lane = b.create<mlir::arith::RemUIOp>(loc, tid, c32).getResult();
   auto warp = b.create<mlir::arith::DivUIOp>(loc, tid, c32).getResult();
   auto lane2 = b.create<mlir::arith::AddIOp>(loc, lane, c32).getResult();
+  auto isLane0 =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, lane, c0).getResult();
 
   // Output mapping (2 warps cover dim 0..63).
   auto dim = b.create<mlir::arith::AddIOp>(
@@ -3041,8 +3043,6 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   b.setInsertionPointToStart(&ifAttend.getElseRegion().front());
   b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{negInf});
   b.setInsertionPointAfter(ifAttend);
-  auto isLane0 =
-      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, lane, c0).getResult();
   auto ifLane0 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isLane0,
                                           /*withElse=*/false);
   b.setInsertionPointToStart(&ifLane0.getThenRegion().front());
@@ -3057,40 +3057,75 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   // - v6: thread0 serial max/sum (simpler, ok on small GPUs)
   // - v7: parallel reductions across threads tid<blockKV (better on large GPUs)
   if (kernelKind == "attn2d_causal_softmax_v7") {
-    auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
-    auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
+    // Parallel softmax scalar update without full-block reductions: blockKV <= 64
+    // so max/sum can be reduced with warp shuffles + a small cross-warp step.
+    //
+    // This cuts down on gpu.barrier usage (important for small KV tiles on large GPUs).
 
-    // Max reduction scratch in weights[0..blockKV): init from scores[0..blockKV).
     auto tidInKV =
         b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cBlockKV).getResult();
-    auto ifInitMax = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, tidInKV, /*withElse=*/false);
-    b.setInsertionPointToStart(&ifInitMax.getThenRegion().front());
+
+    const int64_t numWarpsKV = (blockKV + 31) / 32;
+    auto cNumWarpsKV = makeIndexConst(b, loc, numWarpsKV);
+    auto warpInKV =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, warp, cNumWarpsKV).getResult();
+
+    // scoreOrNegInf = (tid < blockKV) ? scores[tid] : -inf
+    auto ifScore = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, tidInKV, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifScore.getThenRegion().front());
     auto sIdx = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
     auto sv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx}).getResult();
-    auto wIdx = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
-    b.create<mlir::memref::StoreOp>(loc, sv, Sh, mlir::ValueRange{wIdx});
-    b.setInsertionPointAfter(ifInitMax);
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{sv});
+    b.setInsertionPointToStart(&ifScore.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{negInf});
+    b.setInsertionPointAfter(ifScore);
+    auto scoreOrNegInf = ifScore.getResult(0);
+
+    // Per-warp max across lanes.
+    auto warpMax = warpAllReduceMaxF32(b, loc, scoreOrNegInf);
+    auto predStoreWarpMax = b.create<mlir::arith::AndIOp>(loc, isLane0, warpInKV).getResult();
+    auto ifStoreWarpMax =
+        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predStoreWarpMax, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifStoreWarpMax.getThenRegion().front());
+    auto idxWarp = b.create<mlir::arith::AddIOp>(loc, cWeights, warp).getResult();
+    b.create<mlir::memref::StoreOp>(loc, warpMax, Sh, mlir::ValueRange{idxWarp});
+    b.setInsertionPointAfter(ifStoreWarpMax);
     b.create<mlir::gpu::BarrierOp>(loc);
 
-    // weights[0] <- max(scores)
-    for (int64_t stride = blockKV / 2; stride >= 1; stride /= 2) {
-      auto cStride = makeIndexConst(b, loc, stride);
-      auto pred = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cStride).getResult();
-      auto ifRed = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, pred, /*withElse=*/false);
-      b.setInsertionPointToStart(&ifRed.getThenRegion().front());
-      auto idxA = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
-      auto idxB = b.create<mlir::arith::AddIOp>(loc, idxA, cStride).getResult();
-      auto a = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxA}).getResult();
-      auto bval = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxB}).getResult();
-      auto mx = b.create<mlir::arith::MaximumFOp>(loc, a, bval).getResult();
-      b.create<mlir::memref::StoreOp>(loc, mx, Sh, mlir::ValueRange{idxA});
-      b.setInsertionPointAfter(ifRed);
-      b.create<mlir::gpu::BarrierOp>(loc);
-    }
+    // Warp0 reduces across per-warp max values and stores weights[0] = max(scores).
+    auto isWarp0 =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, warp, c0).getResult();
+    auto laneInWarps =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, lane, cNumWarpsKV).getResult();
+    auto ifWarp0Val = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, isWarp0, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifWarp0Val.getThenRegion().front());
+    auto ifLaneVal =
+        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, laneInWarps, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifLaneVal.getThenRegion().front());
+    auto idxMax = b.create<mlir::arith::AddIOp>(loc, cWeights, lane).getResult();
+    auto mxv = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxMax}).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mxv});
+    b.setInsertionPointToStart(&ifLaneVal.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{negInf});
+    b.setInsertionPointAfter(ifLaneVal);
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{ifLaneVal.getResult(0)});
+    b.setInsertionPointToStart(&ifWarp0Val.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{negInf});
+    b.setInsertionPointAfter(ifWarp0Val);
+    auto maxScratch = ifWarp0Val.getResult(0);
+    auto maxTile = warpAllReduceMaxF32(b, loc, maxScratch);
+    auto predStoreMax = b.create<mlir::arith::AndIOp>(loc, isWarp0, isLane0).getResult();
+    auto ifStoreMax =
+        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predStoreMax, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifStoreMax.getThenRegion().front());
+    b.create<mlir::memref::StoreOp>(loc, maxTile, Sh, mlir::ValueRange{cWeights});
+    b.setInsertionPointAfter(ifStoreMax);
 
     // Thread0 computes mNew/alpha and stores scalars.
     auto ifScalar = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
     b.setInsertionPointToStart(&ifScalar.getThenRegion().front());
+    auto mPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
+    auto lPrev = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cLOff}).getResult();
     auto mTile = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cWeights}).getResult();
     auto mNew = b.create<mlir::arith::MaximumFOp>(loc, mPrev, mTile).getResult();
     auto alpha = b.create<mlir::math::Exp2Op>(
@@ -3106,9 +3141,9 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     b.setInsertionPointAfter(ifScalar);
     b.create<mlir::gpu::BarrierOp>(loc);
 
-    // Compute weights and init sum scratch in scores[0..blockKV).
-    auto ifWeights = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, tidInKV, /*withElse=*/false);
-    b.setInsertionPointToStart(&ifWeights.getThenRegion().front());
+    // Compute weights (tid<blockKV) and reduce sum(weights) via warp shuffles.
+    auto ifWeightVal = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, tidInKV, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifWeightVal.getThenRegion().front());
     auto mNew2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{cMOff}).getResult();
     auto sIdx2 = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
     auto sv2 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{sIdx2}).getResult();
@@ -3120,25 +3155,50 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
                  .getResult();
     auto wIdx2 = b.create<mlir::arith::AddIOp>(loc, cWeights, tid).getResult();
     b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{wIdx2});
-    b.create<mlir::memref::StoreOp>(loc, w, Sh, mlir::ValueRange{sIdx2}); // sum scratch
-    b.setInsertionPointAfter(ifWeights);
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{w});
+    b.setInsertionPointToStart(&ifWeightVal.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+    b.setInsertionPointAfter(ifWeightVal);
+    auto wForSum = ifWeightVal.getResult(0);
+
+    // Synchronize before reusing scores[] for reduction scratch. Without this,
+    // a different warp could overwrite scores[0/1] before other warps have read
+    // the corresponding score values to compute weights.
     b.create<mlir::gpu::BarrierOp>(loc);
 
-    // scores[0] <- sum(weights)
-    for (int64_t stride = blockKV / 2; stride >= 1; stride /= 2) {
-      auto cStride = makeIndexConst(b, loc, stride);
-      auto pred = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, tid, cStride).getResult();
-      auto ifRed = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, pred, /*withElse=*/false);
-      b.setInsertionPointToStart(&ifRed.getThenRegion().front());
-      auto idxA = b.create<mlir::arith::AddIOp>(loc, cScores, tid).getResult();
-      auto idxB = b.create<mlir::arith::AddIOp>(loc, idxA, cStride).getResult();
-      auto a = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxA}).getResult();
-      auto bval = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxB}).getResult();
-      auto sum = b.create<mlir::arith::AddFOp>(loc, a, bval).getResult();
-      b.create<mlir::memref::StoreOp>(loc, sum, Sh, mlir::ValueRange{idxA});
-      b.setInsertionPointAfter(ifRed);
-      b.create<mlir::gpu::BarrierOp>(loc);
-    }
+    auto warpSum = warpAllReduceSumF32(b, loc, wForSum);
+    auto predStoreWarpSum = b.create<mlir::arith::AndIOp>(loc, isLane0, warpInKV).getResult();
+    auto ifStoreWarpSum =
+        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predStoreWarpSum, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifStoreWarpSum.getThenRegion().front());
+    auto idxSum = b.create<mlir::arith::AddIOp>(loc, cScores, warp).getResult();
+    b.create<mlir::memref::StoreOp>(loc, warpSum, Sh, mlir::ValueRange{idxSum});
+    b.setInsertionPointAfter(ifStoreWarpSum);
+    b.create<mlir::gpu::BarrierOp>(loc);
+
+    // Warp0 reduces across per-warp sums and stores scores[0] = sum(weights).
+    auto ifWarp0Sum = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, isWarp0, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifWarp0Sum.getThenRegion().front());
+    auto ifLaneSum =
+        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, laneInWarps, /*withElse=*/true);
+    b.setInsertionPointToStart(&ifLaneSum.getThenRegion().front());
+    auto idxS = b.create<mlir::arith::AddIOp>(loc, cScores, lane).getResult();
+    auto svSum = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{idxS}).getResult();
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{svSum});
+    b.setInsertionPointToStart(&ifLaneSum.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+    b.setInsertionPointAfter(ifLaneSum);
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{ifLaneSum.getResult(0)});
+    b.setInsertionPointToStart(&ifWarp0Sum.getElseRegion().front());
+    b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+    b.setInsertionPointAfter(ifWarp0Sum);
+    auto sumScratch = ifWarp0Sum.getResult(0);
+    auto sumTile = warpAllReduceSumF32(b, loc, sumScratch);
+    auto ifStoreSum =
+        b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, predStoreMax, /*withElse=*/false);
+    b.setInsertionPointToStart(&ifStoreSum.getThenRegion().front());
+    b.create<mlir::memref::StoreOp>(loc, sumTile, Sh, mlir::ValueRange{cScores});
+    b.setInsertionPointAfter(ifStoreSum);
 
     // Thread0 finalizes lNew = lScaled + sum(weights).
     auto ifFinal = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isTid0, /*withElse=*/false);
