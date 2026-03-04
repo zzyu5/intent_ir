@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -310,6 +312,13 @@ def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) ->
         intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
     )
     out.meta["last_mlir_opt_pass"] = str(pass_arg)
+    try:
+        harvested = _harvest_intentir_module_attrs(str(out.module_text or ""))
+        if harvested:
+            out.meta.update(dict(harvested))
+    except Exception:
+        # Best-effort only: attribute harvesting must never break compilation.
+        pass
     return out
 
 
@@ -494,3 +503,89 @@ def _pass_kind(pass_name: str) -> str:
     if name.startswith("opt"):
         return "opt"
     return "python"
+
+
+_INTENTIR_STR_ATTR_RE_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _extract_mlir_string_attr(module_text: str, attr_key: str) -> str | None:
+    key = str(attr_key or "").strip()
+    if not key:
+        return None
+    pat = _INTENTIR_STR_ATTR_RE_CACHE.get(key)
+    if pat is None:
+        pat = re.compile(rf"{re.escape(key)}\s*=\s*\"([^\"]*)\"")
+        _INTENTIR_STR_ATTR_RE_CACHE[key] = pat
+    m = pat.search(str(module_text or ""))
+    if not m:
+        return None
+    return str(m.group(1) or "")
+
+
+def _decode_intentir_b64_json_obj(b64: str) -> dict[str, Any] | None:
+    raw = str(b64 or "").strip()
+    if not raw:
+        return None
+    try:
+        decoded = base64.b64decode(raw.encode("ascii"), validate=True).decode("utf-8")
+        payload = json.loads(decoded)
+    except Exception:
+        return None
+    if isinstance(payload, dict):
+        return dict(payload)
+    return None
+
+
+def _harvest_intentir_module_attrs(module_text: str) -> dict[str, Any]:
+    """
+    Best-effort extraction of `intentir.*` carrier module attributes into
+    IntentMLIRModule.meta so downstream contracts / perf reports don't need
+    Python-side re-derivation for cpp_plugin flows.
+    """
+
+    text = str(module_text or "")
+    # Only attempt to harvest from MLIR. Downstream stages may contain LLVM IR.
+    if not text.lstrip().startswith("module"):
+        return {}
+
+    out: dict[str, Any] = {}
+
+    # Common audit attrs (string).
+    compiler_stack = _extract_mlir_string_attr(text, "intentir.compiler_stack")
+    if compiler_stack:
+        out["compiler_stack"] = str(compiler_stack)
+    lowering_kind = _extract_mlir_string_attr(text, "intentir.lowering_kind")
+    if lowering_kind:
+        out["lowering_kind"] = str(lowering_kind)
+    cuda_kind = _extract_mlir_string_attr(text, "intentir.cuda_real_mlir_kernel_kind")
+    if cuda_kind:
+        out["cuda_real_mlir_kernel_kind"] = str(cuda_kind)
+    kk = _extract_mlir_string_attr(text, "intentir.kernel_kind_override")
+    if kk:
+        out["intentir_kernel_kind_override"] = str(kk)
+
+    # Shape bindings (b64 json) are needed for both lowering and audit.
+    sb_b64 = _extract_mlir_string_attr(text, "intentir.shape_bindings_b64")
+    sb = _decode_intentir_b64_json_obj(sb_b64 or "") if sb_b64 else None
+    if isinstance(sb, dict) and sb:
+        normalized: dict[str, int] = {}
+        for k, v in dict(sb).items():
+            key = str(k).strip()
+            if not key:
+                continue
+            try:
+                normalized[key] = int(v)
+            except Exception:
+                continue
+        if normalized:
+            out["shape_bindings"] = dict(normalized)
+
+    # C++ plugin can emit a compact JSON-b64 meta carrier for launch/tuning/etc.
+    meta_b64 = _extract_mlir_string_attr(text, "intentir.meta_json_b64")
+    meta = _decode_intentir_b64_json_obj(meta_b64 or "") if meta_b64 else None
+    if isinstance(meta, dict) and meta:
+        # Do not let schema markers pollute downstream contract artifacts.
+        meta.pop("schema_version", None)
+        out.update(dict(meta))
+
+    return out
