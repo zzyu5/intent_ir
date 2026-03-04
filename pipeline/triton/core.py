@@ -726,22 +726,49 @@ def _emit_mlir_shadow_artifacts(
                         kv = int(sb.get("KV_CTX") or 0)
                         hd = int(sb.get("HEAD_DIM") or 0)
                         if q > 0 and kv > 0 and hd > 0:
-                            # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
                             mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn2d_causal_softmax_warp_v1"
                             mid_mod.meta["cuda_real_mlir_output_total"] = int(q) * int(hd)
-                            mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
-                                "block_x": 32,
-                                "head_dim": int(hd),
-                                "q_ctx": int(q),
-                                "kv_ctx": int(kv),
-                                "mask": "causal",
-                                "softmax": "online_v1",
-                            }
-                            mid_mod.meta["cuda_real_mlir_launch_override"] = {
-                                "block": [32, 1, 1],
-                                "grid": [int(q), 1, 1],
-                            }
+                            if str(spec_name) == "flash_attention2d":
+                                # NOTE: C++ attn2d_causal_softmax_v6 is compiled for block_x=(2+score_warps)*32.
+                                score_warps = int(sb.get("ATTN_SCORE_WARPS") or 6)
+                                if score_warps not in (2, 4, 6):
+                                    score_warps = 6
+                                block_kv = int(sb.get("ATTN_BLOCK_KV") or 32)
+                                if block_kv not in (16, 32, 64):
+                                    block_kv = 32
+                                block_warps = int(2 + score_warps)
+                                block_x = int(block_warps * 32)
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn2d_causal_softmax_v6"
+                                mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
+                                    "block_x": int(block_x),
+                                    "block_kv": int(block_kv),
+                                    "out_warps": 2,
+                                    "score_warps": int(score_warps),
+                                    "head_dim": int(hd),
+                                    "q_ctx": int(q),
+                                    "kv_ctx": int(kv),
+                                    "mask": "causal",
+                                    "softmax": "online_v1",
+                                }
+                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
+                                    "block": [int(block_x), 1, 1],
+                                    "grid": [int(q), 1, 1],
+                                }
+                            else:
+                                # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn2d_causal_softmax_warp_v1"
+                                mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
+                                    "block_x": 32,
+                                    "head_dim": int(hd),
+                                    "q_ctx": int(q),
+                                    "kv_ctx": int(kv),
+                                    "mask": "causal",
+                                    "softmax": "online_v1",
+                                }
+                                mid_mod.meta["cuda_real_mlir_launch_override"] = {
+                                    "block": [32, 1, 1],
+                                    "grid": [int(q), 1, 1],
+                                }
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
