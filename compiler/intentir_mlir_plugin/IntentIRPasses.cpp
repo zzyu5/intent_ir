@@ -312,8 +312,24 @@ static mlir::Value makeIndexConst(mlir::OpBuilder &b, mlir::Location loc, int64_
   return b.create<mlir::arith::ConstantIndexOp>(loc, v);
 }
 
+static mlir::Value makeI32Const(mlir::OpBuilder &b, mlir::Location loc, int32_t v) {
+  return b.create<mlir::arith::ConstantIntOp>(loc, v, 32);
+}
+
 static mlir::Value makeF32Const(mlir::OpBuilder &b, mlir::Location loc, float v) {
   return b.create<mlir::arith::ConstantFloatOp>(loc, b.getF32Type(), llvm::APFloat(v));
+}
+
+static mlir::Value warpAllReduceSumF32(mlir::OpBuilder &b, mlir::Location loc, mlir::Value v) {
+  auto c32 = makeI32Const(b, loc, 32);
+  mlir::Value cur = v;
+  for (int32_t offset : {16, 8, 4, 2, 1}) {
+    auto off = makeI32Const(b, loc, offset);
+    auto sh = b.create<mlir::gpu::ShuffleOp>(loc, cur, off, c32, mlir::gpu::ShuffleMode::XOR);
+    auto val = sh.getResult(0);
+    cur = b.create<mlir::arith::AddFOp>(loc, cur, val).getResult();
+  }
+  return cur;
 }
 
 static mlir::FailureOr<LoweringContext> parseLoweringContext(mlir::ModuleOp module) {
@@ -1947,6 +1963,250 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
   return mlir::success();
 }
 
+static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &ctx,
+                                                              llvm::StringRef kernelKind) {
+  // Specialized causal attention for triton-native 2D kernels:
+  // Q:[Q_CTX,HD], K/V:[KV_CTX,HD], Out:[Q_CTX,HD], sm_scale:[]
+  //
+  // One CTA per query row (grid_x = Q_CTX), one warp (block_x=32).
+  // Each lane owns 1 or 2 output columns (d=lane and d=lane+32) and uses
+  // warp shuffle XOR for dot all-reduce and one-pass online softmax.
+
+  auto *mlirCtx = ctx.module.getContext();
+  auto loc = ctx.module.getLoc();
+  auto &b = ctx.builder;
+
+  const std::string qName = "Q";
+  const std::string kName = "K";
+  const std::string vName = "V";
+  const std::string scaleName = "sm_scale";
+  const std::string outName = "Out";
+  if (ctx.tensors.find(qName) == ctx.tensors.end() || ctx.tensors.find(kName) == ctx.tensors.end() ||
+      ctx.tensors.find(vName) == ctx.tensors.end() || ctx.tensors.find(outName) == ctx.tensors.end()) {
+    ctx.module.emitError("attn2d: missing tensor specs for Q/K/V/Out");
+    return mlir::failure();
+  }
+
+  auto shapeQOr = resolveShape(ctx.tensors[qName], ctx.shapeBindings);
+  auto shapeKOr = resolveShape(ctx.tensors[kName], ctx.shapeBindings);
+  auto shapeVOr = resolveShape(ctx.tensors[vName], ctx.shapeBindings);
+  auto shapeOOr = resolveShape(ctx.tensors[outName], ctx.shapeBindings);
+  if (mlir::failed(shapeQOr) || mlir::failed(shapeKOr) || mlir::failed(shapeVOr) ||
+      mlir::failed(shapeOOr)) {
+    ctx.module.emitError("attn2d: failed to resolve shapes");
+    return mlir::failure();
+  }
+  if (shapeQOr->size() != 2 || shapeKOr->size() != 2 || shapeVOr->size() != 2 ||
+      shapeOOr->size() != 2) {
+    ctx.module.emitError("attn2d: expected rank-2 tensors");
+    return mlir::failure();
+  }
+  const int64_t Q = (*shapeQOr)[0];
+  const int64_t HD = (*shapeQOr)[1];
+  const int64_t KV = (*shapeKOr)[0];
+  const int64_t HD2 = (*shapeKOr)[1];
+  if (KV != (*shapeVOr)[0] || HD2 != (*shapeVOr)[1]) {
+    ctx.module.emitError("attn2d: K/V shape mismatch");
+    return mlir::failure();
+  }
+  if ((*shapeOOr)[0] != Q || (*shapeOOr)[1] != HD) {
+    ctx.module.emitError("attn2d: Out shape mismatch");
+    return mlir::failure();
+  }
+  if (Q <= 0 || KV <= 0 || HD <= 0) {
+    ctx.module.emitError("attn2d: invalid dims");
+    return mlir::failure();
+  }
+  if (HD > 64) {
+    ctx.module.emitError("attn2d: HEAD_DIM>64 not supported by warp kernel");
+    return mlir::failure();
+  }
+
+  clearModuleBody(ctx.module);
+
+  ctx.module->setAttr("gpu.container_module", mlir::UnitAttr::get(mlirCtx));
+  if (!ctx.module->hasAttr("llvm.target_triple")) {
+    ctx.module->setAttr("llvm.target_triple",
+                        mlir::StringAttr::get(mlirCtx, "nvptx64-nvidia-cuda"));
+  }
+
+  b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
+  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
+
+  auto f32 = b.getF32Type();
+  auto globalMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+  const int64_t threads = 32;
+
+  auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
+  if (mlir::failed(fnOr))
+    return mlir::failure();
+  auto fn = *fnOr;
+
+  auto QArg = getArgByName(ctx, fn, qName);
+  auto KArg = getArgByName(ctx, fn, kName);
+  auto VArg = getArgByName(ctx, fn, vName);
+  auto SArg = getArgByName(ctx, fn, scaleName);
+  auto OutArg = getArgByName(ctx, fn, outName);
+  if (!QArg || !KArg || !VArg || !SArg || !OutArg) {
+    ctx.module.emitError("attn2d: failed to map kernel args");
+    return mlir::failure();
+  }
+
+  auto qTy =
+      mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto kvTy =
+      mlir::MemRefType::get({KV, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto outTy =
+      mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
+  auto Q2 = mlir::memref::ReinterpretCastOp::create(b, loc, qTy, QArg, 0, {Q, HD}, {HD, 1})
+                .getResult();
+  auto K2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, KArg, 0, {KV, HD}, {HD, 1})
+                .getResult();
+  auto V2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, VArg, 0, {KV, HD}, {HD, 1})
+                .getResult();
+  auto Out2 =
+      mlir::memref::ReinterpretCastOp::create(b, loc, outTy, OutArg, 0, {Q, HD}, {HD, 1})
+          .getResult();
+
+  auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
+  auto qRow = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
+
+  auto c0 = makeIndexConst(b, loc, 0);
+  auto c1 = makeIndexConst(b, loc, 1);
+  auto cKV = makeIndexConst(b, loc, KV);
+  auto c32 = makeIndexConst(b, loc, 32);
+  auto cHD = makeIndexConst(b, loc, HD);
+  auto c0f = makeF32Const(b, loc, 0.0f);
+  auto c1f = makeF32Const(b, loc, 1.0f);
+  auto negInf = makeF32Const(b, loc, -std::numeric_limits<float>::infinity());
+
+  auto d0 = tid;
+  auto d1 = b.create<mlir::arith::AddIOp>(loc, tid, c32).getResult();
+  auto d0In =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, d0, cHD).getResult();
+  auto d1In =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, d1, cHD).getResult();
+
+  auto scale = b.create<mlir::memref::LoadOp>(loc, SArg, mlir::ValueRange{c0}).getResult();
+
+  auto kvFor = b.create<mlir::scf::ForOp>(loc, c0, cKV, c1,
+                                         mlir::ValueRange{negInf, c0f, c0f, c0f});
+  b.setInsertionPointToStart(kvFor.getBody());
+  auto kv = kvFor.getInductionVar();
+  auto m = kvFor.getRegionIterArgs()[0];
+  auto l = kvFor.getRegionIterArgs()[1];
+  auto out0 = kvFor.getRegionIterArgs()[2];
+  auto out1 = kvFor.getRegionIterArgs()[3];
+
+  // Dot partial (two columns per lane).
+  mlir::Value partial = c0f;
+  auto if0 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d0In, /*withElse=*/true);
+  b.setInsertionPointToStart(&if0.getThenRegion().front());
+  auto q0 = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, d0}).getResult();
+  auto k0 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv, d0}).getResult();
+  b.create<mlir::scf::YieldOp>(
+      loc, mlir::ValueRange{b.create<mlir::arith::MulFOp>(loc, q0, k0).getResult()});
+  b.setInsertionPointToStart(&if0.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(if0);
+  partial = b.create<mlir::arith::AddFOp>(loc, partial, if0.getResult(0)).getResult();
+
+  auto if1 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d1In, /*withElse=*/true);
+  b.setInsertionPointToStart(&if1.getThenRegion().front());
+  auto q1 = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, d1}).getResult();
+  auto k1 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv, d1}).getResult();
+  b.create<mlir::scf::YieldOp>(
+      loc, mlir::ValueRange{b.create<mlir::arith::MulFOp>(loc, q1, k1).getResult()});
+  b.setInsertionPointToStart(&if1.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(if1);
+  partial = b.create<mlir::arith::AddFOp>(loc, partial, if1.getResult(0)).getResult();
+
+  auto dot = warpAllReduceSumF32(b, loc, partial);
+  auto score = b.create<mlir::arith::MulFOp>(loc, dot, scale).getResult();
+
+  // Causal mask: kv > qRow -> -inf.
+  auto masked =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ugt, kv, qRow).getResult();
+  auto scoreMasked = b.create<mlir::arith::SelectOp>(loc, masked, negInf, score).getResult();
+
+  auto mNew = b.create<mlir::arith::MaximumFOp>(loc, m, scoreMasked).getResult();
+  auto alpha = b.create<mlir::math::ExpOp>(
+                   loc, b.create<mlir::arith::SubFOp>(loc, m, mNew).getResult())
+                   .getResult();
+  auto p = b.create<mlir::math::ExpOp>(
+               loc, b.create<mlir::arith::SubFOp>(loc, scoreMasked, mNew).getResult())
+               .getResult();
+  auto lNew = b.create<mlir::arith::AddFOp>(
+                   loc, b.create<mlir::arith::MulFOp>(loc, l, alpha).getResult(), p)
+                  .getResult();
+
+  auto out0Scaled = b.create<mlir::arith::MulFOp>(loc, out0, alpha).getResult();
+  auto out1Scaled = b.create<mlir::arith::MulFOp>(loc, out1, alpha).getResult();
+
+  auto ifV0 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d0In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifV0.getThenRegion().front());
+  auto v0 = b.create<mlir::memref::LoadOp>(loc, V2, mlir::ValueRange{kv, d0}).getResult();
+  b.create<mlir::scf::YieldOp>(
+      loc,
+      mlir::ValueRange{b.create<mlir::arith::AddFOp>(
+                            loc, out0Scaled, b.create<mlir::arith::MulFOp>(loc, p, v0).getResult())
+                            .getResult()});
+  b.setInsertionPointToStart(&ifV0.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{out0Scaled});
+  b.setInsertionPointAfter(ifV0);
+  auto out0New = ifV0.getResult(0);
+
+  auto ifV1 =
+      b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, d1In, /*withElse=*/true);
+  b.setInsertionPointToStart(&ifV1.getThenRegion().front());
+  auto v1 = b.create<mlir::memref::LoadOp>(loc, V2, mlir::ValueRange{kv, d1}).getResult();
+  b.create<mlir::scf::YieldOp>(
+      loc,
+      mlir::ValueRange{b.create<mlir::arith::AddFOp>(
+                            loc, out1Scaled, b.create<mlir::arith::MulFOp>(loc, p, v1).getResult())
+                            .getResult()});
+  b.setInsertionPointToStart(&ifV1.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{out1Scaled});
+  b.setInsertionPointAfter(ifV1);
+  auto out1New = ifV1.getResult(0);
+
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{mNew, lNew, out0New, out1New});
+  b.setInsertionPointAfter(kvFor);
+  auto mFinal = kvFor.getResult(0);
+  auto lFinal = kvFor.getResult(1);
+  auto out0Final = kvFor.getResult(2);
+  auto out1Final = kvFor.getResult(3);
+
+  auto invL = b.create<mlir::arith::DivFOp>(loc, c1f, lFinal).getResult();
+  auto y0 = b.create<mlir::arith::MulFOp>(loc, out0Final, invL).getResult();
+  auto y1 = b.create<mlir::arith::MulFOp>(loc, out1Final, invL).getResult();
+
+  auto store0 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, d0In, /*withElse=*/false);
+  b.setInsertionPointToStart(&store0.getThenRegion().front());
+  b.create<mlir::memref::StoreOp>(loc, y0, Out2, mlir::ValueRange{qRow, d0});
+  b.setInsertionPointAfter(store0);
+
+  auto store1 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, d1In, /*withElse=*/false);
+  b.setInsertionPointToStart(&store1.getThenRegion().front());
+  b.create<mlir::memref::StoreOp>(loc, y1, Out2, mlir::ValueRange{qRow, d1});
+  b.setInsertionPointAfter(store1);
+
+  // Note: launch_override must enforce block_x=32 and grid_x=Q.
+  b.create<mlir::gpu::ReturnOp>(loc);
+
+  ctx.module->setAttr("intentir.compiler_stack",
+                      mlir::StringAttr::get(mlirCtx, "cpp_plugin"));
+  ctx.module->setAttr("intentir.lowering_kind",
+                      mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
+  ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
+                      mlir::StringAttr::get(mlirCtx, kernelKind));
+  (void)mFinal;
+  return mlir::success();
+}
+
 static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
   // Expected intent-expanded graph:
   //   x_sq = input * input
@@ -2365,16 +2625,20 @@ public:
 
     const std::string k = lc.kernelName;
     mlir::LogicalResult ok = mlir::failure();
-    if (k == "ai_bench_matmul") {
-      ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
-    } else if (k == "matmul_fused_epilogue2d") {
-      ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
-    } else if (k == "rms_norm2d") {
-      ok = lowerCudaRmsNorm2dRowwiseV1(lc);
-    } else {
-      module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
-      ok = mlir::failure();
-    }
+	    if (k == "ai_bench_matmul") {
+	      ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
+	    } else if (k == "matmul_fused_epilogue2d") {
+	      ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
+	    } else if (k == "rms_norm2d") {
+	      ok = lowerCudaRmsNorm2dRowwiseV1(lc);
+	    } else if (k == "flash_attention2d") {
+	      ok = lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1");
+	    } else if (k == "masked_attention2d") {
+	      ok = lowerCudaAttn2dCausalSoftmaxWarpV1(lc, "attn2d_causal_softmax_warp_v1");
+	    } else {
+	      module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
+	      ok = mlir::failure();
+	    }
     if (mlir::failed(ok)) {
       signalPassFailure();
       return;

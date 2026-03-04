@@ -1,0 +1,17 @@
+{
+  "schema_version": "intentir_compiler_cpp_wave_v1",
+  "wave": "wave3",
+  "kernels": [
+    "add2d",
+    "row_sum",
+    "gather2d",
+    "cat2d",
+    "diag2d",
+    "flip2d",
+    "ai_bench_matmul",
+    "matmul_fused_epilogue2d",
+    "rms_norm2d",
+    "flash_attention2d",
+    "masked_attention2d"
+  ]
+}

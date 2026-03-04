@@ -716,6 +716,32 @@ def _emit_mlir_shadow_artifacts(
                                 "block": [256, 1, 1],
                                 "grid": [int(m), 1, 1],
                             }
+                    if (
+                        str(llvm_pipeline) == "downstream_cuda_std_cpp_llvm"
+                        and str(spec_name) in {"flash_attention2d", "masked_attention2d"}
+                        and isinstance(mid_mod.meta.get("shape_bindings"), dict)
+                    ):
+                        sb = {str(k): int(v) for k, v in dict(mid_mod.meta.get("shape_bindings") or {}).items()}
+                        q = int(sb.get("Q_CTX") or 0)
+                        kv = int(sb.get("KV_CTX") or 0)
+                        hd = int(sb.get("HEAD_DIM") or 0)
+                        if q > 0 and kv > 0 and hd > 0:
+                            # NOTE: C++ attn2d_causal_softmax_warp_v1 is compiled for a fixed block_x=32.
+                            mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
+                            mid_mod.meta["cuda_real_mlir_kernel_kind"] = "attn2d_causal_softmax_warp_v1"
+                            mid_mod.meta["cuda_real_mlir_output_total"] = int(q) * int(hd)
+                            mid_mod.meta["cuda_real_mlir_attention_cfg"] = {
+                                "block_x": 32,
+                                "head_dim": int(hd),
+                                "q_ctx": int(q),
+                                "kv_ctx": int(kv),
+                                "mask": "causal",
+                                "softmax": "online_v1",
+                            }
+                            mid_mod.meta["cuda_real_mlir_launch_override"] = {
+                                "block": [32, 1, 1],
+                                "grid": [int(q), 1, 1],
+                            }
                     # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
                     # be self-contained and avoid stale artifacts.
                     if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
