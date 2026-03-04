@@ -557,7 +557,7 @@ def _emit_mlir_shadow_artifacts(
                             grid_y = int(m) // int(bm) if int(bm) > 0 else 1
                             if threads > 0 and grid_x > 0 and grid_y > 0:
                                 mid_mod.meta["cuda_real_mlir_kernel_emitted"] = True
-                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "matmul_mma_tf32_global_v1"
+                                mid_mod.meta["cuda_real_mlir_kernel_kind"] = "matmul_mma_tf32_v1"
                                 mid_mod.meta["cuda_real_mlir_matmul_cfg"] = {
                                     "BM": int(bm),
                                     "BN": int(bn),

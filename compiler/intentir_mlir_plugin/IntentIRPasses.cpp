@@ -1061,7 +1061,7 @@ static mlir::Value getArgByName(LoweringContext &ctx, mlir::gpu::GPUFuncOp fn,
   return {};
 }
 
-static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext &ctx) {
+static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx) {
   // Match the single-op matmul intent: C = A @ B.
   std::string aName, bName, outName;
   for (const auto &op : ctx.ops) {
@@ -1117,7 +1117,7 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
     return mlir::failure();
   }
 
-  // Tunable tile params (kept consistent with python matmul_mma_tf32_global_v1).
+  // Tunable tile params (shared-staged WMMA TF32 baseline).
   auto getBind = [&](llvm::StringRef key, int64_t defv) -> int64_t {
     auto it = ctx.shapeBindings.find(key.str());
     if (it == ctx.shapeBindings.end())
@@ -1164,6 +1164,10 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
   auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
+  // Types.
+  auto f32 = b.getF32Type();
+  auto globalMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule,
                                                sanitizeSymbolName(ctx.kernelName));
   if (mlir::failed(fnOr))
@@ -1179,12 +1183,15 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
     return mlir::failure();
   }
 
-  auto f32 = b.getF32Type();
-  auto memSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
-
-  auto a2Ty = mlir::MemRefType::get({M, K}, f32, mlir::MemRefLayoutAttrInterface{}, memSpace);
-  auto b2Ty = mlir::MemRefType::get({K, N}, f32, mlir::MemRefLayoutAttrInterface{}, memSpace);
-  auto c2Ty = mlir::MemRefType::get({M, N}, f32, mlir::MemRefLayoutAttrInterface{}, memSpace);
+  auto a2Ty = mlir::MemRefType::get({M, K}, f32,
+                                    mlir::MemRefLayoutAttrInterface{},
+                                    globalMemSpace);
+  auto b2Ty = mlir::MemRefType::get({K, N}, f32,
+                                    mlir::MemRefLayoutAttrInterface{},
+                                    globalMemSpace);
+  auto c2Ty = mlir::MemRefType::get({M, N}, f32,
+                                    mlir::MemRefLayoutAttrInterface{},
+                                    globalMemSpace);
 
   // Reinterpret 1D memrefs as 2D matrices.
   auto A2 = mlir::memref::ReinterpretCastOp::create(b, loc, a2Ty, A, 0, {M, K},
@@ -1206,6 +1213,8 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
   auto c32 = makeIndexConst(b, loc, 32);
   auto cBM = makeIndexConst(b, loc, bm);
   auto cBN = makeIndexConst(b, loc, bn);
+  auto cBK = makeIndexConst(b, loc, bk);
+  auto cThreads = makeIndexConst(b, loc, threads);
   auto cWarpsN = makeIndexConst(b, loc, warpsN);
   auto c0f = makeF32Const(b, loc, 0.0f);
 
@@ -1235,13 +1244,13 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
   mlir::UnitAttr transposeAttr = bTranspose ? mlir::UnitAttr::get(mlirCtx)
                                             : mlir::UnitAttr();
 
-  // Unrolled KB/KK loops (global-load path).
+  // Unrolled KB/KK loops (global-load WMMA path).
   for (int64_t kb = 0; kb < K; kb += bk) {
     auto kbC = makeIndexConst(b, loc, kb);
+
     for (int64_t kk = 0; kk < bk; kk += 8) {
       auto kkC = makeIndexConst(b, loc, kk);
       auto kIdx = b.create<mlir::arith::AddIOp>(loc, kbC, kkC);
-
       auto aFrag =
           mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, A2,
                                                      mlir::ValueRange{gm, kIdx},
@@ -1252,12 +1261,10 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
                                                      mlir::ValueRange{kIdx, gn},
                                                      ldN, transposeAttr)
               .getResult();
-      auto next =
-          mlir::gpu::SubgroupMmaComputeOp::create(b, loc, cFragTy, aFrag, bFrag,
-                                                  acc, /*a_transpose=*/{},
-                                                  /*b_transpose=*/transposeAttr)
-              .getResult();
-      acc = next;
+      acc = mlir::gpu::SubgroupMmaComputeOp::create(
+                b, loc, cFragTy, aFrag, bFrag, acc,
+                /*a_transpose=*/{}, /*b_transpose=*/transposeAttr)
+                .getResult();
     }
   }
 
@@ -1272,7 +1279,7 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32GlobalV1(LoweringContext
   ctx.module->setAttr("intentir.lowering_kind",
                       mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
   ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
-                      mlir::StringAttr::get(mlirCtx, "matmul_mma_tf32_global_v1"));
+                      mlir::StringAttr::get(mlirCtx, "matmul_mma_tf32_v1"));
 
   return mlir::success();
 }
@@ -1394,7 +1401,7 @@ public:
     const std::string k = lc.kernelName;
     mlir::LogicalResult ok = mlir::failure();
     if (k == "ai_bench_matmul") {
-      ok = lowerCudaAiBenchMatmulMmaTF32GlobalV1(lc);
+      ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
     } else {
       module.emitError() << "unsupported kernel for cpp cuda focus v1: " << k;
       ok = mlir::failure();
