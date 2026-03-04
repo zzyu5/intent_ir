@@ -1015,6 +1015,12 @@ public:
     ctx->getOrLoadDialect<mlir::scf::SCFDialect>();
     ctx->getOrLoadDialect<mlir::memref::MemRefDialect>();
     ctx->getOrLoadDialect<mlir::math::MathDialect>();
+    // Ensure downstream LLVM IR has a RISC-V target triple so rvv_remote_run can
+    // compile via llc (-mtriple=...).
+    if (!module->hasAttr("llvm.target_triple")) {
+      module->setAttr("llvm.target_triple",
+                      mlir::StringAttr::get(ctx, "riscv64-unknown-linux-gnu"));
+    }
 
     auto ctxOr = parseLoweringContext(module);
     if (mlir::failed(ctxOr)) {

@@ -1,11 +1,7 @@
 passes:
-  - python:backend_legalize
-  - python:attach_provider_meta
   - mlir-opt:pass-pipeline=builtin.module(intentir-lower-rvv-cpu-loops-v1)
-  - python:set_llvm_target_triple
   - mlir-opt:verify-each canonicalize cse
   - mlir-opt:convert-scf-to-cf convert-cf-to-llvm convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-func-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
   - mlir-translate:mlir-to-llvmir
-  - python:ensure_llvm_ir_text
   - "llvm-as:"
   - "opt:-O3 -mattr=+v"

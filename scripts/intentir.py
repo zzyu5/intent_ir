@@ -899,11 +899,12 @@ def _cmd_mlir_pass(args: argparse.Namespace) -> int:
 
     payload = _load_intent_payload(Path(args.intent_json))
     intent = IntentFunction.from_json_dict(payload)
-    module = to_mlir(intent)
     shape_bindings = _parse_shape_bindings(getattr(args, "shape", None))
     if shape_bindings:
-        module.meta = dict(module.meta or {})
-        module.meta["shape_bindings"] = dict(shape_bindings)
+        # Inject shape bindings into carrier attrs via std_emitter.
+        intent.meta = dict(intent.meta or {})
+        intent.meta["shape_bindings"] = dict(shape_bindings)
+    module = to_mlir(intent)
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_mlir_pass")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_module, trace = run_pipeline(

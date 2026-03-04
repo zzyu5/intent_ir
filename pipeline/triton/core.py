@@ -390,6 +390,18 @@ def _emit_mlir_shadow_artifacts(
     mlir_report["evidence_mode"] = str(evidence_mode())
     mlir_report["toolchain"] = detect_mlir_toolchain()
     try:
+        # For C++ plugin lowering (and remote audit), persist concrete shape
+        # bindings into the carrier module attributes via std_emitter.
+        if shape_bindings:
+            try:
+                intent.meta = dict(intent.meta or {})
+                intent.meta["shape_bindings"] = {
+                    str(k): max(1, int(v))
+                    for k, v in dict(shape_bindings).items()
+                    if str(k).strip()
+                }
+            except Exception:
+                pass
         mod = to_mlir(intent)
         mlir_report["module_path"] = ""
         if shadow_enabled:
@@ -566,6 +578,17 @@ def _emit_mlir_shadow_artifacts(
                             ensure_reason = f"ensure_llvm_ir_text_origin:{llvm_text_origin}"
                         else:
                             ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
+                else:
+                    # Some real-MLIR pipelines intentionally omit python:ensure_llvm_ir_text.
+                    # Treat mlir-translate output as ready if it looks like textual LLVM IR.
+                    llvm_text = str(getattr(llvm_mod, "module_text", "") or "") if llvm_mod is not None else ""
+                    looks_like_llvm = ("; ModuleID" in llvm_text) or ("define " in llvm_text and "{" in llvm_text)
+                    if translate_ok and looks_like_llvm:
+                        ensure_ok = True
+                        ensure_reason = ""
+                    elif translate_ok and not looks_like_llvm:
+                        ensure_ok = False
+                        ensure_reason = "llvm_text_not_detected"
                 if (not llvm_translate) and ensure_ok:
                     # Pre-translated textual LLVM IR path: lower pass already emitted LLVM text.
                     translate_ok = True
