@@ -306,6 +306,7 @@ def _materialize_family_outputs(
     kernels: list[str],
     family_out: Path,
     chunk_rows: list[dict[str, Any]],
+    require_dual_pass: bool = True,
 ) -> tuple[bool, Path, Path]:
     strict_mode = bool(strict_fallback_enabled())
     fallback_policy = "strict" if strict_mode else "legacy_compatible"
@@ -384,7 +385,7 @@ def _materialize_family_outputs(
                 family=family,
                 reason_detail=f"missing semantic entry after chunk merge for family={family}",
             )
-        if str(entry.get("status") or "") != "dual_pass":
+        if bool(require_dual_pass) and str(entry.get("status") or "") != "dual_pass":
             non_dual_semantics.append(sop)
         final_entries.append(entry)
 
@@ -567,6 +568,7 @@ def main() -> None:
     if str(args.execution_ir) != "mlir":
         raise SystemExit(f"unsupported --execution-ir={args.execution_ir!r}; only 'mlir' is allowed")
 
+    require_dual_pass = bool(args.run_rvv_remote) or (not bool(args.skip_rvv_local))
     payload = _load_json(args.coverage_batches)
     family_order = [str(x).strip() for x in list(payload.get("family_order") or []) if str(x).strip()]
     by_family = {
@@ -587,6 +589,9 @@ def main() -> None:
     if unknown:
         raise SystemExit(f"unknown family name(s): {', '.join(unknown)}")
     scope_full = bool(len(families) == len(full_scope_families) and set(families) == set(full_scope_families))
+    full_scope_semantic_total = int(
+        sum(len(list(by_family[f].get("semantic_ops") or [])) for f in list(full_scope_families))
+    )
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -977,6 +982,7 @@ def main() -> None:
                 kernels=kernels,
                 family_out=family_out,
                 chunk_rows=chunk_rows,
+                require_dual_pass=bool(require_dual_pass),
             )
         else:
             family_ok = bool(all(bool(r.get("ok")) for r in chunk_rows))
@@ -1074,6 +1080,12 @@ def main() -> None:
             str(int(args.family_kernel_chunk_size)),
         ]
         aggregate_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+        aggregate_cmd.extend(
+            [
+                "--require-dual-pass-total",
+                str(int(full_scope_semantic_total)) if bool(require_dual_pass) else "0",
+            ]
+        )
         print("[coverage-batches] aggregate full196 evidence", flush=True)
         aggregate_rc, _, _ = _run(
             aggregate_cmd,

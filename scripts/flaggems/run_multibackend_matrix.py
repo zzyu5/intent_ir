@@ -315,13 +315,22 @@ def _collect_mlir_llvm_artifacts(
         llvm_pipeline = str(mlir.get("llvm_pipeline") or "").strip()
         effective_llvm_pipeline = str(llvm_pipeline)
         if bool(require_cuda_llvm):
-            effective_llvm_pipeline = "downstream_cuda_llvm"
+            # Real-MLIR pipelines use `downstream_cuda_std_llvm`. Keep backward compatibility
+            # for older reports that still record `downstream_cuda_llvm`.
+            if not effective_llvm_pipeline:
+                effective_llvm_pipeline = "downstream_cuda_std_llvm"
+            elif effective_llvm_pipeline == "downstream_cuda_llvm":
+                effective_llvm_pipeline = "downstream_cuda_std_llvm"
         row["llvm_pipeline"] = str(llvm_pipeline)
         if str(effective_llvm_pipeline).strip():
             row["llvm_pipeline"] = str(effective_llvm_pipeline)
         expected_contract_key = ""
-        if effective_llvm_pipeline == "downstream_cuda_llvm":
+        if effective_llvm_pipeline == "downstream_cuda_std_llvm":
+            expected_contract_key = "downstream_cuda_std_llvm_contract_path"
+        elif effective_llvm_pipeline == "downstream_cuda_llvm":
             expected_contract_key = "downstream_cuda_llvm_contract_path"
+        elif effective_llvm_pipeline == "downstream_rvv_std_llvm":
+            expected_contract_key = "downstream_rvv_std_llvm_contract_path"
         elif effective_llvm_pipeline == "downstream_rvv_llvm":
             expected_contract_key = "downstream_rvv_llvm_contract_path"
         if expected_contract_key:
@@ -344,15 +353,17 @@ def _collect_mlir_llvm_artifacts(
                 rows.append(row)
                 continue
         contract_candidates: list[str] = []
-        if effective_llvm_pipeline == "downstream_cuda_llvm":
+        if effective_llvm_pipeline in {"downstream_cuda_std_llvm", "downstream_cuda_llvm"}:
             contract_candidates = [
+                "downstream_cuda_std_llvm_contract_path",
                 "downstream_cuda_llvm_contract_path",
                 "downstream_contract_path",
                 "downstream_llvm_contract_path",
                 "downstream_cuda_contract_path",
             ]
-        elif effective_llvm_pipeline == "downstream_rvv_llvm":
+        elif effective_llvm_pipeline in {"downstream_rvv_std_llvm", "downstream_rvv_llvm"}:
             contract_candidates = [
+                "downstream_rvv_std_llvm_contract_path",
                 "downstream_rvv_llvm_contract_path",
                 "downstream_contract_path",
                 "downstream_llvm_contract_path",
@@ -449,7 +460,7 @@ def _collect_mlir_llvm_artifacts(
             llvm_path_exists = llvm_path.is_file()
         allow_contract_only_cuda_llvm = bool(
             require_cuda_llvm
-            and str(effective_llvm_pipeline) == "downstream_cuda_llvm"
+            and str(effective_llvm_pipeline) in {"downstream_cuda_std_llvm", "downstream_cuda_llvm"}
             and str(selected_contract_backend) == "cuda"
             and str(selected_contract_cuda_ptx_origin) == "llvm_llc"
             and (not llvm_path_exists)

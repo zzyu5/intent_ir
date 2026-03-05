@@ -826,7 +826,7 @@ def main() -> None:
                     reason_code="pipeline_missing_report",
                     reason_detail=f"missing semantic entry in {status_path}",
                 )
-            if str(row.get("status") or "") != "dual_pass":
+            if bool(args.require_dual_pass_total) and str(row.get("status") or "") != "dual_pass":
                 non_dual_semantics.append(sop)
             merged_entries[sop] = row
 
@@ -884,18 +884,17 @@ def main() -> None:
     kernel_total_expected = int(len(expected_kernels))
     kernel_total_seen = int(len(seen_kernels))
     dual_pass_target = int(args.require_dual_pass_total)
+    require_dual_pass = bool(dual_pass_target > 0)
 
-    coverage_integrity_ok = bool(
-        categories_complete
-        and reason_code_complete
-        and determinability
-        and semantic_total_expected == dual_pass_target
-        and dual_pass_total == dual_pass_target
-    )
-    coverage_reason = (
-        "ok"
-        if coverage_integrity_ok
-        else "coverage_categories_incomplete_or_non_dual_pass"
+    coverage_integrity_ok = bool(categories_complete and reason_code_complete and determinability)
+    if bool(require_dual_pass):
+        coverage_integrity_ok = bool(
+            coverage_integrity_ok
+            and semantic_total_expected == dual_pass_target
+            and dual_pass_total == dual_pass_target
+        )
+    coverage_reason = "ok" if coverage_integrity_ok else (
+        "coverage_categories_incomplete_or_non_dual_pass" if bool(require_dual_pass) else "coverage_categories_incomplete"
     )
 
     out_run_summary = Path(args.out_run_summary) if args.out_run_summary is not None else (Path(args.runs_root) / "run_summary.json")
