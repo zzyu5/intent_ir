@@ -5,6 +5,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Builders.h"
@@ -1925,6 +1926,7 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
   int64_t bn = getBind("MMA_BN", 32);
   int64_t bk = getBind("MMA_BK", 32);
   bool asyncCopyRequested = getBind("MMA_ASYNC_COPY", 0) != 0;
+  bool warpVectorEpilogue = getBind("MMA_EPILOGUE_WARP", 0) != 0;
 
   if (bm <= 0 || bn <= 0 || bk <= 0) {
     ctx.module.emitError("matmul_fused_epilogue2d: invalid MMA_BM/MMA_BN/MMA_BK");
@@ -2118,9 +2120,13 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
   auto acc = mlir::gpu::SubgroupMmaConstantMatrixOp::create(b, loc, cFragTy, c0f)
                  .getResult();
 
-  std::string kernelKind = "matmul_fused_epilogue_mma_tf32_global_v1";
+  std::string kernelKind =
+      asyncCopyRequested ? "matmul_fused_epilogue_mma_tf32_v2"
+                         : "matmul_fused_epilogue_mma_tf32_global_v1";
+  if (warpVectorEpilogue)
+    kernelKind = "matmul_fused_epilogue_mma_tf32_v3";
+
   if (asyncCopyRequested) {
-    kernelKind = "matmul_fused_epilogue_mma_tf32_v2";
 
     auto As0 =
         mlir::memref::GetGlobalOp::create(b, loc, shATy, shA0Name).getResult();
@@ -2269,36 +2275,96 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
                                              mlir::ValueRange{rowW, colW},
                                              b.getIndexAttr(bn),
                                              /*transpose=*/{});
-  b.create<mlir::gpu::BarrierOp>(loc);
+  if (!warpVectorEpilogue) {
+    b.create<mlir::gpu::BarrierOp>(loc);
 
-  int64_t tileC = bm * bn;
-  auto cTileC = makeIndexConst(b, loc, tileC);
-  auto forOp = b.create<mlir::scf::ForOp>(loc, tid, cTileC, cThreads);
-  b.setInsertionPointToStart(forOp.getBody());
-  auto t = forOp.getInductionVar();
-  auto tR = b.create<mlir::arith::DivUIOp>(loc, t, cBN);
-  auto tC = b.create<mlir::arith::RemUIOp>(loc, t, cBN);
-  auto gmE = b.create<mlir::arith::AddIOp>(loc, row0, tR);
-  auto gnE = b.create<mlir::arith::AddIOp>(loc, col0, tC);
+    int64_t tileC = bm * bn;
+    auto cTileC = makeIndexConst(b, loc, tileC);
+    auto forOp = b.create<mlir::scf::ForOp>(loc, tid, cTileC, cThreads);
+    b.setInsertionPointToStart(forOp.getBody());
+    auto t = forOp.getInductionVar();
+    auto tR = b.create<mlir::arith::DivUIOp>(loc, t, cBN);
+    auto tC = b.create<mlir::arith::RemUIOp>(loc, t, cBN);
+    auto gmE = b.create<mlir::arith::AddIOp>(loc, row0, tR);
+    auto gnE = b.create<mlir::arith::AddIOp>(loc, col0, tC);
 
-  auto val0 = b.create<mlir::memref::LoadOp>(loc, Cs, mlir::ValueRange{tR, tC}).getResult();
-  auto bias = b.create<mlir::memref::LoadOp>(loc, Bias, mlir::ValueRange{gnE}).getResult();
-  auto val1 = b.create<mlir::arith::AddFOp>(loc, val0, bias).getResult();
+    auto val0 =
+        b.create<mlir::memref::LoadOp>(loc, Cs, mlir::ValueRange{tR, tC}).getResult();
+    auto bias =
+        b.create<mlir::memref::LoadOp>(loc, Bias, mlir::ValueRange{gnE}).getResult();
+    auto val1 = b.create<mlir::arith::AddFOp>(loc, val0, bias).getResult();
 
-  auto rm = b.create<mlir::memref::LoadOp>(loc, RowMask, mlir::ValueRange{gmE}).getResult();
-  auto cm = b.create<mlir::memref::LoadOp>(loc, ColMask, mlir::ValueRange{gnE}).getResult();
-  auto c0i8 = b.create<mlir::arith::ConstantIntOp>(loc, 0, 8);
-  auto rmOk =
-      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, rm, c0i8)
-          .getResult();
-  auto cmOk =
-      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, cm, c0i8)
-          .getResult();
-  auto cond = b.create<mlir::arith::AndIOp>(loc, rmOk, cmOk).getResult();
-  auto val2 = b.create<mlir::arith::SelectOp>(loc, cond, val1, c0f).getResult();
-  b.create<mlir::memref::StoreOp>(loc, val2, Out2, mlir::ValueRange{gmE, gnE});
+    auto rm =
+        b.create<mlir::memref::LoadOp>(loc, RowMask, mlir::ValueRange{gmE}).getResult();
+    auto cm =
+        b.create<mlir::memref::LoadOp>(loc, ColMask, mlir::ValueRange{gnE}).getResult();
+    auto c0i8 = b.create<mlir::arith::ConstantIntOp>(loc, 0, 8);
+    auto rmOk =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, rm, c0i8)
+            .getResult();
+    auto cmOk =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, cm, c0i8)
+            .getResult();
+    auto cond = b.create<mlir::arith::AndIOp>(loc, rmOk, cmOk).getResult();
+    auto val2 = b.create<mlir::arith::SelectOp>(loc, cond, val1, c0f).getResult();
+    b.create<mlir::memref::StoreOp>(loc, val2, Out2, mlir::ValueRange{gmE, gnE});
 
-  b.setInsertionPointAfter(forOp);
+    b.setInsertionPointAfter(forOp);
+  } else {
+    // Warp-only vectorized epilogue: each warp processes its own 16x16 MMA tile
+    // without CTA-level barriers. This reduces overhead for small tiles.
+    auto v4f = mlir::VectorType::get({4}, f32);
+    auto v4i8 = mlir::VectorType::get({4}, b.getI8Type());
+    auto v4i1 = mlir::VectorType::get({4}, b.getI1Type());
+
+    auto lane = b.create<mlir::arith::RemUIOp>(loc, tid, c32).getResult();
+
+    auto c0i8 = b.create<mlir::arith::ConstantIntOp>(loc, 0, 8);
+    auto c0i8V = b.create<mlir::vector::SplatOp>(loc, v4i8, c0i8).getResult();
+    auto c0fV = b.create<mlir::vector::SplatOp>(loc, v4f, c0f).getResult();
+
+    auto cTileGroups = makeIndexConst(b, loc, 64); // 16*16 / 4
+    auto forOp = b.create<mlir::scf::ForOp>(loc, lane, cTileGroups, c32);
+    b.setInsertionPointToStart(forOp.getBody());
+    auto g = forOp.getInductionVar();
+
+    auto c4Cols = makeIndexConst(b, loc, 4); // 16 / 4
+    auto gRow = b.create<mlir::arith::DivUIOp>(loc, g, c4Cols).getResult();
+    auto gColGroup = b.create<mlir::arith::RemUIOp>(loc, g, c4Cols).getResult();
+    auto gCol = b.create<mlir::arith::MulIOp>(loc, gColGroup, c4).getResult();
+
+    auto rCs = b.create<mlir::arith::AddIOp>(loc, rowW, gRow).getResult();
+    auto cCs = b.create<mlir::arith::AddIOp>(loc, colW, gCol).getResult();
+    auto rOut = b.create<mlir::arith::AddIOp>(loc, gm, gRow).getResult();
+    auto cOut = b.create<mlir::arith::AddIOp>(loc, gn, gCol).getResult();
+
+    auto val0 =
+        b.create<mlir::vector::LoadOp>(loc, v4f, Cs, mlir::ValueRange{rCs, cCs})
+            .getResult();
+    auto bias = b.create<mlir::vector::LoadOp>(loc, v4f, Bias, mlir::ValueRange{cOut})
+                    .getResult();
+    auto val1 = b.create<mlir::arith::AddFOp>(loc, val0, bias).getResult();
+
+    auto rm =
+        b.create<mlir::memref::LoadOp>(loc, RowMask, mlir::ValueRange{rOut}).getResult();
+    auto rmOk =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, rm, c0i8)
+            .getResult();
+    auto rmOkV = b.create<mlir::vector::SplatOp>(loc, v4i1, rmOk).getResult();
+
+    auto cm =
+        b.create<mlir::vector::LoadOp>(loc, v4i8, ColMask, mlir::ValueRange{cOut})
+            .getResult();
+    auto cmOk =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, cm, c0i8V)
+            .getResult();
+    auto cond = b.create<mlir::arith::AndIOp>(loc, rmOkV, cmOk).getResult();
+
+    auto val2 = b.create<mlir::arith::SelectOp>(loc, cond, val1, c0fV).getResult();
+    b.create<mlir::vector::StoreOp>(loc, val2, Out2, mlir::ValueRange{rOut, cOut});
+
+    b.setInsertionPointAfter(forOp);
+  }
   b.create<mlir::gpu::ReturnOp>(loc);
 
   ctx.module->setAttr("intentir.compiler_stack",
@@ -2325,7 +2391,7 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
     cfg["BK"] = static_cast<int64_t>(bk);
     cfg["mma"] = "tf32";
     cfg["pipeline"] = asyncCopyRequested ? "cp_async_double_buffer" : "global_load";
-    cfg["epilogue"] = "bias_rowmask_colmask";
+    cfg["epilogue"] = warpVectorEpilogue ? "warp_vector_v1" : "cta_shared_v1";
     meta["cuda_real_mlir_matmul_cfg"] = std::move(cfg);
   });
   return mlir::success();
@@ -8942,6 +9008,7 @@ public:
     ctx->getOrLoadDialect<mlir::math::MathDialect>();
     ctx->getOrLoadDialect<mlir::memref::MemRefDialect>();
     ctx->getOrLoadDialect<mlir::scf::SCFDialect>();
+    ctx->getOrLoadDialect<mlir::vector::VectorDialect>();
 
     auto ctxOr = parseLoweringContext(module);
     if (mlir::failed(ctxOr)) {
@@ -8975,9 +9042,13 @@ public:
           lc.shapeBindings["MMA_ASYNC_COPY"] = 0;
         } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v2") {
           lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
+          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 0;
+        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v3") {
+          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
+          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 1;
         } else {
           module.emitError() << "invalid intentir.kernel_kind_override for matmul_fused_epilogue2d: " << kindOverride
-                             << "; allowed=[matmul_fused_epilogue_mma_tf32_global_v1, matmul_fused_epilogue_mma_tf32_v2]";
+                             << "; allowed=[matmul_fused_epilogue_mma_tf32_global_v1, matmul_fused_epilogue_mma_tf32_v2, matmul_fused_epilogue_mma_tf32_v3]";
           signalPassFailure();
           return;
         }
