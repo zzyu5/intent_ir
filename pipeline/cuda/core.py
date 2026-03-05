@@ -23,7 +23,7 @@ from frontends.common.obligations import O3_MASK_IMPLIES_INBOUNDS, evaluate_obli
 from frontends.common.static_validate import static_validate
 from frontends.cuda.runtime import CudaLaunch, CudaRuntimeError, run_cuda_kernel_io
 from frontends.cuda.signature import infer_runtime_io_spec
-from intent_ir.llm import LLMClientError, LLMIntentHub
+from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from intent_ir.parser import CandidateIntent
@@ -1584,10 +1584,12 @@ def run_pipeline_for_spec(
     if cand is None:
         fb_intent = None
         fb_source = ""
-        # Only fall back when:
-        # - LLM is explicitly disabled (use_llm=False), or
-        # - LLM infrastructure failed (LLMClientError). Do not mask semantic/parser bugs.
-        if (not use_llm) or isinstance(llm_err, LLMClientError):
+        # Only fall back when LLM is explicitly disabled (use_llm=False).
+        #
+        # When use_llm=True, we require the LLM path to succeed (including any
+        # on-disk LLM response cache hits). This avoids silently switching
+        # semantics when the network/provider is flaky.
+        if not use_llm:
             fb_intent = _load_snapshot_intent_seed(spec.name)
             fb_source = "snapshot_intent" if fb_intent is not None else ""
             if fb_intent is None:

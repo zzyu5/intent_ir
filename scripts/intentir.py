@@ -761,7 +761,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.backend_target),
             "--no-stage-c",
             "--no-mutation-kill",
-            "--no-llm",
+            ("--llm" if bool(args.llm) else "--no-llm"),
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
@@ -780,7 +780,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.backend_target),
             "--no-stage-c",
             "--no-mutation-kill",
-            "--no-llm",
+            ("--llm" if bool(args.llm) else "--no-llm"),
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
@@ -799,7 +799,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.backend_target),
             "--no-stage-c",
             "--no-mutation-kill",
-            "--no-llm",
+            ("--llm" if bool(args.llm) else "--no-llm"),
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
@@ -818,7 +818,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.backend_target),
             "--no-stage-c",
             "--no-mutation-kill",
-            "--no-llm",
+            ("--llm" if bool(args.llm) else "--no-llm"),
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
@@ -1189,6 +1189,13 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--family", action="append", default=[])
     suite.add_argument("--kernel", action="append", default=[])
     suite.add_argument("--cases-limit", type=int, default=8)
+    default_llm = str(os.getenv("INTENTIR_USE_LLM", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    suite.add_argument(
+        "--llm",
+        action=argparse.BooleanOptionalAction,
+        default=default_llm,
+        help="Use LLM to lift frontend descriptors to IntentIR (auto-uses on-disk cache).",
+    )
     suite.add_argument("--execution-ir", choices=["mlir"], default=_execution_ir_default())
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
     suite.add_argument("--gpu-perf-threshold", type=float, default=0.80)
