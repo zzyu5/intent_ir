@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import warnings
 from dataclasses import dataclass, field
@@ -3285,6 +3286,25 @@ def run_pipeline_for_spec(
         "mode": str(seed_policy),
         "used": False,
     }
+    seed_cache_dir = getattr(effective_policy, "seed_cache_dir", None)
+    cache_sync_in = "skipped"
+    cache_sync_out = False
+    if seed_cache_dir is not None:
+        report["intent_seed"]["cache_dir"] = str(seed_cache_dir)
+        cache_seed = Path(seed_cache_dir) / f"{spec.name}.intent_seed.json"
+        if seed_policy == "force_llm":
+            cache_sync_in = "skipped_force_llm"
+        elif seed_path.is_file():
+            cache_sync_in = "run_dir_present"
+        elif cache_seed.is_file():
+            seed_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cache_seed, seed_path)
+            cache_sync_in = "hit"
+        else:
+            cache_sync_in = "miss"
+            if seed_policy == "force_cache":
+                raise RuntimeError(f"missing seed cache for {spec.name}: {cache_seed}")
+    report["intent_seed"]["cache_sync_in"] = str(cache_sync_in)
     provider_name = str(triton_provider).strip().lower()
     provider_plugin = get_provider_plugin(provider_name)
     provider_source_op = getattr(spec, "source_op", getattr(spec, "name", None))
@@ -4092,6 +4112,17 @@ def run_pipeline_for_spec(
         except Exception as e:
             report["intent_seed"]["saved"] = False
             report["intent_seed"]["error"] = f"{type(e).__name__}: {e}"
+
+    if seed_cache_dir is not None and seed_policy in {"auto", "force_llm"}:
+        try:
+            cache_seed = Path(seed_cache_dir) / f"{spec.name}.intent_seed.json"
+            if seed_path.is_file():
+                cache_seed.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(seed_path, cache_seed)
+                cache_sync_out = True
+        except Exception:
+            cache_sync_out = False
+    report["intent_seed"]["cache_sync_out"] = bool(cache_sync_out)
 
     shape_bindings = _augment_shape_bindings_from_baseline_io(
         intent=cand.intent,

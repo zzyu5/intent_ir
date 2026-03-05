@@ -702,6 +702,10 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.backend_target),
             "--no-stage-c",
             "--no-mutation-kill",
+            "--intentir-mode",
+            str(args.intentir_mode),
+            "--intentir-miss-policy",
+            str(args.intentir_miss_policy),
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
