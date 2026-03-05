@@ -366,6 +366,31 @@ def _force_import_flaggems_from_src(src_dir: Path) -> None:
     init_py = pkg_dir / "__init__.py"
     if not init_py.is_file():
         raise FileNotFoundError(f"flag_gems package not found under source dir: {src_dir}")
+
+    # FlagGems optionally depends on `packaging` for version comparisons.
+    # Some remote environments used for perf/coverage don't have it installed,
+    # so provide a minimal stub sufficient for `from packaging import version`.
+    try:
+        importlib.import_module("packaging.version")
+    except ModuleNotFoundError:
+        import re
+        import types
+
+        def _parse_version(v: str) -> tuple[int, int, int]:
+            match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", str(v))
+            if match is None:
+                return (0, 0, 0)
+            major, minor, patch = match.groups()
+            return (int(major), int(minor), int(patch or 0))
+
+        packaging_mod = types.ModuleType("packaging")
+        packaging_mod.__path__ = []  # mark as package
+        version_mod = types.ModuleType("packaging.version")
+        version_mod.parse = _parse_version  # type: ignore[attr-defined]
+        packaging_mod.version = version_mod  # type: ignore[attr-defined]
+        sys.modules.setdefault("packaging", packaging_mod)
+        sys.modules.setdefault("packaging.version", version_mod)
+
     for key in list(sys.modules.keys()):
         if key == "flag_gems" or key.startswith("flag_gems."):
             sys.modules.pop(key, None)
