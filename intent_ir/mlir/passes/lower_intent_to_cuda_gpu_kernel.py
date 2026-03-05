@@ -888,7 +888,7 @@ def lower_intent_to_cuda_gpu_kernel(
             if src_ty == "f32" and dst_ty == "i1":
                 c0 = _fresh("c0f")
                 out_lines.append(f"        {c0} = arith.constant 0.0 : f32")
-                out_lines.append(f"        {out} = arith.cmpf one, {ssa}, {c0} : f32")
+                out_lines.append(f"        {out} = arith.cmpf une, {ssa}, {c0} : f32")
                 return out
             raise RuntimeError(f"unsupported cast: {src_ty} -> {dst_ty}")
 
@@ -1382,7 +1382,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     rhs = _coerce_scalar(in_ssa[1], in_ty[1], "f32")
                     pred = {
                         "eq": "oeq",
-                        "ne": "one",
+                        "ne": "une",
                         "lt": "olt",
                         "le": "ole",
                         "gt": "ogt",
@@ -1479,8 +1479,17 @@ def lower_intent_to_cuda_gpu_kernel(
             if op_name == "remainder":
                 if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
                     raise RuntimeError("remainder currently supports f32/f32 only")
+                # Torch/Python remainder semantics:
+                #   r = x - floor(x / y) * y
+                # This differs from `arith.remf` (fmod/trunc) for negative inputs.
+                div = _fresh("div")
+                flo = _fresh("floor")
+                prod = _fresh("prod")
                 dst = _fresh("rem")
-                out_lines.append(f"        {dst} = arith.remf {in_ssa[0]}, {in_ssa[1]} : f32")
+                out_lines.append(f"        {div} = arith.divf {in_ssa[0]}, {in_ssa[1]}{fm} : f32")
+                out_lines.append(f"        {flo} = math.floor {div}{fm} : f32")
+                out_lines.append(f"        {prod} = arith.mulf {flo}, {in_ssa[1]}{fm} : f32")
+                out_lines.append(f"        {dst} = arith.subf {in_ssa[0]}, {prod}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -11413,7 +11422,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %c1i64 = arith.constant 1 : i64")
         lines.append("      %partial = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0i64) -> (i64) {")
         lines.append(f"        %x_val = memref.load {arg_ssa[in_name]}[%j] : {in_memref}")
-        lines.append("        %nz = arith.cmpf one, %x_val, %c0f : f32")
+        lines.append("        %nz = arith.cmpf une, %x_val, %c0f : f32")
         lines.append("        %inc = arith.select %nz, %c1i64, %c0i64 : i64")
         lines.append("        %acc_next = arith.addi %acc, %inc : i64")
         lines.append("        scf.yield %acc_next : i64")
@@ -14500,7 +14509,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     rhs = _coerce_elem(b_v, b_ty, "f32")
                     pred = {
                         "eq": "oeq",
-                        "ne": "one",
+                        "ne": "une",
                         "lt": "olt",
                         "le": "ole",
                         "gt": "ogt",
@@ -15050,7 +15059,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %pred_q_out = arith.cmpi ult, %q_out, %cQ : index")
         lines.append("        scf.if %pred_q_out {")
         lines.append("          %l = memref.load %lsh[%or] : " + ml_sh_ty)
-        lines.append("          %nz = arith.cmpf one, %l, %c0f : f32")
+        lines.append("          %nz = arith.cmpf une, %l, %c0f : f32")
         lines.append("          %l_safe = arith.select %nz, %l, %c1f : f32")
         lines.append("          %accv = memref.load %Accsh[%or, %od] : " + acc_sh_ty)
         lines.append("          %outv = arith.divf %accv, %l_safe" + fm + " : f32")
@@ -15367,7 +15376,7 @@ def lower_intent_to_cuda_gpu_kernel(
             l_safe = _fresh("l_safe")
             l_vec = _fresh("l_vec")
             out_vec = _fresh("out_vec")
-            lines.append(f"        {sum_nz} = arith.cmpf one, {l_out}, %c0f : f32")
+            lines.append(f"        {sum_nz} = arith.cmpf une, {l_out}, %c0f : f32")
             lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_out}, %c1f : f32")
             lines.append(f"        {l_vec} = vector.splat {l_safe} : {vec4_ty}")
             lines.append(f"        {out_vec} = arith.divf {acc_out}, {l_vec}{fm} : {vec4_ty}")
@@ -15625,7 +15634,7 @@ def lower_intent_to_cuda_gpu_kernel(
 
         # Write output (warp0).
         lines.append("        scf.if %is0 {")
-        lines.append("          %nz = arith.cmpf one, %l_out, %c0f : f32")
+        lines.append("          %nz = arith.cmpf une, %l_out, %c0f : f32")
         lines.append("          %l_safe = arith.select %nz, %l_out, %c1f : f32")
         lines.append("          %o0 = arith.divf %a0_out, %l_safe : f32")
         lines.append("          %o1 = arith.divf %a1_out, %l_safe : f32")
@@ -15936,7 +15945,7 @@ def lower_intent_to_cuda_gpu_kernel(
 
         # Store output (tid<64).
         lines.append("        scf.if %pred_out {")
-        lines.append("          %nz = arith.cmpf one, %l_out, %c0f : f32")
+        lines.append("          %nz = arith.cmpf une, %l_out, %c0f : f32")
         lines.append("          %l_safe = arith.select %nz, %l_out, %c1f : f32")
         lines.append("          %outv = arith.divf %acc_out, %l_safe : f32")
         lines.append("          %oidx = arith.addi %base_q, %dim : index")
@@ -16251,7 +16260,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          %pred_dim = arith.cmpi ult, %dim, %cHD : index")
         lines.append("          scf.if %pred_dim {")
         lines.append(f"            %l_final = memref.load %sh[%cLOff] : {shared_global_memref_ty}")
-        lines.append("            %nz = arith.cmpf one, %l_final, %c0f : f32")
+        lines.append("            %nz = arith.cmpf une, %l_final, %c0f : f32")
         lines.append("            %l_safe = arith.select %nz, %l_final, %c1f : f32")
         lines.append(f"            %outv = arith.divf %acc_out, %l_safe{fm} : f32")
         lines.append("            %o_idx = arith.addi %base_q, %dim : index")
@@ -16697,7 +16706,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         out0 = _fresh("out0")
         out1 = _fresh("out1")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_out}, %c1f : f32")
         lines.append(f"        {out0} = arith.divf {acc0_out}, {l_safe}{fm} : f32")
         lines.append(f"        {out1} = arith.divf {acc1_out}, {l_safe}{fm} : f32")
@@ -16986,7 +16995,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Normalize and store.
-        lines.append("        %nz = arith.cmpf one, " + str(l_out) + ", %c0f : f32")
+        lines.append("        %nz = arith.cmpf une, " + str(l_out) + ", %c0f : f32")
         lines.append("        %l_safe = arith.select %nz, " + str(l_out) + ", %c1f : f32")
         inv_local = _fresh("inv_l")
         lines.append(f"        {inv_local} = scf.if %is0 -> (f32) {{")
@@ -17202,7 +17211,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Normalize and store.
-        lines.append(f"        %nz = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        %nz = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        %l_safe = arith.select %nz, {l_out}, %c1f : f32")
         outv = _fresh("outv")
         lines.append(f"        {outv} = arith.divf {acc_out}, %l_safe{fm} : f32")
@@ -17424,7 +17433,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
         lines.append("      gpu.barrier")
         lines.append(f"      %sum_all0 = memref.load %sh[%cSumOff] : {shared_global_memref_ty}")
-        lines.append("      %sum_nz = arith.cmpf one, %sum_all0, %c0f : f32")
+        lines.append("      %sum_nz = arith.cmpf une, %sum_all0, %c0f : f32")
         lines.append(f"      %sum_safe = arith.select %sum_nz, %sum_all0, %c1f : f32")
         lines.append(f"      %inv_sum = arith.divf %c1f, %sum_safe{fm} : f32")
 
@@ -17766,7 +17775,7 @@ def lower_intent_to_cuda_gpu_kernel(
         nz = _fresh("nz")
         l_safe = _fresh("l_safe")
         outv = _fresh("outv")
-        lines.append(f"        {nz} = arith.cmpf one, {l_all}, %c0f : f32")
+        lines.append(f"        {nz} = arith.cmpf une, {l_all}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {nz}, {l_all}, %c1f : f32")
         lines.append(f"        {outv} = arith.divf {acc_out}, {l_safe}{fm} : f32")
         lines.append("        scf.if %pred_d {")
@@ -18076,7 +18085,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Normalize and store.
-        lines.append("        %l_nz = arith.cmpf one, " + str(l_final) + ", %c0f : f32")
+        lines.append("        %l_nz = arith.cmpf une, " + str(l_final) + ", %c0f : f32")
         lines.append("        %l_safe = arith.select %l_nz, " + str(l_final) + ", %c1f : f32")
         lines.append(f"        %outv = arith.divf {acc_final}, %l_safe{fm} : f32")
         lines.append("        scf.if %pred_d {")
@@ -18279,7 +18288,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Normalize and store.
-        lines.append(f"        %nz = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        %nz = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        %l_safe = arith.select %nz, {l_out}, %c1f : f32")
         outv = _fresh("outv")
         lines.append(f"        {outv} = arith.divf {acc_out}, %l_safe{fm} : f32")
@@ -18460,7 +18469,7 @@ def lower_intent_to_cuda_gpu_kernel(
         sum_safe = _fresh("sum_safe")
         inv_sum = _fresh("inv_sum")
         prob = _fresh("prob")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {sumv}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {sumv}, %c0f : f32")
         lines.append(f"        {sum_safe} = arith.select {sum_nz}, {sumv}, %c1f : f32")
         lines.append(f"        {inv_sum} = arith.divf %c1f, {sum_safe}{fm} : f32")
         lines.append(f"        {prob} = arith.mulf {expv}, {inv_sum}{fm} : f32")
@@ -18772,7 +18781,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         out0 = _fresh("out0")
         out1 = _fresh("out1")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {l_all}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {l_all}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_all}, %c1f : f32")
         lines.append(f"        {out0} = arith.divf {acc0_out}, {l_safe}{fm} : f32")
         lines.append(f"        {out1} = arith.divf {acc1_out}, {l_safe}{fm} : f32")
@@ -18963,7 +18972,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         inv = _fresh("inv")
         outv = _fresh("outv")
-        lines.append(f"        {l_ok} = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        {l_ok} = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {l_ok}, {l_out}, %c1f : f32")
         lines.append(f"        {inv} = arith.divf %c1f, {l_safe}{fm} : f32")
         lines.append(f"        {outv} = arith.mulf {acc_out}, {inv}{fm} : f32")
@@ -19649,7 +19658,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %c0f = arith.constant 0.0 : f32")
         lines.append("        %_pos = scf.for %ii = %c0 to %cT step %c1 iter_args(%pos = %c0) -> (index) {")
         lines.append(f"          %xv = memref.load {arg_ssa[inp_name]}[%ii] : {inp_memref}")
-        lines.append("          %nz = arith.cmpf one, %xv, %c0f : f32")
+        lines.append("          %nz = arith.cmpf une, %xv, %c0f : f32")
         lines.append("          %pos_next = scf.if %nz -> (index) {")
         lines.append("            %pos_ok = arith.cmpi ult, %pos, %cNNZ : index")
         lines.append("            %pos2 = scf.if %pos_ok -> (index) {")
@@ -19903,7 +19912,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         out0 = _fresh("out0")
         out1 = _fresh("out1")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_out}, %c1f : f32")
         lines.append(f"        {out0} = arith.divf {acc0_out}, {l_safe}{fm} : f32")
         lines.append(f"        {out1} = arith.divf {acc1_out}, {l_safe}{fm} : f32")
@@ -20184,7 +20193,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         out0 = _fresh("out0")
         out1 = _fresh("out1")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_out}, %c1f : f32")
         lines.append(f"        {out0} = arith.divf {acc0_out}, {l_safe}{fm} : f32")
         lines.append(f"        {out1} = arith.divf {acc1_out}, {l_safe}{fm} : f32")
@@ -20374,7 +20383,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("            scf.yield %acc_next2 : f32")
         lines.append("          }")
         lines.append("          %c1f = arith.constant 1.0 : f32")
-        lines.append("          %sum_nz = arith.cmpf one, %sumv, %c0f : f32")
+        lines.append("          %sum_nz = arith.cmpf une, %sumv, %c0f : f32")
         lines.append("          %sum_safe = arith.select %sum_nz, %sumv, %c1f : f32")
         lines.append("          scf.for %k3 = %c0 to %cKV step %c1 {")
         lines.append("            %wo3 = arith.addi %cWeights, %k3 : index")
@@ -20816,7 +20825,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         out0 = _fresh("out0")
         out1 = _fresh("out1")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_out}, %c1f : f32")
         lines.append(f"        {out0} = arith.divf {acc0_out}, {l_safe}{fm} : f32")
         lines.append(f"        {out1} = arith.divf {acc1_out}, {l_safe}{fm} : f32")
@@ -21089,7 +21098,7 @@ def lower_intent_to_cuda_gpu_kernel(
         l_safe = _fresh("l_safe")
         out0 = _fresh("out0")
         out1 = _fresh("out1")
-        lines.append(f"        {sum_nz} = arith.cmpf one, {l_out}, %c0f : f32")
+        lines.append(f"        {sum_nz} = arith.cmpf une, {l_out}, %c0f : f32")
         lines.append(f"        {l_safe} = arith.select {sum_nz}, {l_out}, %c1f : f32")
         lines.append(f"        {out0} = arith.divf {acc0_out}, {l_safe}{fm} : f32")
         lines.append(f"        {out1} = arith.divf {acc1_out}, {l_safe}{fm} : f32")
@@ -21294,7 +21303,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("            scf.yield %acc_next2 : f32")
         lines.append("          }")
         lines.append("          %c1f = arith.constant 1.0 : f32")
-        lines.append("          %sum_nz = arith.cmpf one, %sumv, %c0f : f32")
+        lines.append("          %sum_nz = arith.cmpf une, %sumv, %c0f : f32")
         lines.append("          %sum_safe = arith.select %sum_nz, %sumv, %c1f : f32")
         lines.append("          scf.for %k3 = %c0 to %cKV step %c1 {")
         lines.append("            %wo3 = arith.addi %cWeights, %k3 : index")
@@ -21542,7 +21551,7 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"        {total} = arith.addf {tmp3}, {w[4]}{fm} : f32")
             nz = _fresh(f"{tag}_nz")
             safe = _fresh(f"{tag}_safe")
-            lines.append(f"        {nz} = arith.cmpf one, {total}, %c0f : f32")
+            lines.append(f"        {nz} = arith.cmpf une, {total}, %c0f : f32")
             lines.append(f"        {safe} = arith.select {nz}, {total}, %c1f : f32")
             out_w: list[str] = []
             for i in range(5):
