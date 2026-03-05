@@ -55,6 +55,14 @@ class _LazyModule:
 flag_gems = _LazyModule("flag_gems")
 flag_gems_ops = _LazyModule("flag_gems.ops")
 
+# Compatibility: some FlagGems builds do not expose `flag_gems.device`.
+# Our runners only need a stringifiable device handle. Default to CUDA when
+# available so remote CUDA-only validation works out of the box.
+try:  # noqa: SIM105
+    _ = flag_gems.device
+except AttributeError:
+    flag_gems.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 @contextmanager
 def _flaggems_use_gems(*, include: list[str] | None = None):
