@@ -1,10 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-05T18:10:42+00:00
-- Commit: `ce90eda454d30ea51778c5c83d7846f48eacac99`
+- Timestamp: 2026-03-05T18:36:07+00:00
+- Commit: `ce0700e403d5c997fb0303c5e1c3986afa6ff150`
 - Lane: `workflow`
-- Summary: cuda cpp_plugin: add matmul_fused_epilogue v3 (warp-vector epilogue); sm90 matmul_fused_epilogue2d ratio~0.97 (strict,llc)
+- Summary: cuda sm89 cpp_plugin full196 cases=1 ok (ce0700e)
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/run_summary.json`
-- Status Converged: `artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/status_converged.json`
-- Evidence Paths: artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_cov_sm90_matmul_fe_v2_ce90eda_v1/matmul_fused_epilogue2d.json, artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/gpu_perf_graph.json, artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/run_summary.json, artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/status_converged.json
+- Run Summary: `artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/run_summary.json`
+- Status Converged: `artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/status_converged.json`
+- Evidence Paths: artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1, artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/run_summary.json, artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/status_converged.json
