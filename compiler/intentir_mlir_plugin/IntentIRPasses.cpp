@@ -3197,6 +3197,18 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   const std::string vName = "V";
   const std::string scaleName = "sm_scale";
   const std::string outName = "Out";
+
+  // Keep the ABI tight and deterministic for runtime launch.
+  //
+  // The triton-native intent for flash_attention2d carries many scalar tensors
+  // (e.g. Q_CTX/KV_CTX/HEAD_DIM/BLOCK_KV) in its arg_order. This focus lowering
+  // fully specializes shapes and does not consume those scalar-tensor inputs.
+  // Leaving them in the GPU func signature results in unused PTX params; the
+  // runtime/perf path may then attempt to "repair" missing arg_names and can
+  // accidentally treat pointer params as scalar params (fatal).
+  //
+  // Override argOrder to only the args we actually launch with.
+  ctx.argOrder = {kName, qName, vName, scaleName, outName};
   if (ctx.tensors.find(qName) == ctx.tensors.end() || ctx.tensors.find(kName) == ctx.tensors.end() ||
       ctx.tensors.find(vName) == ctx.tensors.end() || ctx.tensors.find(outName) == ctx.tensors.end()) {
     ctx.module.emitError("flash_attention2d: missing tensor specs for Q/K/V/Out");

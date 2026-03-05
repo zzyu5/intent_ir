@@ -34,7 +34,7 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"masked_attention2d","arch":"sm89","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{},"kernel_kind":"attn2d_causal_softmax_v18","note":"local sm89 focus perf: tiny(Q=16,KV=16,HD=16) v18 ratio~1.00 (20260304)"}
 
 # C++ plugin attention kernel_kind selection (arch-specific)
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"cpp_plugin","kernel":"flash_attention2d","arch":"sm90","when":{"HEAD_DIM":64},"bindings":{"ATTN_BLOCK_KV":64,"FLASH_ATTN_ASYNC_COPY":1},"kernel_kind":"attn2d_causal_softmax_v7","note":"cpp_plugin: H100(sm90) flash v7 + cp.async tile load (strict,llc)"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"cpp_plugin","kernel":"flash_attention2d","arch":"sm90","when":{"HEAD_DIM":64},"bindings":{"ATTN_BLOCK_KV":64,"ATTN_SCORE_WARPS":6,"FLASH_ATTN_ASYNC_COPY":1},"kernel_kind":"attn2d_causal_softmax_v7","note":"cpp_plugin: H100(sm90) sweep winner (20260306): v7 bkv64 sw6 async=1 ratio~0.997 @ Q=64,KV=64,HD=64 (graph)"} 
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"cpp_plugin","kernel":"masked_attention2d","arch":"sm90","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{},"kernel_kind":"attn2d_causal_softmax_masked_hd16_keys_v1","note":"cpp_plugin: H100(sm90) masked hd16_keys canonical (strict,llc)"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"cpp_plugin","kernel":"_attn_fwd","arch":"sm90","when":{"HEAD_DIM":64},"bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32},"kernel_kind":"attn_fwd_softmax_v7","note":"cpp_plugin: H100(sm90) _attn_fwd v7 parallel-reduce (strict,llc)"}
 
