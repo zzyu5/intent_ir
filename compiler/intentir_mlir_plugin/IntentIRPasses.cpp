@@ -4679,6 +4679,328 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
   return mlir::success();
 }
 
+static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV2(LoweringContext &ctx) {
+  // Same semantics as v1 but faster reduction:
+  // - per-warp sumsq via shuffle XOR
+  // - cross-warp reduction via shared (warp0 only)
+  // - 2x barriers total
+  if (ctx.outputs.size() != 2) {
+    ctx.module.emitError("rms_norm2d: expected 2 outputs (out, INV_RMS)");
+    return mlir::failure();
+  }
+  if (ctx.tensors.find("eps") == ctx.tensors.end() ||
+      ctx.tensors.find("N_scalar") == ctx.tensors.end()) {
+    ctx.module.emitError("rms_norm2d: missing required scalar inputs (eps/N_scalar)");
+    return mlir::failure();
+  }
+
+  std::string outName;
+  std::string invName;
+  for (const auto &nm : ctx.outputs) {
+    auto it = ctx.tensors.find(nm);
+    if (it == ctx.tensors.end())
+      continue;
+    auto shOr = resolveShape(it->second, ctx.shapeBindings);
+    if (mlir::failed(shOr))
+      continue;
+    if (shOr->size() == 2) {
+      outName = nm;
+      continue;
+    }
+    if (shOr->size() == 1) {
+      invName = nm;
+      continue;
+    }
+  }
+  if (outName.empty() || invName.empty()) {
+    ctx.module.emitError("rms_norm2d: failed to identify rank-2 out and rank-1 INV_RMS outputs");
+    return mlir::failure();
+  }
+
+  auto *mlirCtx = ctx.module.getContext();
+  auto loc = ctx.module.getLoc();
+  auto &b = ctx.builder;
+
+  auto shapeOutOr = resolveShape(ctx.tensors[outName], ctx.shapeBindings);
+  auto shapeInvOr = resolveShape(ctx.tensors[invName], ctx.shapeBindings);
+  if (mlir::failed(shapeOutOr) || mlir::failed(shapeInvOr)) {
+    ctx.module.emitError("rms_norm2d: failed to resolve output shapes");
+    return mlir::failure();
+  }
+  int64_t M = (*shapeOutOr)[0];
+  int64_t N = (*shapeOutOr)[1];
+  if (shapeInvOr->size() != 1 || (*shapeInvOr)[0] != M) {
+    ctx.module.emitError("rms_norm2d: INV_RMS must be shape [M]");
+    return mlir::failure();
+  }
+
+  // Infer input matrix and weight vector names from external inputs.
+  std::set<std::string> outSet(ctx.outputs.begin(), ctx.outputs.end());
+  std::string inputName;
+  std::string weightName;
+  for (const auto &nm : ctx.argOrder) {
+    if (outSet.count(nm))
+      continue;
+    auto it = ctx.tensors.find(nm);
+    if (it == ctx.tensors.end())
+      continue;
+    if (llvm::StringRef(it->second.dtype).trim().lower() != "f32")
+      continue;
+    auto shOr = resolveShape(it->second, ctx.shapeBindings);
+    if (mlir::failed(shOr))
+      continue;
+    if (shOr->size() == 2 && (*shOr)[0] == M && (*shOr)[1] == N && inputName.empty()) {
+      inputName = nm;
+      continue;
+    }
+    if (shOr->size() == 1 && (*shOr)[0] == N && weightName.empty()) {
+      weightName = nm;
+      continue;
+    }
+  }
+  if (inputName.empty() || weightName.empty()) {
+    ctx.module.emitError("rms_norm2d: failed to infer input/weight external tensors");
+    return mlir::failure();
+  }
+
+  // Shapes.
+  auto shapeInOr = resolveShape(ctx.tensors[inputName], ctx.shapeBindings);
+  auto shapeWOr = resolveShape(ctx.tensors[weightName], ctx.shapeBindings);
+  if (mlir::failed(shapeInOr) || mlir::failed(shapeWOr)) {
+    ctx.module.emitError("rms_norm2d: failed to resolve shapes");
+    return mlir::failure();
+  }
+  if (shapeInOr->size() != 2 || shapeWOr->size() != 1) {
+    ctx.module.emitError("rms_norm2d: expected input rank-2 and weight rank-1");
+    return mlir::failure();
+  }
+  if ((*shapeInOr)[0] != M || (*shapeInOr)[1] != N) {
+    ctx.module.emitError("rms_norm2d: input shape mismatch");
+    return mlir::failure();
+  }
+  if ((*shapeWOr)[0] != N) {
+    ctx.module.emitError("rms_norm2d: weight shape mismatch");
+    return mlir::failure();
+  }
+
+  // Dtypes.
+  for (const auto &name : {inputName, weightName, std::string("eps"), std::string("N_scalar")}) {
+    if (llvm::StringRef(ctx.tensors[name].dtype).trim().lower() != "f32") {
+      ctx.module.emitError() << "rms_norm2d: expected f32 for tensor " << name;
+      return mlir::failure();
+    }
+  }
+  if (llvm::StringRef(ctx.tensors[outName].dtype).trim().lower() != "f32" ||
+      llvm::StringRef(ctx.tensors[invName].dtype).trim().lower() != "f32") {
+    ctx.module.emitError("rms_norm2d: expected f32 outputs");
+    return mlir::failure();
+  }
+
+  // Kernel config: 1 CTA per row, 256 threads.
+  const int64_t threads = 256;
+  const int64_t warps = threads / 32;
+  if (threads <= 0 || threads > 1024 || (threads % 32) != 0 || warps <= 0 || warps > 32) {
+    ctx.module.emitError("rms_norm2d: invalid threads/warps");
+    return mlir::failure();
+  }
+
+  clearModuleBody(ctx.module);
+
+  // Ensure the module is treated as a GPU container module and has a target triple.
+  ctx.module->setAttr("gpu.container_module", mlir::UnitAttr::get(mlirCtx));
+  if (!ctx.module->hasAttr("llvm.target_triple")) {
+    ctx.module->setAttr("llvm.target_triple",
+                        mlir::StringAttr::get(mlirCtx, "nvptx64-nvidia-cuda"));
+  }
+
+  // GPU module + shared scratch.
+  b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
+  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
+
+  auto f32 = b.getF32Type();
+  auto globalMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 1);
+  auto sharedMemSpace = mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), 3);
+
+  // Shared buffer: warp sums (0..warps-1) and INV broadcast at [0].
+  auto shTy = mlir::MemRefType::get({threads}, f32,
+                                    mlir::MemRefLayoutAttrInterface{},
+                                    sharedMemSpace);
+  auto shName = "__intentir_sh_rmsnorm_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
+  auto align16 = b.getI64IntegerAttr(16);
+  (void)mlir::memref::GlobalOp::create(b, loc, shName, b.getStringAttr("private"), shTy,
+                                      /*initial_value=*/{}, /*constant=*/false, align16);
+
+  // Kernel.
+  auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
+  if (mlir::failed(fnOr))
+    return mlir::failure();
+  auto fn = *fnOr;
+
+  auto In = getArgByName(ctx, fn, inputName);
+  auto W = getArgByName(ctx, fn, weightName);
+  auto EpsArg = getArgByName(ctx, fn, "eps");
+  auto NScalarArg = getArgByName(ctx, fn, "N_scalar");
+  auto Out = getArgByName(ctx, fn, outName);
+  auto Inv = getArgByName(ctx, fn, invName);
+  if (!In || !W || !Out || !Inv) {
+    ctx.module.emitError("rms_norm2d: failed to map kernel args");
+    return mlir::failure();
+  }
+
+  // Reinterpret flattened buffers.
+  auto in2Ty = mlir::MemRefType::get({M, N}, f32,
+                                     mlir::MemRefLayoutAttrInterface{},
+                                     globalMemSpace);
+  auto out2Ty = mlir::MemRefType::get({M, N}, f32,
+                                      mlir::MemRefLayoutAttrInterface{},
+                                      globalMemSpace);
+  auto In2 = mlir::memref::ReinterpretCastOp::create(b, loc, in2Ty, In, 0, {M, N}, {N, 1})
+                 .getResult();
+  auto Out2 = mlir::memref::ReinterpretCastOp::create(b, loc, out2Ty, Out, 0, {M, N}, {N, 1})
+                  .getResult();
+
+  // Thread/block ids.
+  auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x).getResult();
+  auto row = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x).getResult();
+
+  auto c0 = makeIndexConst(b, loc, 0);
+  auto cN = makeIndexConst(b, loc, N);
+  auto cThreads = makeIndexConst(b, loc, threads);
+  auto c0f = makeF32Const(b, loc, 0.0f);
+
+  // Scalars: allow either external scalar inputs or const ops.
+  auto constEps = [&]() -> std::optional<float> {
+    for (const auto &op : ctx.ops) {
+      if (op.op != "const")
+        continue;
+      if (op.output != "eps")
+        continue;
+      auto dtype = op.attrs.getString("dtype");
+      if (dtype && llvm::StringRef(*dtype).trim().lower() != "f32")
+        continue;
+      if (auto num = op.attrs.getNumber("value")) {
+        return static_cast<float>(*num);
+      }
+    }
+    return std::nullopt;
+  };
+
+  mlir::Value epsVal;
+  if (EpsArg) {
+    epsVal = b.create<mlir::memref::LoadOp>(loc, EpsArg, mlir::ValueRange{c0}).getResult();
+  } else if (auto epsC = constEps()) {
+    epsVal = makeF32Const(b, loc, *epsC);
+  } else {
+    ctx.module.emitError("rms_norm2d: missing eps scalar (neither arg nor const)");
+    return mlir::failure();
+  }
+
+  mlir::Value nVal;
+  if (NScalarArg) {
+    nVal = b.create<mlir::memref::LoadOp>(loc, NScalarArg, mlir::ValueRange{c0}).getResult();
+  } else {
+    nVal = makeF32Const(b, loc, static_cast<float>(N));
+  }
+
+  // Shared buffer handle.
+  auto Sh = mlir::memref::GetGlobalOp::create(b, loc, shTy, shName).getResult();
+
+  // Partial sum of squares for this thread.
+  auto sumFor = b.create<mlir::scf::ForOp>(loc, tid, cN, cThreads, mlir::ValueRange{c0f});
+  b.setInsertionPointToStart(sumFor.getBody());
+  auto j = sumFor.getInductionVar();
+  auto acc = sumFor.getRegionIterArgs()[0];
+  auto x = b.create<mlir::memref::LoadOp>(loc, In2, mlir::ValueRange{row, j}).getResult();
+  auto x2 = b.create<mlir::arith::MulFOp>(loc, x, x).getResult();
+  auto acc2 = b.create<mlir::arith::AddFOp>(loc, acc, x2).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{acc2});
+  b.setInsertionPointAfter(sumFor);
+  auto partial = sumFor.getResult(0);
+
+  // Warp reduce.
+  auto warpSum = warpAllReduceSumF32(b, loc, partial);
+
+  // lane/warp ids.
+  auto tidI32 = b.create<mlir::arith::IndexCastOp>(loc, b.getI32Type(), tid).getResult();
+  auto c32i = makeI32Const(b, loc, 32);
+  auto laneI32 = b.create<mlir::arith::RemUIOp>(loc, tidI32, c32i).getResult();
+  auto warpI32 = b.create<mlir::arith::DivUIOp>(loc, tidI32, c32i).getResult();
+  auto laneIs0 =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, laneI32, makeI32Const(b, loc, 0))
+          .getResult();
+
+  // lane0 stores per-warp sum to shared[warp].
+  auto ifLane0 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, laneIs0, /*withElse=*/false);
+  b.setInsertionPointToStart(&ifLane0.getThenRegion().front());
+  auto warpIdx = b.create<mlir::arith::IndexCastOp>(loc, b.getIndexType(), warpI32).getResult();
+  b.create<mlir::memref::StoreOp>(loc, warpSum, Sh, mlir::ValueRange{warpIdx});
+  b.setInsertionPointAfter(ifLane0);
+  b.create<mlir::gpu::BarrierOp>(loc);
+
+  // Warp0 reduces warp sums and writes INV to shared[0] and INV_RMS output.
+  auto isWarp0 =
+      b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::eq, warpI32, makeI32Const(b, loc, 0))
+          .getResult();
+  auto ifWarp0 = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, isWarp0, /*withElse=*/false);
+  b.setInsertionPointToStart(&ifWarp0.getThenRegion().front());
+  auto cWarpsI32 = makeI32Const(b, loc, static_cast<int32_t>(warps));
+  auto laneIn = b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, laneI32, cWarpsI32).getResult();
+  auto loadIf = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{f32}, laneIn, /*withElse=*/true);
+  b.setInsertionPointToStart(&loadIf.getThenRegion().front());
+  auto laneIdx = b.create<mlir::arith::IndexCastOp>(loc, b.getIndexType(), laneI32).getResult();
+  auto wsum = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{laneIdx}).getResult();
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{wsum});
+  b.setInsertionPointToStart(&loadIf.getElseRegion().front());
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
+  b.setInsertionPointAfter(loadIf);
+  auto sum0 = warpAllReduceSumF32(b, loc, loadIf.getResult(0));
+
+  auto ifLane0b = b.create<mlir::scf::IfOp>(loc, mlir::TypeRange{}, laneIs0, /*withElse=*/false);
+  b.setInsertionPointToStart(&ifLane0b.getThenRegion().front());
+  auto mean = b.create<mlir::arith::DivFOp>(loc, sum0, nVal).getResult();
+  auto var = b.create<mlir::arith::AddFOp>(loc, mean, epsVal).getResult();
+  auto inv = b.create<mlir::math::RsqrtOp>(loc, var).getResult();
+  b.create<mlir::memref::StoreOp>(loc, inv, Inv, mlir::ValueRange{row});
+  b.create<mlir::memref::StoreOp>(loc, inv, Sh, mlir::ValueRange{c0});
+  b.setInsertionPointAfter(ifLane0b);
+  b.setInsertionPointAfter(ifWarp0);
+  b.create<mlir::gpu::BarrierOp>(loc);
+
+  auto invAll = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{c0}).getResult();
+
+  // Write normalized output.
+  auto outFor = b.create<mlir::scf::ForOp>(loc, tid, cN, cThreads);
+  b.setInsertionPointToStart(outFor.getBody());
+  auto jj = outFor.getInductionVar();
+  auto xv = b.create<mlir::memref::LoadOp>(loc, In2, mlir::ValueRange{row, jj}).getResult();
+  auto wv = b.create<mlir::memref::LoadOp>(loc, W, mlir::ValueRange{jj}).getResult();
+  auto y0 = b.create<mlir::arith::MulFOp>(loc, xv, invAll).getResult();
+  auto y = b.create<mlir::arith::MulFOp>(loc, y0, wv).getResult();
+  b.create<mlir::memref::StoreOp>(loc, y, Out2, mlir::ValueRange{row, jj});
+  b.setInsertionPointAfter(outFor);
+
+  b.create<mlir::gpu::ReturnOp>(loc);
+
+  ctx.module->setAttr("intentir.compiler_stack",
+                      mlir::StringAttr::get(mlirCtx, "cpp_plugin"));
+  ctx.module->setAttr("intentir.lowering_kind",
+                      mlir::StringAttr::get(mlirCtx, "cuda_focus_v1"));
+  ctx.module->setAttr("intentir.cuda_real_mlir_kernel_kind",
+                      mlir::StringAttr::get(mlirCtx, "rms_norm2d_rowwise_v2"));
+  mergeIntentirMetaJson(ctx.module, [&](llvm::json::Object &meta) {
+    meta["schema_version"] = "intentir_meta_v1";
+    meta["compiler_stack"] = "cpp_plugin";
+    meta["lowering_kind"] = "cuda_focus_v1";
+    meta["cuda_real_mlir_kernel_kind"] = "rms_norm2d_rowwise_v2";
+    meta["cuda_real_mlir_launch_override"] =
+        makeCudaLaunchOverride(/*bx=*/threads, /*by=*/1, /*bz=*/1, /*gx=*/M, /*gy=*/1, /*gz=*/1,
+                               /*sharedMem=*/0);
+    meta["cuda_real_mlir_output_total"] = static_cast<int64_t>(M * N);
+  });
+  return mlir::success();
+}
+
 // === CUDA Full196 correctness-first lowering (cpp_plugin) ===
 
 static bool isBoolDtype(llvm::StringRef dtype) {
@@ -8622,11 +8944,48 @@ public:
     llvm::StringRef kindOverride = llvm::StringRef(lc.kernelKindOverride).trim();
 
     if (k == "ai_bench_matmul") {
+      if (!kindOverride.empty()) {
+        if (kindOverride == "matmul_mma_tf32_global_v1") {
+          lc.shapeBindings["MMA_ASYNC_COPY"] = 0;
+        } else if (kindOverride == "matmul_mma_tf32_v2") {
+          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
+        } else {
+          module.emitError() << "invalid intentir.kernel_kind_override for ai_bench_matmul: " << kindOverride
+                             << "; allowed=[matmul_mma_tf32_global_v1, matmul_mma_tf32_v2]";
+          signalPassFailure();
+          return;
+        }
+      }
       ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
     } else if (k == "matmul_fused_epilogue2d") {
+      if (!kindOverride.empty()) {
+        if (kindOverride == "matmul_fused_epilogue_mma_tf32_global_v1") {
+          lc.shapeBindings["MMA_ASYNC_COPY"] = 0;
+        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v2") {
+          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
+        } else {
+          module.emitError() << "invalid intentir.kernel_kind_override for matmul_fused_epilogue2d: " << kindOverride
+                             << "; allowed=[matmul_fused_epilogue_mma_tf32_global_v1, matmul_fused_epilogue_mma_tf32_v2]";
+          signalPassFailure();
+          return;
+        }
+      }
       ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
     } else if (k == "rms_norm2d") {
-      ok = lowerCudaRmsNorm2dRowwiseV1(lc);
+      llvm::StringRef kind = "rms_norm2d_rowwise_v2";
+      bool valid = true;
+      if (!kindOverride.empty()) {
+        if (kindOverride == "rms_norm2d_rowwise_v1" || kindOverride == "rms_norm2d_rowwise_v2") {
+          kind = kindOverride;
+        } else {
+          module.emitError() << "invalid intentir.kernel_kind_override for rms_norm2d: " << kindOverride
+                             << "; allowed=[rms_norm2d_rowwise_v1, rms_norm2d_rowwise_v2]";
+          valid = false;
+        }
+      }
+      ok = !valid ? mlir::failure()
+                  : (kind == "rms_norm2d_rowwise_v1" ? lowerCudaRmsNorm2dRowwiseV1(lc)
+                                                    : lowerCudaRmsNorm2dRowwiseV2(lc));
     } else if (k == "flash_attention2d") {
       llvm::StringRef kind = "attn2d_causal_softmax_v6";
       bool valid = true;
