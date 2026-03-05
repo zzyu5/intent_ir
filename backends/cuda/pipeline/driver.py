@@ -761,6 +761,21 @@ def _infer_launch_grid_from_output_size(
     return out
 
 
+def _looks_like_explicit_launch_override(payload: object) -> bool:
+    if not isinstance(payload, Mapping):
+        return False
+    grid = payload.get("grid")
+    block = payload.get("block")
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        return False
+    try:
+        gx, gy, gz = int(grid[0]), int(grid[1]), int(grid[2])
+        bx, by, bz = int(block[0]), int(block[1]), int(block[2])
+    except Exception:
+        return False
+    return gx > 0 and gy > 0 and gz > 0 and bx > 0 and by > 0 and bz > 0
+
+
 def _repair_pad_scalar_arg_names(
     *,
     io_spec: Mapping[str, Any],
@@ -975,18 +990,20 @@ def lower_cuda_contract_to_kernel(
             ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
             entry=str(exe_entry or contract.kernel_name or "intent"),
         )
-        launch = _infer_launch_grid_x_from_ptx(
-            launch=launch,
-            io_spec=io_spec,
-            merged_bindings=merged_bindings,
-            ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
-            entry=str(exe_entry or contract.kernel_name or "intent"),
-        )
-        launch = _infer_launch_grid_from_output_size(
-            launch=launch,
-            io_spec=io_spec,
-            merged_bindings=merged_bindings,
-        )
+        explicit_launch_override = (contract.artifacts or {}).get("cuda_real_mlir_launch_override")
+        if not _looks_like_explicit_launch_override(explicit_launch_override):
+            launch = _infer_launch_grid_x_from_ptx(
+                launch=launch,
+                io_spec=io_spec,
+                merged_bindings=merged_bindings,
+                ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
+                entry=str(exe_entry or contract.kernel_name or "intent"),
+            )
+            launch = _infer_launch_grid_from_output_size(
+                launch=launch,
+                io_spec=io_spec,
+                merged_bindings=merged_bindings,
+            )
         return {
             "kernel_name": str(exe_entry or contract.kernel_name or "intent"),
             "io_spec": io_spec,

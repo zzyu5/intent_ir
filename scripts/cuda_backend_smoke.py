@@ -765,6 +765,24 @@ def _prepare_kernel_context(
     if baseline_npz_path.exists():
         baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
         baseline_source = "npz"
+    elif str(frontend) == "triton" and str(triton_provider) == "native":
+        # Some kernels intentionally skip baseline snapshots when the IO exceeds
+        # the artifact size budget. In that case, re-run the native reference
+        # runner to materialize baseline IO for correctness comparison.
+        baseline_payload = report.get("baseline") if isinstance(report.get("baseline"), dict) else {}
+        shapes = baseline_payload.get("shapes") if isinstance(baseline_payload.get("shapes"), dict) else {}
+        seed = baseline_payload.get("seed")
+        from verify.gen_cases import TestCase  # noqa: PLC0415
+
+        from pipeline.triton.core import coverage_kernel_specs, default_kernel_specs  # noqa: PLC0415
+
+        spec_map = {s.name: s for s in list(default_kernel_specs()) + list(coverage_kernel_specs())}
+        spec = spec_map.get(str(kernel))
+        if spec is None:
+            raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
+        case = TestCase(shapes=_coerce_bindings(shapes), dtypes={}, seed=int(seed or 0))
+        baseline = {str(k): np.asarray(v) for k, v in dict(spec.runner(case)).items()}
+        baseline_source = "rerun_triton_native"
     elif bool(require_baseline_npz):
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
     wanted_aliases = sorted(set(list(tensor_specs.keys()) + _outputs_from_io_spec(io_spec) + _intent_outputs(intent_json)))
