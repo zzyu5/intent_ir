@@ -2120,11 +2120,14 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
   auto acc = mlir::gpu::SubgroupMmaConstantMatrixOp::create(b, loc, cFragTy, c0f)
                  .getResult();
 
-  std::string kernelKind =
-      asyncCopyRequested ? "matmul_fused_epilogue_mma_tf32_v2"
-                         : "matmul_fused_epilogue_mma_tf32_global_v1";
-  if (warpVectorEpilogue)
-    kernelKind = "matmul_fused_epilogue_mma_tf32_v3";
+  std::string kernelKind;
+  if (warpVectorEpilogue) {
+    kernelKind = asyncCopyRequested ? "matmul_fused_epilogue_mma_tf32_v3"
+                                    : "matmul_fused_epilogue_mma_tf32_global_v2";
+  } else {
+    kernelKind = asyncCopyRequested ? "matmul_fused_epilogue_mma_tf32_v2"
+                                    : "matmul_fused_epilogue_mma_tf32_global_v1";
+  }
 
   if (asyncCopyRequested) {
 
@@ -9036,24 +9039,28 @@ public:
         }
       }
       ok = lowerCudaAiBenchMatmulMmaTF32V1(lc);
-    } else if (k == "matmul_fused_epilogue2d") {
-      if (!kindOverride.empty()) {
-        if (kindOverride == "matmul_fused_epilogue_mma_tf32_global_v1") {
-          lc.shapeBindings["MMA_ASYNC_COPY"] = 0;
-        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v2") {
-          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
-          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 0;
-        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v3") {
-          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
-          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 1;
-        } else {
-          module.emitError() << "invalid intentir.kernel_kind_override for matmul_fused_epilogue2d: " << kindOverride
-                             << "; allowed=[matmul_fused_epilogue_mma_tf32_global_v1, matmul_fused_epilogue_mma_tf32_v2, matmul_fused_epilogue_mma_tf32_v3]";
-          signalPassFailure();
-          return;
-        }
-      }
-      ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
+	    } else if (k == "matmul_fused_epilogue2d") {
+	      if (!kindOverride.empty()) {
+	        if (kindOverride == "matmul_fused_epilogue_mma_tf32_global_v1") {
+	          lc.shapeBindings["MMA_ASYNC_COPY"] = 0;
+	          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 0;
+	        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_global_v2") {
+	          lc.shapeBindings["MMA_ASYNC_COPY"] = 0;
+	          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 1;
+	        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v2") {
+	          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
+	          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 0;
+	        } else if (kindOverride == "matmul_fused_epilogue_mma_tf32_v3") {
+	          lc.shapeBindings["MMA_ASYNC_COPY"] = 1;
+	          lc.shapeBindings["MMA_EPILOGUE_WARP"] = 1;
+	        } else {
+	          module.emitError() << "invalid intentir.kernel_kind_override for matmul_fused_epilogue2d: " << kindOverride
+	                             << "; allowed=[matmul_fused_epilogue_mma_tf32_global_v1, matmul_fused_epilogue_mma_tf32_global_v2, matmul_fused_epilogue_mma_tf32_v2, matmul_fused_epilogue_mma_tf32_v3]";
+	          signalPassFailure();
+	          return;
+	        }
+	      }
+	      ok = lowerCudaMatmulFusedEpilogue2dMmaTF32V1(lc);
     } else if (k == "rms_norm2d") {
       llvm::StringRef kind = "rms_norm2d_rowwise_v2";
       bool valid = true;
