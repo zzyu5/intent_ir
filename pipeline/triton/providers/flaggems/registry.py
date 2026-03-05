@@ -408,17 +408,6 @@ def _force_import_flaggems_from_src(src_dir: Path) -> None:
 
 def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
     _ensure_flaggems_cache_dir_env()
-    candidates = _iter_flaggems_src_candidates(flaggems_src)
-    valid_candidates: list[Path] = []
-    for p in candidates:
-        if p.is_dir() and str(p) not in sys.path:
-            sys.path.insert(0, str(p))
-        if _is_valid_flaggems_src_dir(p):
-            valid_candidates.append(p.resolve())
-
-    if not valid_candidates:
-        return
-
     _drop_broken_flaggems_editable_finders()
 
     try:
@@ -429,7 +418,21 @@ def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
     except Exception:
         pass
 
-    _force_import_flaggems_from_src(valid_candidates[0])
+    candidates = _iter_flaggems_src_candidates(flaggems_src)
+    valid_candidates: list[Path] = []
+    for p in candidates:
+        if _is_valid_flaggems_src_dir(p):
+            valid_candidates.append(p.resolve())
+
+    if not valid_candidates:
+        return
+
+    # Insert the src dir as a last resort (prefer installed `flag_gems` when
+    # available so remote environments don't need the full FlagGems deps).
+    src_dir = valid_candidates[0]
+    if src_dir.is_dir() and str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+    _force_import_flaggems_from_src(src_dir)
 
 
 def load_flaggems_all_ops(flaggems_src: str | Path | None = None) -> list[str]:
