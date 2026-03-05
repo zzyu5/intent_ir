@@ -56,6 +56,13 @@ DEFAULT_KERNELS = [
     "upsample_bicubic2d_aa",
 ]
 
+DEFAULT_CUDA_NATIVE_KERNELS = [
+    "vec_add",
+    "transpose2d",
+    "row_sum",
+    "naive_gemm",
+]
+
 
 _PERSISTENT_WORKERS: dict[str, dict[str, Any]] = {}
 _PERSISTENT_TASK_SEQ = 0
@@ -73,6 +80,8 @@ def _default_kernels_for(
     flaggems_opset: str,
     backend_target: str,
 ) -> list[str]:
+    if str(frontend) == "cuda":
+        return list(DEFAULT_CUDA_NATIVE_KERNELS)
     if str(frontend) == "triton" and str(triton_provider) == "flaggems":
         from pipeline.triton.providers.flaggems.specs import default_flaggems_kernel_specs  # noqa: PLC0415
 
@@ -87,6 +96,8 @@ def _default_kernels_for(
 
 
 def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native") -> str:
+    if frontend == "cuda":
+        return "cuda_full_pipeline"
     if frontend == "triton":
         p = str(triton_provider)
         if p == "flaggems":
@@ -381,6 +392,143 @@ def _intent_from_contract_path(
     return intent_json, io_spec, payload.to_json_dict()
 
 
+def _frontend_cuda_ptx_artifact(
+    report: dict[str, Any],
+    *,
+    artifact_root: Path,
+) -> dict[str, Any] | None:
+    desc = report.get("descriptor")
+    if not isinstance(desc, dict):
+        return None
+    artifacts = desc.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    extra = artifacts.get("extra")
+    extra = extra if isinstance(extra, dict) else {}
+    ptx_path = _resolve_report_path(extra.get("ptx_path"), artifact_root=artifact_root)
+    if ptx_path is None or (not ptx_path.is_file()):
+        return None
+    io_spec = desc.get("io_spec") if isinstance(desc.get("io_spec"), dict) else {}
+    entry = str(report.get("kernel") or desc.get("name") or "").strip()
+    if not entry:
+        entry = "intent"
+    return {
+        "ptx_path": str(ptx_path),
+        "entry": str(entry),
+        "io_spec": dict(io_spec),
+    }
+
+
+def _infer_frontend_launch_from_descriptor(
+    report: dict[str, Any],
+    *,
+    io_spec: dict[str, Any],
+) -> dict[str, Any] | None:
+    desc = report.get("descriptor")
+    if not isinstance(desc, dict):
+        return None
+    launch_desc = desc.get("launch")
+    if not isinstance(launch_desc, dict):
+        return None
+    block_raw = launch_desc.get("block")
+    if not (isinstance(block_raw, (list, tuple)) and len(block_raw) == 3):
+        return None
+    try:
+        bx, by, bz = (max(1, int(block_raw[0])), max(1, int(block_raw[1])), max(1, int(block_raw[2])))
+    except Exception:
+        return None
+
+    canonical = launch_desc.get("canonical_shapes")
+    canonical = canonical if isinstance(canonical, dict) else {}
+    outputs = io_spec.get("outputs") if isinstance(io_spec.get("outputs"), list) else []
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
+
+    out_name = str(outputs[0]) if outputs else ""
+    out_spec = tensors.get(out_name) if out_name and isinstance(tensors.get(out_name), dict) else {}
+    out_shape = out_spec.get("shape") if isinstance(out_spec.get("shape"), list) else []
+    resolved_dims: list[int] = []
+    for d in list(out_shape):
+        if isinstance(d, int):
+            resolved_dims.append(max(1, int(d)))
+            continue
+        key = str(d).strip()
+        if not key:
+            continue
+        if key in canonical:
+            try:
+                resolved_dims.append(max(1, int(canonical[key])))
+            except Exception:
+                continue
+    if not resolved_dims:
+        return {"block": [bx, by, bz], "grid": [1, 1, 1], "shared_mem": 0}
+
+    if len(resolved_dims) == 1:
+        gx = int((resolved_dims[0] + bx - 1) // bx)
+        gy = 1
+    else:
+        gx = int((resolved_dims[-1] + bx - 1) // bx)
+        gy = int((resolved_dims[-2] + by - 1) // by)
+    return {"block": [bx, by, bz], "grid": [max(1, gx), max(1, gy), 1], "shared_mem": 0}
+
+
+def _contract_has_ptx_executable(contract_json: dict[str, Any]) -> bool:
+    exe = contract_json.get("executable")
+    if not isinstance(exe, dict):
+        return False
+    fmt = str(exe.get("format") or "").strip().lower()
+    return fmt in {"cuda_ptx", "ptx"}
+
+
+def _patch_contract_with_frontend_ptx(
+    contract_json: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    artifact_root: Path,
+) -> dict[str, Any] | None:
+    fb = _frontend_cuda_ptx_artifact(report, artifact_root=artifact_root)
+    if fb is None:
+        return None
+    out = dict(contract_json or {})
+    exe = out.get("executable")
+    exe = dict(exe) if isinstance(exe, dict) else {}
+    io_spec = dict(fb.get("io_spec") or {})
+    outputs = io_spec.get("outputs") if isinstance(io_spec.get("outputs"), list) else []
+    outputs = [str(x) for x in list(outputs or []) if str(x).strip()]
+    if not outputs:
+        intent_payload = report.get("intent_expanded") if isinstance(report.get("intent_expanded"), dict) else report.get("intent")
+        if isinstance(intent_payload, dict):
+            raw_out = intent_payload.get("outputs") if isinstance(intent_payload.get("outputs"), list) else []
+            outputs = [str(x) for x in list(raw_out or []) if str(x).strip()]
+    if not outputs:
+        tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
+        arg_names = io_spec.get("arg_names") if isinstance(io_spec.get("arg_names"), list) else []
+        tensor_args = [str(n) for n in list(arg_names or []) if str(n) in tensors]
+        if tensor_args:
+            outputs = [str(tensor_args[-1])]
+    if outputs:
+        io_spec["outputs"] = list(outputs)
+    exe["format"] = "cuda_ptx"
+    exe["path"] = str(fb["ptx_path"])
+    exe["entry"] = str(fb["entry"])
+    exe["target"] = "cuda"
+    exe["invocation"] = {
+        "io_spec": dict(io_spec),
+        "output_names": list(outputs),
+    }
+    out["executable"] = exe
+    if io_spec:
+        out["io_spec"] = dict(io_spec)
+    inferred_launch = _infer_frontend_launch_from_descriptor(report, io_spec=io_spec)
+    if isinstance(inferred_launch, dict):
+        out["launch"] = dict(inferred_launch)
+    artifacts = out.get("artifacts")
+    artifacts = dict(artifacts) if isinstance(artifacts, dict) else {}
+    artifacts["cuda_ptx_path"] = str(fb["ptx_path"])
+    artifacts["cuda_ptx_origin"] = "llvm_llc"
+    artifacts["cuda_ptx_origin_fallback"] = "frontend_ptx"
+    out["artifacts"] = artifacts
+    return out
+
+
 def _load_intent_and_contract(
     report: dict,
     *,
@@ -390,7 +538,18 @@ def _load_intent_and_contract(
     for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
         parsed = _intent_from_contract_path(contract_path, expected_backend="cuda")
         if parsed is not None:
-            return parsed
+            intent_json, io_spec, contract_json = parsed
+            if _contract_has_ptx_executable(contract_json):
+                return intent_json, io_spec, contract_json
+            patched = _patch_contract_with_frontend_ptx(
+                contract_json,
+                report=report,
+                artifact_root=artifact_root,
+            )
+            if patched is not None:
+                patched_io = patched.get("io_spec") if isinstance(patched.get("io_spec"), dict) else io_spec
+                return intent_json, dict(patched_io or {}), patched
+            return intent_json, io_spec, contract_json
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
         try:
             parsed = to_intent(mlir_path.read_text(encoding="utf-8"))
@@ -399,7 +558,16 @@ def _load_intent_and_contract(
             artifacts = dict(contract.artifacts or {})
             artifacts["mlir_module_text"] = str(mlir_mod.module_text or "")
             contract.artifacts = artifacts
-            return parsed.to_json_dict(), {}, contract.to_json_dict()
+            contract_json = contract.to_json_dict()
+            patched = _patch_contract_with_frontend_ptx(
+                contract_json,
+                report=report,
+                artifact_root=artifact_root,
+            )
+            if patched is not None:
+                patched_io = patched.get("io_spec") if isinstance(patched.get("io_spec"), dict) else {}
+                return parsed.to_json_dict(), dict(patched_io or {}), patched
+            return parsed.to_json_dict(), {}, contract_json
         except Exception:
             continue
     if bool(require_mlir_artifacts):
@@ -416,7 +584,16 @@ def _load_intent_and_contract(
     artifacts = dict(contract.artifacts or {})
     artifacts["mlir_module_text"] = str(mlir_mod.module_text or "")
     contract.artifacts = artifacts
-    return dict(intent_expanded_json), {}, contract.to_json_dict()
+    contract_json = contract.to_json_dict()
+    patched = _patch_contract_with_frontend_ptx(
+        contract_json,
+        report=report,
+        artifact_root=artifact_root,
+    )
+    if patched is not None:
+        patched_io = patched.get("io_spec") if isinstance(patched.get("io_spec"), dict) else {}
+        return dict(intent_expanded_json), dict(patched_io or {}), patched
+    return dict(intent_expanded_json), {}, contract_json
 
 
 def _external_inputs(intent_json: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -1586,9 +1763,8 @@ def _probe_timeout_runtime_detail(
     return detail
 
 
-def _cuda_env_ready() -> tuple[bool, str]:
-    if shutil.which("nvcc") is None:
-        return False, "nvcc_not_found"
+def _cuda_env_ready(runtime_backend: str) -> tuple[bool, str]:
+    mode = str(runtime_backend).strip().lower() or "auto"
     try:
         import torch  # noqa: PLC0415
 
@@ -1596,12 +1772,35 @@ def _cuda_env_ready() -> tuple[bool, str]:
             return False, "torch_cuda_unavailable"
     except Exception as e:
         return False, f"torch_import_error:{type(e).__name__}"
+    if mode == "nvcc":
+        if shutil.which("nvcc") is None:
+            return False, "nvcc_not_found"
+        return True, "ok"
+    if mode == "nvrtc":
+        try:
+            try:
+                from cuda import nvrtc as _nvrtc  # type: ignore[attr-defined]  # noqa: PLC0415,F401
+            except Exception:
+                from cuda.bindings import nvrtc as _nvrtc  # type: ignore[assignment]  # noqa: PLC0415,F401
+        except Exception as e:
+            return False, f"nvrtc_unavailable:{type(e).__name__}"
+        return True, "ok"
+    # auto mode: accept either nvcc or nvrtc path.
+    if shutil.which("nvcc") is not None:
+        return True, "ok"
+    try:
+        try:
+            from cuda import nvrtc as _nvrtc  # type: ignore[attr-defined]  # noqa: PLC0415,F401
+        except Exception:
+            from cuda.bindings import nvrtc as _nvrtc  # type: ignore[assignment]  # noqa: PLC0415,F401
+    except Exception as e:
+        return False, f"nvcc_not_found_and_nvrtc_unavailable:{type(e).__name__}"
     return True, "ok"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
+    ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda"], default="triton")
     ap.add_argument(
         "--triton-provider",
         choices=["native", "flaggems"],
@@ -1673,7 +1872,7 @@ def main() -> None:
     launch_timeout_sec = int(args.launch_timeout_sec) if args.launch_timeout_sec is not None else int(args.timeout_sec)
     runtime_backend = str(args.runtime_backend)
     if runtime_backend == "auto":
-        runtime_backend = "nvcc"
+        runtime_backend = ("nvcc" if shutil.which("nvcc") is not None else "nvrtc")
     if args.kernel:
         kernels = list(args.kernel)
     else:
@@ -1684,7 +1883,7 @@ def main() -> None:
             backend_target=str(args.backend_target),
         )
 
-    env_ok, env_reason = _cuda_env_ready()
+    env_ok, env_reason = _cuda_env_ready(runtime_backend=runtime_backend)
     if not env_ok:
         summary = {
             "frontend": str(args.frontend),

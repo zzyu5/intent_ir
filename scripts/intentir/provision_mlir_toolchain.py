@@ -3,7 +3,7 @@
 Provision a repository-local MLIR toolchain without sudo.
 
 Default strategy:
-1) `apt download mlir-<version>-tools`
+1) `apt download mlir-<version>-tools llvm-<version>`
 2) `dpkg-deb -x` into `artifacts/toolchains/mlir-<version>`
 3) create stable symlink `artifacts/toolchains/mlir-current`
 4) write env helper script + json summary
@@ -70,6 +70,7 @@ def _write_env_file(
     mlir_translate: Path,
     llvm_as: str,
     llvm_opt: str,
+    llc: str,
 ) -> None:
     lines = [
         "#!/usr/bin/env bash",
@@ -82,6 +83,8 @@ def _write_env_file(
         lines.append(f"export INTENTIR_LLVM_AS='{llvm_as}'")
     if llvm_opt:
         lines.append(f"export INTENTIR_LLVM_OPT='{llvm_opt}'")
+    if llc:
+        lines.append(f"export INTENTIR_LLC='{llc}'")
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     env_file.chmod(0o755)
@@ -146,26 +149,35 @@ def main() -> None:
             shutil.rmtree(prefix)
     prefix.parent.mkdir(parents=True, exist_ok=True)
 
-    pkg = f"mlir-{version}-tools"
+    pkg_mlir = f"mlir-{version}-tools"
+    pkg_llvm = f"llvm-{version}"
+    packages = [pkg_mlir, pkg_llvm]
     with tempfile.TemporaryDirectory(prefix="intentir_mlir_pkg_") as td:
         tmp = Path(td)
-        p_dl = _run(["apt", "download", pkg], cwd=tmp)
-        _require_ok(p_dl, step=f"apt download {pkg}")
-        debs = sorted(tmp.glob(f"{pkg}_*_amd64.deb"))
-        if not debs:
-            raise RuntimeError(f"download succeeded but no .deb matched {pkg}_*_amd64.deb")
-        deb = debs[-1]
-        p_x = _run(["dpkg-deb", "-x", str(deb), str(prefix)])
-        _require_ok(p_x, step="dpkg-deb -x")
+        for pkg in packages:
+            p_dl = _run(["apt", "download", pkg], cwd=tmp)
+            _require_ok(p_dl, step=f"apt download {pkg}")
+            debs = sorted(tmp.glob(f"{pkg}_*_amd64.deb"))
+            if not debs:
+                raise RuntimeError(f"download succeeded but no .deb matched {pkg}_*_amd64.deb")
+            deb = debs[-1]
+            p_x = _run(["dpkg-deb", "-x", str(deb), str(prefix)])
+            _require_ok(p_x, step=f"dpkg-deb -x ({pkg})")
 
     mlir_opt = _find_tool(prefix, tool="mlir-opt", version=version)
     mlir_translate = _find_tool(prefix, tool="mlir-translate", version=version)
+    llvm_as = _find_tool(prefix, tool="llvm-as", version=version)
+    llvm_opt = _find_tool(prefix, tool="opt", version=version)
+    llc = _find_tool(prefix, tool="llc", version=version)
 
     # Provide stable non-versioned entrypoints under <prefix>/bin for discovery.
     bin_dir = prefix / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     _symlink_force(bin_dir / "mlir-opt", mlir_opt)
     _symlink_force(bin_dir / "mlir-translate", mlir_translate)
+    _symlink_force(bin_dir / "llvm-as", llvm_as)
+    _symlink_force(bin_dir / "opt", llvm_opt)
+    _symlink_force(bin_dir / "llc", llc)
 
     if bool(args.use_current_link):
         if current_link.exists() or current_link.is_symlink():
@@ -174,24 +186,23 @@ def main() -> None:
         rel = os.path.relpath(str(prefix), str(current_link.parent))
         current_link.symlink_to(rel)
 
-    llvm_as = shutil.which("llvm-as") or ""
-    llvm_opt = shutil.which("opt") or ""
-
     env_file = Path(args.env_file) if args.env_file is not None else (current_link / "env.sh")
     _write_env_file(
         env_file=env_file,
         toolchain_root=(current_link if bool(args.use_current_link) else prefix),
         mlir_opt=(bin_dir / "mlir-opt"),
         mlir_translate=(bin_dir / "mlir-translate"),
-        llvm_as=str(llvm_as),
-        llvm_opt=str(llvm_opt),
+        llvm_as=str(bin_dir / "llvm-as"),
+        llvm_opt=str(bin_dir / "opt"),
+        llc=str(bin_dir / "llc"),
     )
 
     summary: dict[str, Any] = {
         "schema_version": "intentir_mlir_toolchain_provision_v1",
         "ok": True,
         "version": int(version),
-        "package": str(pkg),
+        "package": str(pkg_mlir),
+        "packages": [str(x) for x in packages],
         "prefix": str(prefix),
         "current_link": (str(current_link) if bool(args.use_current_link) else ""),
         "env_file": str(env_file),
@@ -201,8 +212,9 @@ def main() -> None:
                 "path": str(bin_dir / "mlir-translate"),
                 "version": _tool_version(bin_dir / "mlir-translate"),
             },
-            "llvm-as": {"path": str(llvm_as), "version": ""},
-            "opt": {"path": str(llvm_opt), "version": ""},
+            "llvm-as": {"path": str(bin_dir / "llvm-as"), "version": _tool_version(bin_dir / "llvm-as")},
+            "opt": {"path": str(bin_dir / "opt"), "version": _tool_version(bin_dir / "opt")},
+            "llc": {"path": str(bin_dir / "llc"), "version": _tool_version(bin_dir / "llc")},
         },
         "next_steps": [
             f"source {env_file}",

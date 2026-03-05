@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from typing import Any
 
 from intent_ir.mlir.module import IntentMLIRModule
@@ -196,11 +197,76 @@ def _retarget_llvm_ir_to_host_triple_for_link(llvm_ir_text: str) -> tuple[str, b
 
 
 def _cuda_llc_target() -> str:
+    def _normalize_sm(raw: str) -> str:
+        s = str(raw or "").strip().lower()
+        if not s:
+            return ""
+        if s.startswith("sm_"):
+            digits = "".join(ch for ch in s[3:] if ch.isdigit())
+            return f"sm_{digits}" if digits else ""
+        if s.startswith("sm"):
+            digits = "".join(ch for ch in s[2:] if ch.isdigit())
+            return f"sm_{digits}" if digits else ""
+        if s.startswith("compute_"):
+            digits = "".join(ch for ch in s[len("compute_") :] if ch.isdigit())
+            return f"sm_{digits}" if digits else ""
+        digits = "".join(ch for ch in s if ch.isdigit())
+        return f"sm_{digits}" if digits else ""
+
+    def _sm_num(sm: str) -> int:
+        digits = "".join(ch for ch in str(sm or "") if ch.isdigit())
+        try:
+            return int(digits)
+        except Exception:
+            return -1
+
+    @lru_cache(maxsize=1)
+    def _llc_supported_sms() -> tuple[str, ...]:
+        toolchain = detect_mlir_toolchain()
+        llc_path = str((((toolchain.get("tools") or {}).get("llc") or {}).get("path") or "")).strip()
+        if not llc_path:
+            return tuple()
+        try:
+            cp = subprocess.run(
+                [llc_path, "-march=nvptx64", "-mcpu=help"],
+                capture_output=True,
+                text=True,
+            )
+            text = f"{cp.stdout or ''}\n{cp.stderr or ''}"
+            sms = sorted(
+                {
+                    _normalize_sm(m.group(0))
+                    for m in re.finditer(r"\bsm_[0-9]{2,3}\b", text)
+                    if _normalize_sm(m.group(0))
+                },
+                key=_sm_num,
+            )
+            return tuple(sms)
+        except Exception:
+            return tuple()
+
+    def _choose_supported(preferred: str) -> str:
+        pref = _normalize_sm(preferred)
+        if not pref:
+            return "sm_80"
+        supported = list(_llc_supported_sms())
+        if not supported:
+            return pref
+        if pref in supported:
+            return pref
+        env_fb = _normalize_sm(os.getenv("INTENTIR_CUDA_LLC_FALLBACK_SM", "sm_90"))
+        if env_fb and env_fb in supported:
+            return env_fb
+        pref_num = _sm_num(pref)
+        le = [s for s in supported if _sm_num(s) <= pref_num]
+        if le:
+            return str(le[-1])
+        return str(supported[-1])
+
     raw = str(os.getenv("INTENTIR_CUDA_SM", "")).strip().lower()
-    if raw.startswith("sm_"):
-        return raw
-    if raw.isdigit():
-        return f"sm_{raw}"
+    norm = _normalize_sm(raw)
+    if norm:
+        return _choose_supported(norm)
     # Best-effort auto-detect from torch when available so local dev runs (and
     # perf evidence) compile for the actual GPU arch without extra knobs.
     try:  # pragma: no cover - depends on CUDA env
@@ -209,10 +275,10 @@ def _cuda_llc_target() -> str:
         if torch.cuda.is_available():
             major, minor = torch.cuda.get_device_capability(0)
             if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
-                return f"sm_{major}{minor}"
+                return _choose_supported(f"sm_{major}{minor}")
     except Exception:
         pass
-    return "sm_80"
+    return _choose_supported("sm_80")
 
 
 def _cuda_ptx_cache_enabled() -> bool:
@@ -835,6 +901,18 @@ def _compile_llvm_ir_to_cuda_ptx(
             # Fall back to compilation on any cache I/O error.
             cache_meta["cuda_ptx_cache_hit"] = False
 
+    def _sanitize_llc_ptx(text: str) -> str:
+        out = str(text or "")
+        if not out:
+            return out
+        out = out.replace(", debug", "")
+        for marker in ("\n\t.file", "\n.file"):
+            idx = out.find(marker)
+            if idx >= 0:
+                out = out[:idx].rstrip() + "\n"
+                break
+        return out
+
     with tempfile.TemporaryDirectory(prefix="intentir_cuda_llc_") as td:
         ll_path = Path(td) / "kernel.ll"
         ll_path.write_text(ll_text, encoding="utf-8")
@@ -892,6 +970,13 @@ def _compile_llvm_ir_to_cuda_ptx(
             raise RuntimeError(
                 f"llc nvptx compile failed rc={cp.returncode}: {cp.stderr or cp.stdout}"
             )
+        try:
+            raw_ptx = out_path.read_text(encoding="utf-8", errors="ignore")
+            sanitized_ptx = _sanitize_llc_ptx(raw_ptx)
+            if sanitized_ptx and sanitized_ptx != raw_ptx:
+                out_path.write_text(sanitized_ptx, encoding="utf-8")
+        except Exception:
+            pass
     if cache_enabled:
         try:
             tmp = cache_path.with_suffix(f".tmp.{os.getpid()}.ptx")

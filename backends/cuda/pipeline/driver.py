@@ -283,6 +283,59 @@ def _augment_scalar_bindings_from_io_spec(
         lname = str(name).strip().lower()
         if lname in {"eps", "epsilon"}:
             out[name] = float(1.0e-5)
+
+    for name in [str(k) for k in scalars.keys()]:
+        if _has_binding(name):
+            continue
+        if name.endswith("__offset"):
+            out[name] = 0
+            continue
+        m_size = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)__size(\d+)$", name)
+        if m_size is not None:
+            t_name = str(m_size.group(1))
+            idx = int(m_size.group(2))
+            spec = tensor_specs.get(t_name)
+            shape = list(spec.get("shape") or []) if isinstance(spec, dict) else []
+            size_slot_count = 0
+            size_pat = re.compile(rf"^{re.escape(t_name)}__size\d+$")
+            for k in scalars.keys():
+                if size_pat.match(str(k)):
+                    size_slot_count += 1
+            if size_slot_count == 1 and idx == 0 and shape:
+                total = 1
+                for dim in shape:
+                    rv = resolve_dim_int(dim, out)
+                    total *= max(1, int(rv) if rv is not None else 1)
+                out[name] = int(total)
+            elif 0 <= idx < len(shape):
+                dim_v = resolve_dim_int(shape[idx], out)
+                if dim_v is not None:
+                    out[name] = max(1, int(dim_v))
+            continue
+        m_stride = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)__stride(\d+)$", name)
+        if m_stride is not None:
+            t_name = str(m_stride.group(1))
+            idx = int(m_stride.group(2))
+            spec = tensor_specs.get(t_name)
+            shape = list(spec.get("shape") or []) if isinstance(spec, dict) else []
+            if 0 <= idx < len(shape):
+                size_slot_count = 0
+                size_pat = re.compile(rf"^{re.escape(t_name)}__size\d+$")
+                for k in scalars.keys():
+                    if size_pat.match(str(k)):
+                        size_slot_count += 1
+                if size_slot_count == 1 and idx == 0:
+                    out[name] = 1
+                    continue
+                dims: list[int] = []
+                for dim in shape:
+                    rv = resolve_dim_int(dim, out)
+                    dims.append(max(1, int(rv) if rv is not None else 1))
+                stride = 1
+                for j in range(len(dims) - 1, idx, -1):
+                    stride *= int(dims[j])
+                out[name] = int(stride)
+            continue
     return out
 
 
@@ -429,6 +482,50 @@ def _augment_io_spec_arg_names_with_ptx_params(
     io_scalars = out.get("scalars") if isinstance(out.get("scalars"), Mapping) else {}
     scalars = {str(k): str(v) for k, v in dict(io_scalars or {}).items() if str(k).strip()}
     seen_arg = {str(x) for x in arg_names}
+
+    # MLIR memref ABI path: each tensor argument is lowered to
+    #   [allocated_ptr, aligned_ptr, offset, sizes..., strides...]
+    # i.e. (3 + 2*rank) slots per tensor. Reconstruct argument names in-order so
+    # runtime launch can pass correct descriptor values instead of generic sym_*
+    # placeholders.
+    tensor_arg_order = [n for n in arg_names if n in tensor_names]
+    non_tensor_args = [n for n in arg_names if n not in tensor_names]
+    if tensor_arg_order and not non_tensor_args:
+        total_params = int(len(ptx_param_types))
+        tensor_count = int(len(tensor_arg_order))
+        if tensor_count > 0 and total_params % tensor_count == 0:
+            slots_per_tensor = int(total_params // tensor_count)
+            abi_rank = int((slots_per_tensor - 3) // 2) if (slots_per_tensor >= 3 and (slots_per_tensor - 3) % 2 == 0) else -1
+        else:
+            abi_rank = -1
+        if abi_rank >= 0:
+            new_arg_names: list[str] = []
+            new_scalars: dict[str, str] = dict(scalars)
+            new_tensors: dict[str, Any] = {
+                str(k): dict(v) for k, v in dict(tensors or {}).items() if str(k).strip() and isinstance(v, Mapping)
+            }
+            for t_name in tensor_arg_order:
+                spec = dict(new_tensors.get(t_name) or {})
+                new_arg_names.append(str(t_name))
+                aligned_name = f"{t_name}__aligned"
+                new_arg_names.append(aligned_name)
+                new_tensors[aligned_name] = dict(spec)
+                offset_name = f"{t_name}__offset"
+                new_arg_names.append(offset_name)
+                new_scalars.setdefault(offset_name, "i64")
+                for i in range(int(abi_rank)):
+                    s_name = f"{t_name}__size{i}"
+                    new_arg_names.append(s_name)
+                    new_scalars.setdefault(s_name, "i64")
+                for i in range(int(abi_rank)):
+                    st_name = f"{t_name}__stride{i}"
+                    new_arg_names.append(st_name)
+                    new_scalars.setdefault(st_name, "i64")
+            if len(new_arg_names) == len(ptx_param_types):
+                out["arg_names"] = list(new_arg_names)
+                out["tensors"] = dict(new_tensors)
+                out["scalars"] = dict(new_scalars)
+                return out
 
     ordered_candidates: list[str] = []
     seen_candidate: set[str] = set()

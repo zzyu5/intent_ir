@@ -110,6 +110,7 @@ class CudaAdapter:
             )
             desc.artifacts.ptx_text = None
             desc.artifacts.extra["ptx_path"] = str(res.ptx_path)
+            desc.meta["ptx_compiler"] = str(getattr(res, "compile_backend", "nvcc"))
             desc.meta["nvcc"] = str(res.nvcc_version)
             desc.meta["cuda_arch"] = str(res.arch)
 
