@@ -183,6 +183,8 @@
     "conv3d_ncdhw",
     "conv_depthwise2d_nchw",
     "unique2d",
-    "nonzero2d"
+    "nonzero2d",
+    "vec_add",
+    "naive_gemm"
   ]
 }

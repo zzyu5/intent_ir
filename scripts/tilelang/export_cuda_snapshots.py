@@ -20,7 +20,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -133,6 +133,8 @@ class SnapshotMeta:
     vary_axes: List[str]
     exclude_axes: List[str]
     launch: Dict[str, Any]
+    # Optional deterministic IntentIR seed (for running the CUDA frontend without LLM).
+    intent_seed: Optional[Dict[str, Any]] = None
     notes: str = ""
     # Optional extra evidence to help LLM (pure text; CUDA pipeline must not parse it).
     semantic_guide: Optional[str] = None
@@ -144,6 +146,7 @@ def _export_one(
     spec: Any,
     out_dir: Path,
     refresh: bool,
+    backfill_intent: bool,
 ) -> Tuple[SnapshotMeta, Path, Path, Path]:
     name = str(getattr(spec, "name"))
     prim_func = getattr(spec, "prim_func")
@@ -163,6 +166,9 @@ def _export_one(
         # Load existing meta and trust it (for incremental workflow).
         existing = json.loads(meta_path.read_text(encoding="utf-8"))
         if isinstance(existing, dict) and existing.get("io_spec") and existing.get("launch"):
+            intent_seed = existing.get("intent_seed")
+            if not isinstance(intent_seed, dict):
+                intent_seed = None
             meta = SnapshotMeta(
                 name=str(existing.get("name") or name),
                 origin=str(existing.get("origin") or "tilelang"),
@@ -174,10 +180,19 @@ def _export_one(
                 vary_axes=[str(x) for x in (existing.get("vary_axes") or vary_axes)],
                 exclude_axes=[str(x) for x in (existing.get("exclude_axes") or exclude_axes)],
                 launch=dict(existing.get("launch") or {}),
+                intent_seed=(dict(intent_seed) if isinstance(intent_seed, dict) else None),
                 notes=str(existing.get("notes") or ""),
                 semantic_guide=(str(existing.get("semantic_guide")) if isinstance(existing.get("semantic_guide"), str) else None),
                 baseline=str(existing.get("baseline") or baseline_kind),
             )
+            if backfill_intent and meta.intent_seed is None:
+                try:
+                    intent = getattr(spec, "intent_builder")()
+                    meta2 = replace(meta, intent_seed=intent.to_json_dict())
+                    meta_path.write_text(json.dumps(asdict(meta2), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    meta = meta2
+                except Exception:
+                    pass
             return meta, cu_path, ptx_path, meta_path
 
     # Compile TileLang kernel and export CUDA/PTX.
@@ -228,6 +243,7 @@ def _export_one(
         vary_axes=vary_axes,
         exclude_axes=exclude_axes,
         launch=launch,
+        intent_seed=(intent.to_json_dict() if intent is not None else None),
         notes="Generated snapshot. Edit TileLang kernels under kernels/tilelang/ops/* and re-run this exporter.",
         semantic_guide=semantic_guide,
         baseline=baseline_kind,
@@ -243,6 +259,11 @@ def main() -> None:
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; filter by kernel name")
     ap.add_argument("--out-dir", default=str(ROOT / "kernels" / "cuda" / "ops" / "snapshots"))
     ap.add_argument("--refresh", action="store_true", help="re-export even if snapshots already exist")
+    ap.add_argument(
+        "--backfill-intent",
+        action="store_true",
+        help="Backfill deterministic IntentIR seeds into existing *.cuda_snapshot.json (no recompile).",
+    )
     args = ap.parse_args()
 
     wanted = set(args.kernel or [])
@@ -260,7 +281,12 @@ def main() -> None:
     for s in specs:
         if wanted and str(getattr(s, "name", "")) not in wanted:
             continue
-        meta, cu_path, ptx_path, meta_path = _export_one(spec=s, out_dir=out_dir, refresh=bool(args.refresh))
+        meta, cu_path, ptx_path, meta_path = _export_one(
+            spec=s,
+            out_dir=out_dir,
+            refresh=bool(args.refresh),
+            backfill_intent=bool(args.backfill_intent),
+        )
         exported.append(
             {
                 "name": meta.name,

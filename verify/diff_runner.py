@@ -209,12 +209,20 @@ def run_diff(
                 if shape is not None:
                     inputs[name] = np.zeros(shape, dtype=_dtype_to_np(str(getattr(tt, "dtype", "f32"))))
                     continue
-            # Only inject derived scalar values below.
-            if getattr(tt, "shape", None):
+            # Only inject derived scalar(-like) values below.
+            #
+            # Some frontends encode scalar semantic params as 1-element tensors
+            # (e.g. sm_scale: tensor<1xf32>), while the baseline runtime kernel
+            # may compile them away. Treat any missing tensor with numel==1 as
+            # scalar-like and inject a deterministic value.
+            expected_shape = _resolve_tensor_shape(tt, bindings)
+            if expected_shape is None:
+                continue
+            if _numel(expected_shape) != 1:
                 continue
             if case.inputs and name in case.inputs:
                 try:
-                    inputs[name] = np.asarray(case.inputs[name])
+                    inputs[name] = np.asarray(case.inputs[name]).reshape(expected_shape)
                     continue
                 except Exception:
                     pass
@@ -222,11 +230,14 @@ def run_diff(
             if name == "sm_scale":
                 hd = bindings.get("HEAD_DIM")
                 if hd is not None and int(hd) > 0:
-                    inputs[name] = np.array(1.0 / np.sqrt(float(hd)), dtype=np.float32)
-                    continue
+                    v = 1.0 / np.sqrt(float(hd))
+                else:
+                    v = 1.0
+                inputs[name] = np.full(expected_shape, v, dtype=np.float32)
+                continue
             if name in bindings:
                 dt = str(getattr(tt, "dtype", "f32"))
-                inputs[name] = np.array(bindings[name], dtype=_dtype_to_np(dt))
+                inputs[name] = np.full(expected_shape, bindings[name], dtype=_dtype_to_np(dt))
         # Strict "original view" check: inputs must match declared tensor shapes exactly.
         # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
         # inside IntentIR, rather than redefining the input tensor shape.
@@ -258,27 +269,34 @@ def run_diff(
                 case_failed = True
                 break
             if tuple(arr.shape) != tuple(expected_shape):
-                diff = DiffResult(
-                    ok=False,
-                    max_abs_err=0.0,
-                    max_rel_err=0.0,
-                    first_bad_index=None,
-                    summary=f"input shape mismatch for {name}: ref {arr.shape} vs intent {expected_shape}",
-                )
-                diffs.append(diff)
-                counterexamples.append(
-                    Counterexample(
-                        case=case,
-                        diff=diff,
-                        intent_json=intent.to_json_dict(),
-                        facts_summary=None,
-                        hints=[
-                            "keep original input view; if you need grouped/view shapes, add intent.reshape/broadcast_in_dim ops",
-                        ],
+                # Allow only "reshape-equivalent" alignments that preserve structure:
+                # squeeze/unsqueeze extra unit (size=1) dims to match reference.
+                arr2 = _squeeze_unit_dims_to_match(arr, tuple(expected_shape))
+                if arr2 is None:
+                    arr2 = _unsqueeze_unit_dims_to_match(arr, tuple(expected_shape))
+                if arr2 is None:
+                    diff = DiffResult(
+                        ok=False,
+                        max_abs_err=0.0,
+                        max_rel_err=0.0,
+                        first_bad_index=None,
+                        summary=f"input shape mismatch for {name}: ref {arr.shape} vs intent {expected_shape}",
                     )
-                )
-                case_failed = True
-                break
+                    diffs.append(diff)
+                    counterexamples.append(
+                        Counterexample(
+                            case=case,
+                            diff=diff,
+                            intent_json=intent.to_json_dict(),
+                            facts_summary=None,
+                            hints=[
+                                "keep original input view; if you need grouped/view shapes, add intent.reshape/broadcast_in_dim ops",
+                            ],
+                        )
+                    )
+                    case_failed = True
+                    break
+                inputs[name] = arr2
 
         if case_failed:
             if stop_on_first_fail:

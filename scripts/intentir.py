@@ -689,6 +689,24 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             cmd.extend(["--kernel", str(kernel)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
+    if args.suite == "triton-native-coverage":
+        cmd = _python_cmd(
+            "scripts/triton/full_pipeline_verify.py",
+            "--suite",
+            "coverage",
+            "--out-dir",
+            str(out_root),
+            "--cases-limit",
+            str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
+            "--no-stage-c",
+            "--no-mutation-kill",
+        )
+        for kernel in list(args.kernel or []):
+            cmd.extend(["--kernel", str(kernel)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
+
     if args.suite == "flaggems-coverage-single":
         cmd = _python_cmd(
             "scripts/flaggems/run_multibackend_matrix.py",
@@ -733,10 +751,36 @@ def _cmd_suite(args: argparse.Namespace) -> int:
     if args.suite == "tilelang-smoke":
         cmd = _python_cmd(
             "scripts/tilelang/full_pipeline_verify.py",
+            "--suite",
+            "smoke",
             "--out-dir",
             str(out_root),
             "--cases-limit",
             str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
+            "--no-stage-c",
+            "--no-mutation-kill",
+            "--no-llm",
+        )
+        for kernel in list(args.kernel or []):
+            cmd.extend(["--kernel", str(kernel)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
+
+    if args.suite == "tilelang-coverage":
+        cmd = _python_cmd(
+            "scripts/tilelang/full_pipeline_verify.py",
+            "--suite",
+            "coverage",
+            "--out-dir",
+            str(out_root),
+            "--cases-limit",
+            str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
+            "--no-stage-c",
+            "--no-mutation-kill",
+            "--no-llm",
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
@@ -745,10 +789,36 @@ def _cmd_suite(args: argparse.Namespace) -> int:
     if args.suite == "cuda-smoke":
         cmd = _python_cmd(
             "scripts/cuda/full_pipeline_verify.py",
+            "--suite",
+            "smoke",
             "--out-dir",
             str(out_root),
             "--cases-limit",
             str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
+            "--no-stage-c",
+            "--no-mutation-kill",
+            "--no-llm",
+        )
+        for kernel in list(args.kernel or []):
+            cmd.extend(["--kernel", str(kernel)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
+
+    if args.suite == "cuda-coverage":
+        cmd = _python_cmd(
+            "scripts/cuda/full_pipeline_verify.py",
+            "--suite",
+            "coverage",
+            "--out-dir",
+            str(out_root),
+            "--cases-limit",
+            str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
+            "--no-stage-c",
+            "--no-mutation-kill",
+            "--no-llm",
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
@@ -1106,9 +1176,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "gpu-perf-triton-native",
             "gpu-perf-wave-allowlist",
             "flaggems-coverage-single",
+            "triton-native-coverage",
             "triton-smoke",
             "tilelang-smoke",
+            "tilelang-coverage",
             "cuda-smoke",
+            "cuda-coverage",
         ],
         required=True,
     )

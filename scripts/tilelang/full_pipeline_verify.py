@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,6 +26,13 @@ def main() -> None:
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default=None)
+    default_llm = str(os.getenv("INTENTIR_USE_LLM", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    ap.add_argument(
+        "--llm",
+        action=argparse.BooleanOptionalAction,
+        default=default_llm,
+        help="Use LLM to lift TileLang descriptor to IntentIR (disable for deterministic coverage).",
+    )
     ap.add_argument(
         "--stage-c",
         action=argparse.BooleanOptionalAction,
@@ -67,6 +75,7 @@ def main() -> None:
                 backend_target=(str(args.backend_target) if args.backend_target else None),
                 stage_c=bool(args.stage_c),
                 mutation_kill=bool(args.mutation_kill),
+                use_llm=bool(args.llm),
             )
         except Exception as e:
             print("Pipeline failed:", e)

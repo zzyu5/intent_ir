@@ -70,13 +70,147 @@ def _downstream_pipeline_name(backend_target: str | None) -> str | None:
     return None
 
 
-def _downstream_llvm_pipeline(backend_target: str | None) -> tuple[str | None, str | None]:
+def _real_mlir_enabled() -> bool:
+    return str(os.getenv("INTENTIR_REAL_MLIR", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_CUDA_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
+_RVV_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
+_COMPILER_CPP_WAVE_KERNELS: dict[str, set[str]] = {}
+
+
+def _compiler_stack_name() -> str:
+    return str(os.getenv("INTENTIR_COMPILER_STACK", "python")).strip().lower()
+
+
+def _compiler_cpp_wave_name() -> str:
+    return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave2")).strip().lower()
+
+
+def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
+    wave_name = str(wave or "").strip().lower()
+    if not wave_name:
+        return set()
+    cached = _COMPILER_CPP_WAVE_KERNELS.get(wave_name)
+    if cached is not None:
+        return cached
+    path = ROOT / "workflow" / "flaggems" / "state" / f"compiler_cpp_{wave_name}_kernels.json"
+    kernels: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            rows = payload.get("kernels")
+            if isinstance(rows, list):
+                for x in rows:
+                    name = str(x).strip()
+                    if name:
+                        kernels.add(name)
+    except Exception:
+        kernels = set()
+    _COMPILER_CPP_WAVE_KERNELS[wave_name] = kernels
+    return kernels
+
+
+def _compiler_cpp_miss_policy() -> str:
+    return str(os.getenv("INTENTIR_COMPILER_CPP_MISS_POLICY", "skip")).strip().lower()
+
+
+def _cuda_real_mlir_wave_name() -> str:
+    raw = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+    if raw:
+        return raw
+    return "wave25" if _real_mlir_enabled() else ""
+
+
+def _rvv_real_mlir_wave_name() -> str:
+    raw = str(os.getenv("INTENTIR_RVV_REAL_MLIR_WAVE", "")).strip().lower()
+    if raw:
+        return raw
+    return "wave22" if _real_mlir_enabled() else ""
+
+
+def _load_cuda_real_mlir_wave_kernels(wave: str) -> set[str]:
+    wave_name = str(wave or "").strip().lower()
+    if not wave_name:
+        return set()
+    cached = _CUDA_REAL_MLIR_WAVE_KERNELS.get(wave_name)
+    if cached is not None:
+        return cached
+    path = ROOT / "workflow" / "flaggems" / "state" / f"cuda_real_mlir_{wave_name}_kernels.json"
+    kernels: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            rows = payload.get("kernels")
+            if isinstance(rows, list):
+                for x in rows:
+                    name = str(x).strip()
+                    if name:
+                        kernels.add(name)
+    except Exception:
+        kernels = set()
+    _CUDA_REAL_MLIR_WAVE_KERNELS[wave_name] = kernels
+    return kernels
+
+
+def _load_rvv_real_mlir_wave_kernels(wave: str) -> set[str]:
+    wave_name = str(wave or "").strip().lower()
+    if not wave_name:
+        return set()
+    cached = _RVV_REAL_MLIR_WAVE_KERNELS.get(wave_name)
+    if cached is not None:
+        return cached
+    path = ROOT / "workflow" / "flaggems" / "state" / f"rvv_real_mlir_{wave_name}_kernels.json"
+    kernels: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            rows = payload.get("kernels")
+            if isinstance(rows, list):
+                for x in rows:
+                    name = str(x).strip()
+                    if name:
+                        kernels.add(name)
+    except Exception:
+        kernels = set()
+    _RVV_REAL_MLIR_WAVE_KERNELS[wave_name] = kernels
+    return kernels
+
+
+def _downstream_llvm_pipeline(
+    backend_target: str | None, *, spec_name: str | None = None
+) -> tuple[str | None, str | None]:
     target = str(backend_target or "").strip().lower()
     if not target:
         return None, None
+    stack = _compiler_stack_name()
+    if stack in {"cpp", "cpp_plugin", "c++"}:
+        wave = _compiler_cpp_wave_name()
+        kernels = _load_compiler_cpp_wave_kernels(wave) if wave else set()
+        if spec_name and str(spec_name) in kernels:
+            if target.startswith("rvv"):
+                return "downstream_rvv_std_llvm_cpp", "rvv"
+            if target.startswith("cuda"):
+                return "downstream_cuda_std_cpp_llvm", "cuda"
+            return None, None
+        if _compiler_cpp_miss_policy() not in {"python", "py"}:
+            return None, None
+        # Hybrid mode: allow falling back to the Python real-MLIR stack (no cached LLVM IR).
     if target.startswith("cuda"):
+        wave = _cuda_real_mlir_wave_name()
+        if wave and _real_mlir_enabled():
+            kernels = _load_cuda_real_mlir_wave_kernels(wave)
+            if spec_name and str(spec_name) in kernels:
+                return "downstream_cuda_std_llvm", "cuda"
+            return None, None
         return "downstream_cuda_llvm", "cuda"
     if target.startswith("rvv"):
+        wave = _rvv_real_mlir_wave_name()
+        if wave and _real_mlir_enabled():
+            kernels = _load_rvv_real_mlir_wave_kernels(wave)
+            if spec_name and str(spec_name) in kernels:
+                return "downstream_rvv_std_llvm", "rvv"
+            return None, None
         return "downstream_rvv_llvm", "rvv"
     return None, None
 
@@ -175,6 +309,27 @@ def _load_snapshot_meta(name: str) -> Dict[str, Any]:
     if not isinstance(meta, dict):
         raise TypeError(f"invalid snapshot meta JSON for {name}: expected dict, got {type(meta)}")
     return meta
+
+
+def _load_snapshot_intent_seed(name: str):
+    """
+    Optional deterministic IntentIR seed embedded in the snapshot meta.
+
+    This is used to run the CUDA frontend coverage suite without LLM.
+    """
+    try:
+        meta = _load_snapshot_meta(name)
+    except Exception:
+        return None
+    seed = meta.get("intent_seed")
+    if not isinstance(seed, dict):
+        return None
+    try:
+        from intent_ir.ir import IntentFunction  # noqa: PLC0415
+
+        return IntentFunction.from_json_dict(dict(seed))
+    except Exception:
+        return None
 
 
 def _load_cuda_snapshot(name: str) -> Dict[str, Any]:
@@ -462,6 +617,51 @@ def _any_kernel_dim_fallback_intent():
     )
 
 
+def _vec_add_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="add", inputs=["A", "B"], output="C", attrs={})]
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="vec_add",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"N": "spatial"},
+    )
+
+
+def _naive_gemm_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "K")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "K"), Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="matmul", inputs=["A", "B"], output="C", attrs={})]
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        # Backend lowering is keyed by kernel families; map the CUDA anchor to
+        # the existing matmul family so real-MLIR can compile it without adding
+        # a bespoke "naive_gemm" lowering path.
+        name="ai_bench_matmul",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "channel", "K": "reduction"},
+    )
+
+
 def _clamp2d_fallback_intent():
     from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
 
@@ -651,6 +851,8 @@ def _upsample_bicubic2d_aa_fallback_intent():
 def _deterministic_fallback_intent_for(name: str):
     table = {
         "any_kernel_dim": _any_kernel_dim_fallback_intent,
+        "vec_add": _vec_add_fallback_intent,
+        "naive_gemm": _naive_gemm_fallback_intent,
         "clamp2d": _clamp2d_fallback_intent,
         "group_norm_kernel": _group_norm_fallback_intent,
         "_attn_fwd": _attn_fwd_fallback_intent,
@@ -866,6 +1068,21 @@ def _inputs_from_io_spec(
         dt = str(tspec.get("dtype") or "f32")
         shape_tpl = tspec.get("shape") if isinstance(tspec.get("shape"), list) else []
         shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
+        # Index tensors must stay in-bounds for correctness (avoid UB in CUDA ref runner,
+        # and avoid numpy's negative-index wraparound semantics in the interpreter).
+        if dt == "i32":
+            lname = str(name).strip().lower()
+            if "idx" in lname or "index" in lname:
+                if "row" in lname and "M" in bindings:
+                    m = int(bindings.get("M") or 0)
+                    if m > 0:
+                        inputs_np[name] = rng.integers(0, m, size=shape, dtype=np.int32)
+                        continue
+                if "col" in lname and "N" in bindings:
+                    n = int(bindings.get("N") or 0)
+                    if n > 0:
+                        inputs_np[name] = rng.integers(0, n, size=shape, dtype=np.int32)
+                        continue
         # Small semantic constants (prefer deterministic values over random):
         if str(name) == "sm_scale":
             hd = bindings.get("HEAD_DIM")
@@ -879,6 +1096,46 @@ def _inputs_from_io_spec(
             continue
         inputs_np[name] = _random_array(rng, shape=shape, dtype=dt)
     return inputs_np
+
+
+def _enrich_base_shapes_for_intent(base: Dict[str, int], intent: Any) -> Dict[str, int]:
+    out: Dict[str, int] = {str(k): int(v) for k, v in dict(base).items() if str(k).strip()}
+    try:
+        tensors = getattr(intent, "tensors", None) or {}
+        for tt in dict(tensors).values():
+            dims = list(getattr(tt, "shape", []) or [])
+            for d in dims:
+                sym = None
+                if hasattr(d, "kind") and getattr(d, "kind") == "sym":
+                    sym = str(getattr(d, "value"))
+                elif isinstance(d, str):
+                    sym = str(d)
+                if sym and sym not in out:
+                    out[sym] = 1
+    except Exception:
+        pass
+    # Common axis aliases.
+    if "batch" in out and "Z" not in out:
+        out["Z"] = int(out["batch"])
+    if "Z" in out and "batch" not in out:
+        out["batch"] = int(out["Z"])
+    # Common derived symbols (avoid poisoning cases with bad defaults like group_size=1).
+    if "num_groups" in out and "C" in out:
+        try:
+            g = int(out["num_groups"])
+            c = int(out["C"])
+        except Exception:
+            g, c = 0, 0
+        if g > 0 and c > 0:
+            derived = (c // g) if (c % g == 0) else ((c + g - 1) // g)
+            if int(out.get("group_size") or 0) <= 1:
+                out["group_size"] = int(derived)
+    if "group_size" in out and "HW" in out and int(out.get("num_elements") or 0) <= 0:
+        try:
+            out["num_elements"] = int(out["group_size"]) * int(out["HW"])
+        except Exception:
+            pass
+    return out
 
 
 def _run_cuda_snapshot_kernel(
@@ -1326,17 +1583,23 @@ def run_pipeline_for_spec(
             cand = None
     if cand is None:
         fb_intent = None
+        fb_source = ""
         # Only fall back when:
         # - LLM is explicitly disabled (use_llm=False), or
         # - LLM infrastructure failed (LLMClientError). Do not mask semantic/parser bugs.
         if (not use_llm) or isinstance(llm_err, LLMClientError):
-            fb_intent = _deterministic_fallback_intent_for(spec.name)
+            fb_intent = _load_snapshot_intent_seed(spec.name)
+            fb_source = "snapshot_intent" if fb_intent is not None else ""
+            if fb_intent is None:
+                fb_intent = _deterministic_fallback_intent_for(spec.name)
+                fb_source = "deterministic_fallback" if fb_intent is not None else ""
         if fb_intent is None:
             raise llm_err or RuntimeError("CUDA pipeline requires LLM (no deterministic fallback available)")
         cand = CandidateIntent(intent=fb_intent, raw_json={"fallback": True})
         report["llm_fallback"] = {
             "used": True,
             "reason": ("use_llm=False" if not use_llm else f"{type(llm_err).__name__}: {llm_err}"),
+            "source": str(fb_source),
         }
 
     enrich_intent_macros(cand.intent)
@@ -1480,6 +1743,7 @@ def run_pipeline_for_spec(
     except Exception:
         counterexample_models = []
 
+    base_shapes_for_cases = _enrich_base_shapes_for_intent(dict(spec.canonical_shapes), cand_for_run.intent)
     cases = generate_cases_split(
         cand_for_run.intent,
         constraints=constraints,
@@ -1489,7 +1753,7 @@ def run_pipeline_for_spec(
         axes=list(spec.vary_axes),
         exclude_axes=list(spec.exclude_axes or []),
         assumptions=list(contract.assumptions),
-        base_shapes=dict(spec.canonical_shapes),
+        base_shapes=base_shapes_for_cases,
         predicate_clauses=predicate_clauses,
         extra_sizes=extra_sizes,
         counterexample_models=counterexample_models,
@@ -1792,7 +2056,7 @@ def run_pipeline_for_spec(
                 + sum(float(p.get("ms") or 0.0) for p in list(mid_trace.get("passes") or []))
             )
             llvm_mod = None
-            llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(effective_backend_target)
+            llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(effective_backend_target, spec_name=str(spec.name))
             if llvm_pipeline is None:
                 report["mlir"]["llvm_emit_ok"] = False
                 report["mlir"]["llvm_ir_path"] = ""
@@ -1804,16 +2068,19 @@ def run_pipeline_for_spec(
                     mid_mod.meta = dict(mid_mod.meta or {})
                     mid_mod.meta["shape_bindings"] = {
                         str(k): max(1, int(v))
-                        for k, v in dict(baseline_case.shapes).items()
+                        for k, v in _enrich_base_shapes_for_intent(dict(baseline_case.shapes), cand_for_run.intent).items()
                         if str(k).strip()
                     }
-                    cached_llvm_path = discover_cached_downstream_llvm_module_path(
-                        spec_name=str(spec.name),
-                        llvm_pipeline=str(llvm_pipeline),
-                        current_out_dir=out_dir,
-                    )
-                    if cached_llvm_path:
-                        mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
+                    # Only legacy LLVM pipelines consult the historical cache.
+                    # Real-MLIR pipelines must be self-contained.
+                    if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
+                        cached_llvm_path = discover_cached_downstream_llvm_module_path(
+                            spec_name=str(spec.name),
+                            llvm_pipeline=str(llvm_pipeline),
+                            current_out_dir=out_dir,
+                        )
+                        if cached_llvm_path:
+                            mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
                     llvm_mod, llvm_trace = run_mlir_pipeline(
                         mid_mod,
                         str(llvm_pipeline),
@@ -1926,7 +2193,10 @@ def run_pipeline_for_spec(
                 downstream_module=down_mod,
                 downstream_llvm_name=(str(llvm_pipeline) if llvm_pipeline is not None else None),
                 downstream_llvm_module=llvm_mod,
-                shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
+                shape_bindings={
+                    str(k): int(v)
+                    for k, v in _enrich_base_shapes_for_intent(dict(baseline_case.shapes), cand_for_run.intent).items()
+                },
             )
 
             report["mlir"]["mlir_lower_ms"] = float(lower_ms_total)
