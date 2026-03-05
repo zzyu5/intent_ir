@@ -1,11 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-05T17:18:05+00:00
-- Commit: `a686db985397d75457a320ffde65e35ddcb181c0`
+- Timestamp: 2026-03-05T18:10:42+00:00
+- Commit: `ce90eda454d30ea51778c5c83d7846f48eacac99`
 - Lane: `workflow`
-- Summary: cpp_plugin flash_attention2d ABI fix + sm90 tuning winner; 3-machine focus perf OK
+- Summary: cuda cpp_plugin: add matmul_fused_epilogue v3 (warp-vector epilogue); sm90 matmul_fused_epilogue2d ratio~0.97 (strict,llc)
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/remote_perf/20260306/local_cuda_cpp_focus_perf_sm89_abi_v3/run_summary.json`
-- Status Converged: `artifacts/remote_perf/20260306/local_cuda_cpp_focus_perf_sm89_abi_v3/status_converged.json`
-- Evidence Paths: artifacts/remote_import/20260306/5090d/5090d_cuda_cpp_focus_cov_sm120_abi_v2, artifacts/remote_import/20260306/5090d/5090d_cuda_cpp_focus_perf_sm120_abi_v2/gpu_perf_graph.json, artifacts/remote_import/20260306/h100/cuda_h100_cpp_focus_cov_sm90_abi_v2, artifacts/remote_import/20260306/h100/cuda_h100_cpp_focus_perf_sm90_abi_v2/gpu_perf_graph.json, artifacts/remote_perf/20260306/local_cuda_cpp_focus_cov_sm89_abi_v3, artifacts/remote_perf/20260306/local_cuda_cpp_focus_perf_sm89_abi_v3/gpu_perf_graph.json, artifacts/remote_perf/20260306/local_cuda_cpp_focus_perf_sm89_abi_v3/run_summary.json, artifacts/remote_perf/20260306/local_cuda_cpp_focus_perf_sm89_abi_v3/status_converged.json
-- Next Focus: sm90 matmul_fused_epilogue2d >=1.05 (wgmma/tile sweep) + expand cpp_plugin full196 perf lane
+- Run Summary: `artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/run_summary.json`
+- Status Converged: `artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/status_converged.json`
+- Evidence Paths: artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_cov_sm90_matmul_fe_v2_ce90eda_v1/matmul_fused_epilogue2d.json, artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/gpu_perf_graph.json, artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/run_summary.json, artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_perf_sm90_matmul_fe_v2_ce90eda_v1/status_converged.json
