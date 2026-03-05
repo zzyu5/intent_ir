@@ -1,10 +1,10 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-05T18:36:07+00:00
-- Commit: `ce0700e403d5c997fb0303c5e1c3986afa6ff150`
+- Timestamp: 2026-03-05T18:40:08+00:00
+- Commit: `e6a08bd1ae9ff609aa6e02b4ecc3866bdaa7e910`
 - Lane: `workflow`
-- Summary: cuda sm89 cpp_plugin full196 cases=1 ok (ce0700e)
+- Summary: cuda sm89 cpp_plugin focus perf: min=0.989 p50=1.002 fallback=0
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/run_summary.json`
-- Status Converged: `artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/status_converged.json`
-- Evidence Paths: artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1, artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/run_summary.json, artifacts/validation_rounds/20260306/full196_cuda_cpp_plugin_sm89_v1/status_converged.json
+- Run Summary: `artifacts/remote_perf/20260306/local_cuda_cpp_triton_native_focus_perf_sm89_v1/run_summary.json`
+- Status Converged: `artifacts/remote_perf/20260306/local_cuda_cpp_triton_native_focus_perf_sm89_v1/status_converged.json`
+- Evidence Paths: artifacts/remote_perf/20260306/local_cuda_cpp_triton_native_focus_cov_sm89_v1, artifacts/remote_perf/20260306/local_cuda_cpp_triton_native_focus_perf_sm89_v1, artifacts/remote_perf/20260306/local_cuda_cpp_triton_native_focus_perf_sm89_v1/run_summary.json, artifacts/remote_perf/20260306/local_cuda_cpp_triton_native_focus_perf_sm89_v1/status_converged.json
