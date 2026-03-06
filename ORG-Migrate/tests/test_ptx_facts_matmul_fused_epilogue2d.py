@@ -20,7 +20,9 @@ def test_ptx_facts_matmul_fused_epilogue2d() -> None:
     assert mechanisms["mapping.block_threads"]["attrs"]["warp_count_estimate"] == 4
     assert mechanisms["primitive.mma"]["attrs"]["mma_sync_count"] == 2
     assert "mma.sync.aligned.m16n8k8" in mechanisms["primitive.mma"]["attrs"]["mma_kinds"]
+    assert mechanisms["primitive.mma"]["attrs"]["complete_matrix_pipeline"] is True
     assert mechanisms["primitive.matrix_load"]["attrs"]["ldmatrix_count"] == 1
     assert mechanisms["primitive.matrix_load"]["attrs"]["ldmatrix_widths"] == [4]
     assert mechanisms["pipeline.async_copy"]["attrs"]["commit_group_count"] == 1
+    assert mechanisms["pipeline.async_copy"]["attrs"]["complete_async_pipeline"] is False
     assert mechanisms["communication.block_sync"]["attrs"]["bar_sync_count"] == 1

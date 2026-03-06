@@ -11,6 +11,7 @@ _PROGRAM_ID_RE = re.compile(r"\btt\.get_program_id\s+([xyz])\b")
 _MODULE_WARPS_RE = re.compile(r'"ttg\.num-warps"\s*=\s*([0-9]+)\s*:\s*i32')
 _THREADS_PER_WARP_RE = re.compile(r'"ttg\.threads-per-warp"\s*=\s*([0-9]+)\s*:\s*i32')
 _SCF_FOR_RE = re.compile(r"\bscf\.for\b")
+_TENSOR_2D_SHAPE_RE = re.compile(r"tensor<([0-9]+)x([0-9]+)")
 
 
 def _split_ints(raw: str) -> list[int]:
@@ -36,6 +37,16 @@ def _evidence(*, item_id: str, kind: str, artifact_path: str | None, line_no: in
     }
 
 
+def _tensor_2d_bytes(line: str) -> int | None:
+    m = _TENSOR_2D_SHAPE_RE.search(str(line or ""))
+    if m is None:
+        return None
+    try:
+        return int(m.group(1)) * int(m.group(2)) * 4
+    except Exception:
+        return None
+
+
 def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact_path: str | None = None) -> dict[str, Any]:
     text = str(ttgir_text or "")
     lines = text.splitlines()
@@ -54,6 +65,10 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     has_streaming_softmax = False
     has_operand_tile_stage = False
     has_bias_epilogue = False
+    q_resident_bytes_hint = 0
+    kv_streamed_bytes_hint = 0
+    operand_tile_bytes_hint = 0
+    convert_layout_sites = 0
     inside_loop = False
 
     for idx, line in enumerate(lines, start=1):
@@ -81,13 +96,16 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             if str(kernel_name) == "flash_attention2d":
                 if "%Q_ptr" in stripped and not inside_loop:
                     has_q_resident_state = True
+                    q_resident_bytes_hint = max(q_resident_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_q_resident_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="Q load before streaming loop"))
                 if ("%K_ptr" in stripped or "%V_ptr" in stripped) and inside_loop:
                     has_kv_streamed_tiles = True
+                    kv_streamed_bytes_hint = max(kv_streamed_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_kv_stream_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="KV load inside streaming loop"))
             if str(kernel_name) == "matmul_fused_epilogue2d":
                 if ("%A" in stripped or "%B" in stripped) and ("tt.load" in stripped):
                     has_operand_tile_stage = True
+                    operand_tile_bytes_hint = max(operand_tile_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_operand_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="operand tile stage"))
         if "\"tt.reduce\"" in stripped or "tt.reduce" in stripped:
             has_reduce = True
@@ -97,6 +115,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
                 evidence.append(_evidence(item_id=f"ttgir_stream_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="loop-carried streaming reduction"))
         if "ttg.convert_layout" in stripped:
             has_convert_layout = True
+            convert_layout_sites += 1
             evidence.append(_evidence(item_id=f"ttgir_convert_layout_{idx}", kind="ttgir_layout", artifact_path=artifact_path, line_no=idx, summary="layout conversion"))
         if "tt.dot" in stripped or "dot " in stripped:
             has_dot = True
@@ -160,13 +179,19 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         },
         "communication.reduction": {
             "present": bool(has_reduce),
-            "attrs": {"kind": "tt.reduce" if has_reduce else ""},
+            "attrs": {
+                "kind": "tt.reduce" if has_reduce else "",
+                "reduction_scope": ("warp" if (num_warps is not None and int(num_warps) <= 4) else "cta"),
+            },
             "evidence_refs": reduce_refs,
         },
         "pipeline.stage_hint": {
-            "present": False,
-            "attrs": {"stage_hint": None},
-            "evidence_refs": [],
+            "present": bool(has_shared_like and inside_loop and (has_kv_streamed_tiles or has_operand_tile_stage)),
+            "attrs": {
+                "stage_hint": ("double_buffer_like" if has_shared_like and inside_loop else None),
+                "pipeline_depth_hint": (2 if has_shared_like and inside_loop else None),
+            },
+            "evidence_refs": staging_refs,
         },
     }
     if str(kernel_name) == "matmul_fused_epilogue2d":
@@ -182,12 +207,19 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         }
         mechanisms["staging.operand_tile_stage"] = {
             "present": bool(has_operand_tile_stage or has_tile_load),
-            "attrs": {"tile_load": bool(has_tile_load)},
+            "attrs": {
+                "tile_load": bool(has_tile_load),
+                "reuse_window": ("k_loop" if has_operand_tile_stage else ""),
+                "resident_bytes_hint": int(operand_tile_bytes_hint),
+            },
             "evidence_refs": operand_stage_refs or staging_refs,
         }
         mechanisms["primitive.dot_op"] = {
             "present": bool(has_dot),
-            "attrs": {"dot_like": bool(has_dot)},
+            "attrs": {
+                "dot_like": bool(has_dot),
+                "reduction_scope": ("warp" if (num_warps is not None and int(num_warps) <= 4) else "cta"),
+            },
             "evidence_refs": dot_refs,
         }
         mechanisms["fusion.bias_fused_epilogue"] = {
@@ -197,28 +229,39 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         }
         mechanisms["layout.output_convert"] = {
             "present": bool(has_convert_layout),
-            "attrs": {"convert_layout": bool(has_convert_layout)},
+            "attrs": {"convert_layout": bool(has_convert_layout), "layout_convert_sites": int(convert_layout_sites)},
             "evidence_refs": layout_refs,
         }
     if str(kernel_name) == "flash_attention2d":
         mechanisms["staging.q_resident_state"] = {
             "present": bool(has_q_resident_state),
-            "attrs": {"outside_loop": bool(has_q_resident_state)},
+            "attrs": {
+                "outside_loop": bool(has_q_resident_state),
+                "reuse_window": ("outer_loop" if has_q_resident_state else ""),
+                "resident_bytes_hint": int(q_resident_bytes_hint),
+            },
             "evidence_refs": q_resident_refs,
         }
         mechanisms["staging.kv_streamed_tiles"] = {
             "present": bool(has_kv_streamed_tiles),
-            "attrs": {"inside_loop": bool(has_kv_streamed_tiles)},
+            "attrs": {
+                "inside_loop": bool(has_kv_streamed_tiles),
+                "reuse_window": ("kv_loop" if has_kv_streamed_tiles else ""),
+                "resident_bytes_hint": int(kv_streamed_bytes_hint),
+            },
             "evidence_refs": kv_stream_refs,
         }
         mechanisms["communication.streaming_softmax"] = {
             "present": bool(has_streaming_softmax),
-            "attrs": {"loop_carried_reduce": bool(has_streaming_softmax)},
+            "attrs": {
+                "loop_carried_reduce": bool(has_streaming_softmax),
+                "reduction_scope": ("warp" if (num_warps is not None and int(num_warps) <= 4) else "cta"),
+            },
             "evidence_refs": stream_reduce_refs,
         }
         mechanisms["layout.output_convert"] = {
             "present": bool(has_convert_layout),
-            "attrs": {"convert_layout": bool(has_convert_layout)},
+            "attrs": {"convert_layout": bool(has_convert_layout), "layout_convert_sites": int(convert_layout_sites)},
             "evidence_refs": layout_refs,
         }
 

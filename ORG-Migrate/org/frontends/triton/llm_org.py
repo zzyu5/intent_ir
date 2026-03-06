@@ -71,16 +71,22 @@ Important:
 - Do NOT output numeric tuning decisions copied from source oracle. You may output candidate sets for dimensions.
 - Every goal and every mechanism must have at least one evidence ref.
 - Prefer evidence from TTGIR/PTX/source_oracle facts over TTIR summaries when available.
+- Prefer dims and attrs that directly affect target performance recovery:
+  resident_bytes, reuse_window, pipeline_depth, communication_scope, layout_convert_sites.
 
 Kernel-specific expectations:
 - For flash_attention2d, capture:
   resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
   and prefer mechanism tags such as:
   q_resident_state, kv_streamed_tiles, online_softmax_reduce, output_layout_convert
+  and prefer dims/attrs such as:
+  resident_bytes, pipeline_depth, communication_scope
 - For matmul_fused_epilogue2d, capture:
   operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
   and prefer mechanism tags such as:
   operand_tile_stage, dot_op, mma_core, bias_fused_epilogue, output_layout_convert
+  and prefer dims/attrs such as:
+  resident_bytes, pipeline_depth, communication_scope
 """
 
 

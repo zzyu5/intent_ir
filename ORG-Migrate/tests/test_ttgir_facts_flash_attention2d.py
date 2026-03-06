@@ -32,7 +32,10 @@ def test_ttgir_facts_flash_attention2d() -> None:
     assert mechanisms["mapping.program_axes"]["attrs"]["axes"] == ["x"]
     assert mechanisms["mapping.warp_or_cta"]["attrs"]["num_warps"] == 4
     assert mechanisms["communication.reduction"]["present"] is True
+    assert mechanisms["communication.reduction"]["attrs"]["reduction_scope"] == "warp"
     assert mechanisms["staging.q_resident_state"]["present"] is False or isinstance(mechanisms["staging.q_resident_state"]["present"], bool)
     assert mechanisms["staging.kv_streamed_tiles"]["present"] is False or isinstance(mechanisms["staging.kv_streamed_tiles"]["present"], bool)
     assert mechanisms["communication.streaming_softmax"]["present"] is True
+    assert mechanisms["communication.streaming_softmax"]["attrs"]["reduction_scope"] == "warp"
+    assert mechanisms["pipeline.stage_hint"]["attrs"]["pipeline_depth_hint"] is None
     assert mechanisms["layout.output_convert"]["present"] is False

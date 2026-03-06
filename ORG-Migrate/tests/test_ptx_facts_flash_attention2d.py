@@ -22,6 +22,8 @@ def test_ptx_facts_flash_attention2d() -> None:
     assert mechanisms["pipeline.async_copy"]["attrs"]["async_copy_count"] == 3
     assert mechanisms["pipeline.async_copy"]["attrs"]["commit_group_count"] == 1
     assert mechanisms["pipeline.async_copy"]["attrs"]["wait_groups"] == [0]
+    assert mechanisms["pipeline.async_copy"]["attrs"]["complete_async_pipeline"] is True
     assert mechanisms["communication.shuffle"]["attrs"]["shuffle_count"] == 2
     assert mechanisms["communication.shuffle"]["attrs"]["shuffle_ops"] == ["bfly", "down"]
+    assert mechanisms["communication.shuffle"]["attrs"]["complete_reduction_pattern"] is True
     assert mechanisms["communication.block_sync"]["attrs"]["bar_sync_count"] == 1

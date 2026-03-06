@@ -25,4 +25,6 @@ def test_ttgir_facts_matmul_fused_epilogue2d() -> None:
     assert mechanisms["primitive.mma"]["present"] is True
     assert mechanisms["fusion.epilogue_fused_writeback"]["present"] is True
     assert mechanisms["primitive.dot_op"]["present"] is True
+    assert mechanisms["primitive.dot_op"]["attrs"]["reduction_scope"] == "warp"
     assert mechanisms["layout.output_convert"]["present"] is True
+    assert mechanisms["layout.output_convert"]["attrs"]["layout_convert_sites"] == 1

@@ -127,6 +127,9 @@ def extract_ptx_mechanism_facts(ptx_text: str | None, *, kernel_name: str, artif
     mma_kinds = sorted({str(m.group(0) or "").strip() for m in mma_hits if str(m.group(0) or "").strip()})[:8]
     wgmma_kinds = sorted({str(m.group(0) or "").strip() for m in wgmma_hits if str(m.group(0) or "").strip()})[:8]
     ldmatrix_widths = sorted({int(m.group(1)) for m in ldmatrix_hits if m.group(1) is not None})
+    has_complete_async_pipeline = bool(async_hits and async_commit_hits and async_wait_hits)
+    has_complete_matrix_pipeline = bool((mma_hits or wgmma_hits) and ldmatrix_hits)
+    has_complete_reduction_pattern = bool(shfl_hits and bar_sync_hits)
 
     return {
         "schema_version": "org_mechanism_facts_v1",
@@ -162,6 +165,7 @@ def extract_ptx_mechanism_facts(ptx_text: str | None, *, kernel_name: str, artif
                     "commit_group_count": int(len(async_commit_hits)),
                     "wait_group_count": int(len(async_wait_hits)),
                     "wait_groups": list(wait_groups),
+                    "complete_async_pipeline": bool(has_complete_async_pipeline),
                 },
                 "evidence_refs": async_refs,
             },
@@ -172,6 +176,7 @@ def extract_ptx_mechanism_facts(ptx_text: str | None, *, kernel_name: str, artif
                     "wgmma_count": int(len(wgmma_hits)),
                     "mma_kinds": list(mma_kinds),
                     "wgmma_kinds": list(wgmma_kinds),
+                    "complete_matrix_pipeline": bool(has_complete_matrix_pipeline),
                 },
                 "evidence_refs": mma_refs,
             },
@@ -188,6 +193,7 @@ def extract_ptx_mechanism_facts(ptx_text: str | None, *, kernel_name: str, artif
                 "attrs": {
                     "shuffle_count": int(len(shfl_hits)),
                     "shuffle_ops": list(shuffle_ops),
+                    "complete_reduction_pattern": bool(has_complete_reduction_pattern),
                 },
                 "evidence_refs": shuffle_refs,
             },
