@@ -22,6 +22,29 @@ def _candidate_line(kernel_kind: str, bindings: dict[str, int]) -> str:
     return f"{kernel_kind}:{flat}" if flat else str(kernel_kind)
 
 
+def _parse_candidate_line(candidate: str) -> tuple[str, dict[str, int]]:
+    raw = str(candidate or "").strip()
+    if not raw:
+        return "", {}
+    if ":" not in raw:
+        return raw, {}
+    kernel_kind, flat = raw.split(":", 1)
+    bindings: dict[str, int] = {}
+    for chunk in flat.split(","):
+        item = str(chunk).strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = str(key).strip()
+        if not key:
+            continue
+        try:
+            bindings[key] = int(value)
+        except Exception:
+            continue
+    return str(kernel_kind).strip(), bindings
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -151,6 +174,25 @@ def _first_candidate_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
+    summary = result.get("summary")
+    if not isinstance(summary, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in list(summary.get("candidates") or []):
+        row = dict(item or {})
+        out.append(
+            {
+                "kernel_kind": str(row.get("kernel_kind") or ""),
+                "bindings": {str(k): int(v) for k, v in dict(row.get("bindings") or {}).items() if str(k).strip()},
+                "ratio": row.get("ratio"),
+                "coverage_rc": row.get("coverage_rc"),
+                "perf_rc": row.get("perf_rc"),
+            }
+        )
+    return out
+
+
 def _best_ratio(result: dict[str, Any]) -> float | None:
     summary = result.get("summary")
     if not isinstance(summary, dict):
@@ -225,6 +267,47 @@ def _missing_candidate_outcome(kind: str) -> dict[str, Any]:
     }
 
 
+def _async_binding_keys(bindings: dict[str, int]) -> list[str]:
+    return [str(k) for k, v in dict(bindings or {}).items() if int(v) and str(k).endswith("_ASYNC_COPY")]
+
+
+def _find_guided_repair(guided_res: dict[str, Any], candidate: str) -> dict[str, Any]:
+    kind, bindings = _parse_candidate_line(candidate)
+    if not kind:
+        return {}
+    async_keys = _async_binding_keys(bindings)
+    if not async_keys:
+        return {}
+    normalized = {str(k): int(v) for k, v in dict(bindings).items() if str(k) not in set(async_keys)}
+    for guided in _candidate_summaries(guided_res):
+        if str(guided.get("kernel_kind") or "") != kind:
+            continue
+        guided_bindings = {str(k): int(v) for k, v in dict(guided.get("bindings") or {}).items()}
+        if guided_bindings != normalized:
+            continue
+        ratio = guided.get("ratio")
+        if ratio is None:
+            continue
+        return {
+            "status": "requires_substitution",
+            "reason": "async_binding_removed",
+            "dropped_bindings": list(async_keys),
+            "repair_candidate": _candidate_line(kind, normalized),
+            "repair_ratio": float(ratio),
+        }
+    return {}
+
+
+def _candidate_origin(*, source_oracle_kind: str, resolved_candidate: str, arch: str, kind: str) -> str:
+    if not resolved_candidate:
+        return ""
+    if kind == "source" and str(source_oracle_kind or "").strip():
+        return "plan.source_oracle"
+    if str(arch or "").strip():
+        return f"tuning_db:{arch}"
+    return "derived"
+
+
 def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
     if not result:
         return {
@@ -285,6 +368,50 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _analyze_replay_candidate(
+    *,
+    label: str,
+    candidate: str,
+    candidate_origin: str,
+    replay_result: dict[str, Any],
+    guided_res: dict[str, Any],
+) -> dict[str, Any]:
+    if not str(candidate or "").strip():
+        missing = _missing_candidate_outcome(label)
+        return {
+            "status": "candidate_unavailable",
+            "candidate": "",
+            "candidate_origin": "",
+            "repair": {},
+            "outcome": missing,
+        }
+    outcome = _make_outcome(replay_result)
+    if outcome["status"] == "ok":
+        return {
+            "status": "replayable",
+            "candidate": str(candidate),
+            "candidate_origin": str(candidate_origin),
+            "repair": {},
+            "outcome": outcome,
+        }
+    repair = _find_guided_repair(guided_res, candidate)
+    if repair:
+        return {
+            "status": str(repair.get("status") or "requires_substitution"),
+            "candidate": str(candidate),
+            "candidate_origin": str(candidate_origin),
+            "repair": repair,
+            "outcome": outcome,
+        }
+    return {
+        "status": str(outcome.get("status") or "missing"),
+        "candidate": str(candidate),
+        "candidate_origin": str(candidate_origin),
+        "repair": {},
+        "outcome": outcome,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare source-oracle replay vs ORG-guided candidates on target GPU.")
     parser.add_argument("--report", required=True, help="Path to <kernel>.json report emitted by full_pipeline_verify.")
@@ -318,6 +445,7 @@ def main() -> int:
     compiler_stack = str((report.get("org") or {}).get("compiler_stack") or "python")
     target_arch = str((org.get("arch") or "")).strip()
     db_path = (Path(args.tuning_db).resolve() if str(args.tuning_db).strip() else None)
+    source_oracle_kind = str(dict(plan.get("source_oracle") or {}).get("kernel_kind") or "").strip()
 
     source_candidate = _resolve_source_candidate(
         kernel=kernel,
@@ -333,6 +461,18 @@ def main() -> int:
         compiler_stack=compiler_stack,
         target_arch=target_arch,
         db_path=db_path,
+    )
+    source_candidate_origin = _candidate_origin(
+        source_oracle_kind=source_oracle_kind,
+        resolved_candidate=source_candidate,
+        arch=str(args.source_arch),
+        kind="source",
+    )
+    target_candidate_origin = _candidate_origin(
+        source_oracle_kind="",
+        resolved_candidate=target_candidate,
+        arch=target_arch,
+        kind="target",
     )
 
     out_root = Path(args.out_root).resolve()
@@ -378,6 +518,20 @@ def main() -> int:
     guided_outcome = _make_outcome(guided_res)
     source_outcome = (_make_outcome(source_res) if source_candidate else _missing_candidate_outcome("source_replay"))
     target_outcome = (_make_outcome(target_res) if target_candidate else _missing_candidate_outcome("target_oracle"))
+    source_analysis = _analyze_replay_candidate(
+        label="source_replay",
+        candidate=source_candidate,
+        candidate_origin=source_candidate_origin,
+        replay_result=source_res,
+        guided_res=guided_res,
+    )
+    target_analysis = _analyze_replay_candidate(
+        label="target_oracle",
+        candidate=target_candidate,
+        candidate_origin=target_candidate_origin,
+        replay_result=target_res,
+        guided_res=guided_res,
+    )
 
     payload = {
         "kernel": kernel,
@@ -389,7 +543,9 @@ def main() -> int:
         "evidence_source": dict(org.get("evidence_source") or {}),
         "guided_candidate_file": str(candidates_txt_path),
         "source_candidate": source_candidate,
+        "source_candidate_origin": source_candidate_origin,
         "target_candidate": target_candidate,
+        "target_candidate_origin": target_candidate_origin,
         "guided": guided_res,
         "source_replay": source_res,
         "target_oracle": target_res,
@@ -406,6 +562,8 @@ def main() -> int:
             "guided_outcome": guided_outcome,
             "source_replay_outcome": source_outcome,
             "target_oracle_outcome": target_outcome,
+            "source_replay_analysis": source_analysis,
+            "target_oracle_analysis": target_analysis,
         },
     }
     gp = payload["comparisons"]["guided_best_ratio"]
@@ -432,6 +590,8 @@ def main() -> int:
         f"guided_outcome: {payload['comparisons']['guided_outcome']['status']}",
         f"source_replay_outcome: {payload['comparisons']['source_replay_outcome']['status']}",
         f"target_oracle_outcome: {payload['comparisons']['target_oracle_outcome']['status']}",
+        f"source_replay_analysis: {payload['comparisons']['source_replay_analysis']['status']}",
+        f"target_oracle_analysis: {payload['comparisons']['target_oracle_analysis']['status']}",
     ]
     fail = payload["comparisons"].get("source_replay_failure") or {}
     if fail:
@@ -454,6 +614,30 @@ def main() -> int:
                     f"ok={fail.get('ok')}",
                     f"reason_code={fail.get('reason_code')}",
                     f"skip_reason={fail.get('skip_reason')}",
+                ]
+            )
+        )
+    repair = dict((payload["comparisons"].get("source_replay_analysis") or {}).get("repair") or {})
+    if repair:
+        lines.append(
+            "source_replay_repair: "
+            + ", ".join(
+                [
+                    f"reason={repair.get('reason')}",
+                    f"repair_candidate={repair.get('repair_candidate')}",
+                    f"repair_ratio={repair.get('repair_ratio')}",
+                ]
+            )
+        )
+    repair = dict((payload["comparisons"].get("target_oracle_analysis") or {}).get("repair") or {})
+    if repair:
+        lines.append(
+            "target_oracle_repair: "
+            + ", ".join(
+                [
+                    f"reason={repair.get('reason')}",
+                    f"repair_candidate={repair.get('repair_candidate')}",
+                    f"repair_ratio={repair.get('repair_ratio')}",
                 ]
             )
         )

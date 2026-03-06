@@ -79,6 +79,13 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
                             "ratio": 0.81,
                             "coverage_rc": 0,
                             "perf_rc": 0,
+                        },
+                        {
+                            "kernel_kind": "attn2d_causal_softmax_v6",
+                            "bindings": {"ATTN_BLOCK_KV": 64, "FLASH_ATTN_ASYNC_COPY": 1},
+                            "ratio": None,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
                         }
                     ]
                 },
@@ -129,10 +136,108 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["comparisons"]["source_replay_outcome"]["failure"]["reason_code"] == "intentir_unavailable"
     assert payload["comparisons"]["target_oracle_outcome"]["status"] == "candidate_unavailable"
     assert payload["comparisons"]["target_oracle_outcome"]["failure"]["reason_code"] == "candidate_unavailable"
+    assert payload["source_candidate_origin"] == "plan.source_oracle"
+    assert payload["comparisons"]["source_replay_analysis"]["status"] == "failed"
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")
     assert "guided_outcome: ok" in txt
     assert "source_replay_outcome: failed" in txt
     assert "target_oracle_outcome: candidate_unavailable" in txt
+
+
+def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "matmul_fused_epilogue2d.json"
+    plan_path = tmp_path / "matmul_fused_epilogue2d.org_plan.json"
+    candidates_path = tmp_path / "matmul_fused_epilogue2d.org_candidates.txt"
+    out_root = tmp_path / "compare"
+
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"M": 32, "N": 32, "K": 32},
+            "compiler_stack": "python",
+            "evidence_source": {"primary": "ttgir"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(json.dumps({"source_oracle": {"kernel_kind": "", "bindings": {}}}), encoding="utf-8")
+    candidates_path.write_text("matmul_mma_tf32_v1:MMA_BK=32,MMA_BM=32,MMA_BN=32\n", encoding="utf-8")
+
+    source_root = out_root / "source_replay"
+    target_root = out_root / "target_oracle"
+    _write_graph(source_root, ok=False, reason_code="lowering_missing_op", reason_detail="async path unsupported", skip_reason="intentir_unavailable")
+    _write_graph(target_root, ok=False, reason_code="lowering_missing_op", reason_detail="async path unsupported", skip_reason="intentir_unavailable")
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        if out_dir.name == "guided":
+            return {
+                "returncode": 0,
+                "out_root": str(out_dir),
+                "summary": {
+                    "candidates": [
+                        {
+                            "kernel_kind": "matmul_mma_tf32_v1",
+                            "bindings": {"MMA_ASYNC_COPY": 1, "MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32},
+                            "ratio": None,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
+                        },
+                        {
+                            "kernel_kind": "matmul_mma_tf32_v1",
+                            "bindings": {"MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32},
+                            "ratio": 1.01,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
+                        },
+                    ]
+                },
+            }
+        if out_dir.name == "source_replay":
+            return {
+                "returncode": 0,
+                "out_root": str(source_root),
+                "summary": {"candidates": [{"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_ASYNC_COPY": 1, "MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32}, "ratio": None}]},
+            }
+        if out_dir.name == "target_oracle":
+            return {
+                "returncode": 0,
+                "out_root": str(target_root),
+                "summary": {"candidates": [{"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_ASYNC_COPY": 1, "MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32}, "ratio": None}]},
+            }
+        raise AssertionError(f"unexpected out_root {out_dir}")
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "matmul_mma_tf32_v1:MMA_ASYNC_COPY=1,MMA_BK=32,MMA_BM=32,MMA_BN=32")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "matmul_mma_tf32_v1:MMA_ASYNC_COPY=1,MMA_BK=32,MMA_BM=32,MMA_BN=32")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+
+    assert module.main() == 0
+    payload = json.loads((out_root / "comparison.json").read_text(encoding="utf-8"))
+    source_analysis = payload["comparisons"]["source_replay_analysis"]
+    target_analysis = payload["comparisons"]["target_oracle_analysis"]
+    assert source_analysis["status"] == "requires_substitution"
+    assert source_analysis["repair"]["repair_candidate"] == "matmul_mma_tf32_v1:MMA_BK=32,MMA_BM=32,MMA_BN=32"
+    assert source_analysis["repair"]["reason"] == "async_binding_removed"
+    assert target_analysis["status"] == "requires_substitution"
+    assert payload["target_candidate_origin"] == "tuning_db:sm120"
+    txt = (out_root / "comparison.txt").read_text(encoding="utf-8")
+    assert "source_replay_repair:" in txt
+    assert "target_oracle_repair:" in txt
 
 
 def test_make_outcome_reports_process_error_without_graph(tmp_path) -> None:

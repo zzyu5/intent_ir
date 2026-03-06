@@ -23,7 +23,9 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                 "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
                 "evidence_source": {"primary": "ttgir"},
                 "source_candidate": "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6",
+                "source_candidate_origin": "tuning_db:sm90",
                 "target_candidate": "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6",
+                "target_candidate_origin": "tuning_db:sm120",
                 "comparisons": {
                     "guided_best_ratio": 0.8,
                     "source_replay_best_ratio": 0.7,
@@ -39,6 +41,14 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                     "guided_outcome": {"status": "ok", "returncode": 0},
                     "source_replay_outcome": {"status": "failed", "returncode": 1},
                     "target_oracle_outcome": {"status": "candidate_unavailable", "returncode": None},
+                    "source_replay_analysis": {
+                        "status": "requires_substitution",
+                        "repair": {
+                            "repair_candidate": "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6",
+                            "reason": "async_binding_removed",
+                        },
+                    },
+                    "target_oracle_analysis": {"status": "candidate_unavailable", "repair": {}},
                 },
             },
             indent=2,
@@ -68,3 +78,6 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
     assert row["guided_outcome"] == "ok"
     assert row["source_outcome"] == "failed"
     assert row["target_outcome"] == "candidate_unavailable"
+    assert row["source_candidate_origin"] == "tuning_db:sm90"
+    assert row["source_analysis"] == "requires_substitution"
+    assert row["source_repair_reason"] == "async_binding_removed"
