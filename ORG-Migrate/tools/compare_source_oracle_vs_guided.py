@@ -151,26 +151,138 @@ def _first_candidate_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _first_failure_detail(result: dict[str, Any]) -> dict[str, Any]:
+def _best_ratio(result: dict[str, Any]) -> float | None:
+    summary = result.get("summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    candidates = list(summary.get("candidates") or [])
+    ratios = [float(c.get("ratio")) for c in candidates if c.get("ratio") is not None]
+    if ratios:
+        return max(ratios)
+    out_root_local = Path(str(result.get("out_root") or ""))
+    run_summaries = list(out_root_local.rglob("run_summary.json")) if out_root_local.is_dir() else []
+    fallback = []
+    for path in run_summaries:
+        try:
+            obj = _load_json(path)
+        except Exception:
+            continue
+        for key in ("gpu_perf_min_ratio", "gpu_perf_p50_ratio"):
+            val = obj.get(key)
+            if val is not None:
+                fallback.append(float(val))
+    return (max(fallback) if fallback else None)
+
+
+def _graph_entries(result: dict[str, Any]) -> list[dict[str, Any]]:
     out_root_local = Path(str(result.get("out_root") or ""))
     graph_files = list(out_root_local.rglob("gpu_perf_graph.json")) if out_root_local.is_dir() else []
+    entries: list[dict[str, Any]] = []
     for path in graph_files:
         try:
             obj = _load_json(path)
         except Exception:
             continue
-        entries = list(obj.get("entries") or [])
-        if not entries:
+        for entry in list(obj.get("entries") or []):
+            row = dict(entry or {})
+            row["_path"] = str(path)
+            entries.append(row)
+    return entries
+
+
+def _first_failure_detail(result: dict[str, Any]) -> dict[str, Any]:
+    for first in _graph_entries(result):
+        reason_code = str(first.get("reason_code") or "")
+        skip_reason = str(first.get("skip_reason") or "")
+        if not reason_code and not skip_reason and bool(first.get("ok", True)):
             continue
-        first = dict(entries[0] or {})
         return {
-            "ok": bool(first.get("ok")),
-            "reason_code": str(first.get("reason_code") or ""),
+            "ok": bool(first.get("ok")) if first.get("ok") is not None else None,
+            "reason_code": reason_code,
             "reason_detail": str(first.get("reason_detail") or ""),
-            "skip_reason": str(first.get("skip_reason") or ""),
-            "count_in_denominator": bool(first.get("count_in_denominator")),
+            "skip_reason": skip_reason,
+            "count_in_denominator": bool(first.get("count_in_denominator")) if first.get("count_in_denominator") is not None else None,
+            "path": str(first.get("_path") or ""),
         }
     return {}
+
+
+def _missing_candidate_outcome(kind: str) -> dict[str, Any]:
+    return {
+        "status": "candidate_unavailable",
+        "best_ratio": None,
+        "first_candidate": {},
+        "candidate_count": 0,
+        "returncode": None,
+        "failure": {
+            "ok": None,
+            "reason_code": "candidate_unavailable",
+            "reason_detail": f"{kind} candidate unavailable",
+            "skip_reason": "candidate_unavailable",
+            "count_in_denominator": None,
+            "path": "",
+        },
+    }
+
+
+def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
+    if not result:
+        return {
+            "status": "missing",
+            "best_ratio": None,
+            "first_candidate": {},
+            "candidate_count": 0,
+            "returncode": None,
+            "failure": {},
+        }
+    ratio = _best_ratio(result)
+    first = _first_candidate_summary(result)
+    failure = _first_failure_detail(result)
+    summary = result.get("summary")
+    candidates = list(summary.get("candidates") or []) if isinstance(summary, dict) else []
+    returncode = result.get("returncode")
+    if ratio is not None:
+        return {
+            "status": "ok",
+            "best_ratio": float(ratio),
+            "first_candidate": first,
+            "candidate_count": len(candidates),
+            "returncode": returncode,
+            "failure": failure,
+        }
+    if failure:
+        return {
+            "status": "failed",
+            "best_ratio": None,
+            "first_candidate": first,
+            "candidate_count": len(candidates),
+            "returncode": returncode,
+            "failure": failure,
+        }
+    if returncode not in (None, 0):
+        return {
+            "status": "process_error",
+            "best_ratio": None,
+            "first_candidate": first,
+            "candidate_count": len(candidates),
+            "returncode": returncode,
+            "failure": {
+                "ok": False,
+                "reason_code": "tune_returncode_nonzero",
+                "reason_detail": f"tune returned non-zero exit code: {returncode}",
+                "skip_reason": "",
+                "count_in_denominator": None,
+                "path": "",
+            },
+        }
+    return {
+        "status": "missing",
+        "best_ratio": None,
+        "first_candidate": first,
+        "candidate_count": len(candidates),
+        "returncode": returncode,
+        "failure": {},
+    }
 
 
 def main() -> int:
@@ -263,35 +375,18 @@ def main() -> int:
             cuda_runtime_backend=args.cuda_runtime_backend,
         )
 
-    def _best_ratio(result: dict[str, Any]) -> float | None:
-        summary = result.get("summary")
-        if not isinstance(summary, dict):
-            summary = {}
-        candidates = list(summary.get("candidates") or [])
-        ratios = [float(c.get("ratio")) for c in candidates if c.get("ratio") is not None]
-        if ratios:
-            return max(ratios)
-        run_summaries = []
-        out_root_local = Path(str(result.get("out_root") or ""))
-        if out_root_local.is_dir():
-            run_summaries = list(out_root_local.rglob("run_summary.json"))
-        fallback = []
-        for path in run_summaries:
-            try:
-                obj = _load_json(path)
-            except Exception:
-                continue
-            for key in ("gpu_perf_min_ratio", "gpu_perf_p50_ratio"):
-                val = obj.get(key)
-                if val is not None:
-                    fallback.append(float(val))
-        return (max(fallback) if fallback else None)
+    guided_outcome = _make_outcome(guided_res)
+    source_outcome = (_make_outcome(source_res) if source_candidate else _missing_candidate_outcome("source_replay"))
+    target_outcome = (_make_outcome(target_res) if target_candidate else _missing_candidate_outcome("target_oracle"))
 
     payload = {
         "kernel": kernel,
         "backend_target": str(args.backend_target),
         "source_arch": str(args.source_arch),
         "target_arch": target_arch,
+        "shape_bindings": shape_bindings,
+        "compiler_stack": compiler_stack,
+        "evidence_source": dict(org.get("evidence_source") or {}),
         "guided_candidate_file": str(candidates_txt_path),
         "source_candidate": source_candidate,
         "target_candidate": target_candidate,
@@ -308,6 +403,9 @@ def main() -> int:
             "guided_failure": _first_failure_detail(guided_res),
             "source_replay_failure": _first_failure_detail(source_res),
             "target_oracle_failure": _first_failure_detail(target_res),
+            "guided_outcome": guided_outcome,
+            "source_replay_outcome": source_outcome,
+            "target_oracle_outcome": target_outcome,
         },
     }
     gp = payload["comparisons"]["guided_best_ratio"]
@@ -323,11 +421,17 @@ def main() -> int:
         f"backend_target: {args.backend_target}",
         f"source_arch: {args.source_arch}",
         f"target_arch: {target_arch}",
+        f"compiler_stack: {compiler_stack}",
+        f"shape_bindings: {json.dumps(shape_bindings, ensure_ascii=False, sort_keys=True)}",
+        f"evidence_primary: {str((payload.get('evidence_source') or {}).get('primary') or '')}",
         f"guided_best_ratio: {payload['comparisons']['guided_best_ratio']}",
         f"source_replay_best_ratio: {payload['comparisons']['source_replay_best_ratio']}",
         f"target_oracle_best_ratio: {payload['comparisons']['target_oracle_best_ratio']}",
         f"guided_vs_source_replay: {payload['comparisons']['guided_vs_source_replay']}",
         f"guided_vs_target_oracle: {payload['comparisons']['guided_vs_target_oracle']}",
+        f"guided_outcome: {payload['comparisons']['guided_outcome']['status']}",
+        f"source_replay_outcome: {payload['comparisons']['source_replay_outcome']['status']}",
+        f"target_oracle_outcome: {payload['comparisons']['target_oracle_outcome']['status']}",
     ]
     fail = payload["comparisons"].get("source_replay_failure") or {}
     if fail:

@@ -19,6 +19,9 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                 "backend_target": "cuda_5090d",
                 "source_arch": "sm90",
                 "target_arch": "sm120",
+                "compiler_stack": "python",
+                "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+                "evidence_source": {"primary": "ttgir"},
                 "source_candidate": "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6",
                 "target_candidate": "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6",
                 "comparisons": {
@@ -28,8 +31,14 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                     "guided_vs_source_replay": 1.14,
                     "guided_vs_target_oracle": 0.88,
                     "guided_first_candidate": {"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64}},
+                    "source_replay_first_candidate": {"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64}},
+                    "target_oracle_first_candidate": {"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64}},
+                    "guided_failure": {"reason_code": "", "reason_detail": "", "ok": True},
                     "source_replay_failure": {"reason_code": "", "reason_detail": "", "ok": True},
                     "target_oracle_failure": {"reason_code": "", "reason_detail": "", "ok": True},
+                    "guided_outcome": {"status": "ok", "returncode": 0},
+                    "source_replay_outcome": {"status": "failed", "returncode": 1},
+                    "target_oracle_outcome": {"status": "candidate_unavailable", "returncode": None},
                 },
             },
             indent=2,
@@ -54,3 +63,8 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
     row = json.loads(jsonl_path.read_text(encoding="utf-8").splitlines()[0])
     assert row["kernel"] == "flash_attention2d"
     assert row["guided_best_ratio"] == 0.8
+    assert row["compiler_stack"] == "python"
+    assert row["evidence_primary"] == "ttgir"
+    assert row["guided_outcome"] == "ok"
+    assert row["source_outcome"] == "failed"
+    assert row["target_outcome"] == "candidate_unavailable"

@@ -17,14 +17,21 @@ def _flatten_comparison(path: Path) -> dict[str, Any]:
     guided_first = dict(comp.get("guided_first_candidate") or {})
     source_first = dict(comp.get("source_replay_first_candidate") or {})
     target_first = dict(comp.get("target_oracle_first_candidate") or {})
+    guided_fail = dict(comp.get("guided_failure") or {})
     source_fail = dict(comp.get("source_replay_failure") or {})
     target_fail = dict(comp.get("target_oracle_failure") or {})
+    guided_outcome = dict(comp.get("guided_outcome") or {})
+    source_outcome = dict(comp.get("source_replay_outcome") or {})
+    target_outcome = dict(comp.get("target_oracle_outcome") or {})
     return {
         "comparison_path": str(path),
         "kernel": str(obj.get("kernel") or ""),
         "backend_target": str(obj.get("backend_target") or ""),
         "source_arch": str(obj.get("source_arch") or ""),
         "target_arch": str(obj.get("target_arch") or ""),
+        "compiler_stack": str(obj.get("compiler_stack") or ""),
+        "shape_bindings": json.dumps(obj.get("shape_bindings") or {}, ensure_ascii=False, sort_keys=True),
+        "evidence_primary": str(dict(obj.get("evidence_source") or {}).get("primary") or ""),
         "guided_best_ratio": comp.get("guided_best_ratio"),
         "source_replay_best_ratio": comp.get("source_replay_best_ratio"),
         "target_oracle_best_ratio": comp.get("target_oracle_best_ratio"),
@@ -32,8 +39,20 @@ def _flatten_comparison(path: Path) -> dict[str, Any]:
         "guided_vs_target_oracle": comp.get("guided_vs_target_oracle"),
         "guided_kernel_kind": str(guided_first.get("kernel_kind") or ""),
         "guided_bindings": json.dumps(guided_first.get("bindings") or {}, ensure_ascii=False, sort_keys=True),
+        "guided_outcome": str(guided_outcome.get("status") or ""),
+        "guided_returncode": guided_outcome.get("returncode"),
+        "guided_failure_code": str(guided_fail.get("reason_code") or ""),
+        "guided_failure_detail": str(guided_fail.get("reason_detail") or ""),
         "source_candidate": str(obj.get("source_candidate") or ""),
+        "source_kernel_kind": str(source_first.get("kernel_kind") or ""),
+        "source_bindings": json.dumps(source_first.get("bindings") or {}, ensure_ascii=False, sort_keys=True),
         "target_candidate": str(obj.get("target_candidate") or ""),
+        "target_kernel_kind": str(target_first.get("kernel_kind") or ""),
+        "target_bindings": json.dumps(target_first.get("bindings") or {}, ensure_ascii=False, sort_keys=True),
+        "source_outcome": str(source_outcome.get("status") or ""),
+        "source_returncode": source_outcome.get("returncode"),
+        "target_outcome": str(target_outcome.get("status") or ""),
+        "target_returncode": target_outcome.get("returncode"),
         "source_failure_code": str(source_fail.get("reason_code") or ""),
         "source_failure_detail": str(source_fail.get("reason_detail") or ""),
         "target_failure_code": str(target_fail.get("reason_code") or ""),
@@ -67,6 +86,9 @@ def main() -> int:
         "backend_target",
         "source_arch",
         "target_arch",
+        "compiler_stack",
+        "shape_bindings",
+        "evidence_primary",
         "guided_best_ratio",
         "source_replay_best_ratio",
         "target_oracle_best_ratio",
@@ -74,8 +96,20 @@ def main() -> int:
         "guided_vs_target_oracle",
         "guided_kernel_kind",
         "guided_bindings",
+        "guided_outcome",
+        "guided_returncode",
+        "guided_failure_code",
+        "guided_failure_detail",
         "source_candidate",
+        "source_kernel_kind",
+        "source_bindings",
         "target_candidate",
+        "target_kernel_kind",
+        "target_bindings",
+        "source_outcome",
+        "source_returncode",
+        "target_outcome",
+        "target_returncode",
         "source_failure_code",
         "source_failure_detail",
         "target_failure_code",
