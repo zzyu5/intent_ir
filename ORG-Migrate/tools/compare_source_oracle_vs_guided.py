@@ -228,19 +228,71 @@ def _candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
                 "ratio": row.get("ratio"),
                 "coverage_rc": row.get("coverage_rc"),
                 "perf_rc": row.get("perf_rc"),
+                "perf_dir": str(row.get("perf_dir") or ""),
+                "qps_native": row.get("qps_native"),
+                "qps_intentir": row.get("qps_intentir"),
+                "latency_native_ms": row.get("latency_native_ms"),
+                "latency_intentir_ms": row.get("latency_intentir_ms"),
             }
         )
     return out
 
 
+def _candidate_with_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    row = dict(item or {})
+    if row.get("qps_native") is not None and row.get("qps_intentir") is not None:
+        return row
+    perf_dir = Path(str(row.get("perf_dir") or ""))
+    graph_path = perf_dir / "gpu_perf_graph.json"
+    if not graph_path.is_file():
+        return row
+    try:
+        obj = _load_json(graph_path)
+        first = dict((list(obj.get("entries") or [{}]) or [{}])[0] or {})
+    except Exception:
+        return row
+    for key in ("qps_native", "qps_intentir", "latency_native_ms", "latency_intentir_ms"):
+        if row.get(key) is None and first.get(key) is not None:
+            row[key] = first.get(key)
+    return row
+
+
+def _best_candidate(result: dict[str, Any], *, metric: str) -> dict[str, Any]:
+    best: dict[str, Any] = {}
+    best_value = float("-inf")
+    for item in _candidate_summaries(result):
+        row = _candidate_with_metrics(item)
+        value = row.get(metric)
+        if value is None:
+            continue
+        try:
+            fv = float(value)
+        except Exception:
+            continue
+        if not best or fv > best_value:
+            best = dict(row)
+            best_value = fv
+    return best
+
+
+def _find_candidate_summary(result: dict[str, Any], candidate: str) -> dict[str, Any]:
+    kind, bindings = _parse_candidate_line(candidate)
+    if not kind:
+        return {}
+    for item in _candidate_summaries(result):
+        row = _candidate_with_metrics(item)
+        if str(row.get("kernel_kind") or "") != kind:
+            continue
+        if {str(k): int(v) for k, v in dict(row.get("bindings") or {}).items()} != dict(bindings):
+            continue
+        return row
+    return {}
+
+
 def _best_ratio(result: dict[str, Any]) -> float | None:
-    summary = result.get("summary")
-    if not isinstance(summary, dict):
-        summary = {}
-    candidates = list(summary.get("candidates") or [])
-    ratios = [float(c.get("ratio")) for c in candidates if c.get("ratio") is not None]
-    if ratios:
-        return max(ratios)
+    best = _best_candidate(result, metric="ratio")
+    if best:
+        return float(best.get("ratio"))
     out_root_local = Path(str(result.get("out_root") or ""))
     run_summaries = list(out_root_local.rglob("run_summary.json")) if out_root_local.is_dir() else []
     fallback = []
@@ -254,6 +306,16 @@ def _best_ratio(result: dict[str, Any]) -> float | None:
             if val is not None:
                 fallback.append(float(val))
     return (max(fallback) if fallback else None)
+
+
+def _best_qps_intentir(result: dict[str, Any]) -> float | None:
+    best = _best_candidate(result, metric="qps_intentir")
+    return (float(best.get("qps_intentir")) if best else None)
+
+
+def _best_qps_native(result: dict[str, Any]) -> float | None:
+    best = _best_candidate(result, metric="qps_native")
+    return (float(best.get("qps_native")) if best else None)
 
 
 def _graph_entries(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -293,6 +355,8 @@ def _missing_candidate_outcome(kind: str) -> dict[str, Any]:
     return {
         "status": "candidate_unavailable",
         "best_ratio": None,
+        "best_qps_intentir": None,
+        "best_qps_native": None,
         "first_candidate": {},
         "candidate_count": 0,
         "returncode": None,
@@ -443,10 +507,16 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
     candidates = list(summary.get("candidates") or []) if isinstance(summary, dict) else []
     returncode = result.get("returncode")
     if ratio is not None:
+        best_ratio_row = _best_candidate(result, metric="ratio")
         return {
             "status": "ok",
             "best_ratio": float(ratio),
             "first_candidate": first,
+            "best_candidate": dict(best_ratio_row),
+            "best_qps_intentir": best_ratio_row.get("qps_intentir"),
+            "best_qps_native": best_ratio_row.get("qps_native"),
+            "best_latency_intentir_ms": best_ratio_row.get("latency_intentir_ms"),
+            "best_latency_native_ms": best_ratio_row.get("latency_native_ms"),
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": failure,
@@ -456,6 +526,11 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
             "status": "failed",
             "best_ratio": None,
             "first_candidate": first,
+            "best_candidate": {},
+            "best_qps_intentir": None,
+            "best_qps_native": None,
+            "best_latency_intentir_ms": None,
+            "best_latency_native_ms": None,
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": failure,
@@ -465,6 +540,11 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
             "status": "process_error",
             "best_ratio": None,
             "first_candidate": first,
+            "best_candidate": {},
+            "best_qps_intentir": None,
+            "best_qps_native": None,
+            "best_latency_intentir_ms": None,
+            "best_latency_native_ms": None,
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": {
@@ -480,6 +560,11 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
         "status": "missing",
         "best_ratio": None,
         "first_candidate": first,
+        "best_candidate": {},
+        "best_qps_intentir": None,
+        "best_qps_native": None,
+        "best_latency_intentir_ms": None,
+        "best_latency_native_ms": None,
         "candidate_count": len(candidates),
         "returncode": returncode,
         "failure": {},
@@ -575,6 +660,7 @@ def _portable_outcome(
     label: str,
     analysis: dict[str, Any],
     raw_outcome: dict[str, Any],
+    guided_res: dict[str, Any],
 ) -> dict[str, Any]:
     status = str(analysis.get("status") or "")
     candidate = str(analysis.get("candidate") or "")
@@ -583,6 +669,10 @@ def _portable_outcome(
         return {
             "status": "raw_replayable",
             "best_ratio": raw_outcome.get("best_ratio"),
+            "best_qps_intentir": raw_outcome.get("best_qps_intentir"),
+            "best_qps_native": raw_outcome.get("best_qps_native"),
+            "best_latency_intentir_ms": raw_outcome.get("best_latency_intentir_ms"),
+            "best_latency_native_ms": raw_outcome.get("best_latency_native_ms"),
             "candidate": candidate,
             "candidate_origin": candidate_origin,
             "reason": "raw_replayable",
@@ -593,9 +683,14 @@ def _portable_outcome(
     repair_candidate = str(repair.get("repair_candidate") or "")
     repair_ratio = repair.get("repair_ratio")
     if repair_candidate and repair_ratio is not None:
+        repair_row = _find_candidate_summary(guided_res, repair_candidate)
         return {
             "status": "portable_repair_ok",
             "best_ratio": float(repair_ratio),
+            "best_qps_intentir": repair_row.get("qps_intentir"),
+            "best_qps_native": repair_row.get("qps_native"),
+            "best_latency_intentir_ms": repair_row.get("latency_intentir_ms"),
+            "best_latency_native_ms": repair_row.get("latency_native_ms"),
             "candidate": repair_candidate,
             "candidate_origin": "guided_repair",
             "reason": str(repair.get("reason") or "repair"),
@@ -606,6 +701,10 @@ def _portable_outcome(
     return {
         "status": ("candidate_unavailable" if status == "candidate_unavailable" else "portable_missing"),
         "best_ratio": None,
+        "best_qps_intentir": None,
+        "best_qps_native": None,
+        "best_latency_intentir_ms": None,
+        "best_latency_native_ms": None,
         "candidate": repair_candidate,
         "candidate_origin": ("guided_repair" if repair_candidate else candidate_origin),
         "reason": (str(repair.get("reason") or "") or str((raw_outcome.get("failure") or {}).get("reason_code") or "") or "portable_missing"),
@@ -758,8 +857,8 @@ def main() -> int:
         guided_res=guided_res,
         hardware_cluster=hardware_cluster,
     )
-    source_portable = _portable_outcome(label="source_replay", analysis=source_analysis, raw_outcome=source_outcome)
-    target_portable = _portable_outcome(label="target_oracle", analysis=target_analysis, raw_outcome=target_outcome)
+    source_portable = _portable_outcome(label="source_replay", analysis=source_analysis, raw_outcome=source_outcome, guided_res=guided_res)
+    target_portable = _portable_outcome(label="target_oracle", analysis=target_analysis, raw_outcome=target_outcome, guided_res=guided_res)
 
     payload = {
         "kernel": kernel,
@@ -784,10 +883,20 @@ def main() -> int:
         "target_oracle": target_res,
         "comparisons": {
             "guided_best_ratio": _best_ratio(guided_res),
+            "guided_best_qps_intentir": _make_outcome(guided_res).get("best_qps_intentir"),
+            "guided_best_qps_native": _make_outcome(guided_res).get("best_qps_native"),
             "source_replay_raw_ratio": _best_ratio(source_res),
+            "source_replay_raw_qps_intentir": _make_outcome(source_res).get("best_qps_intentir"),
+            "source_replay_raw_qps_native": _make_outcome(source_res).get("best_qps_native"),
             "source_replay_portable_ratio": source_portable.get("best_ratio"),
+            "source_replay_portable_qps_intentir": source_portable.get("best_qps_intentir"),
+            "source_replay_portable_qps_native": source_portable.get("best_qps_native"),
             "target_oracle_raw_ratio": _best_ratio(target_res),
+            "target_oracle_raw_qps_intentir": _make_outcome(target_res).get("best_qps_intentir"),
+            "target_oracle_raw_qps_native": _make_outcome(target_res).get("best_qps_native"),
             "target_oracle_portable_ratio": target_portable.get("best_ratio"),
+            "target_oracle_portable_qps_intentir": target_portable.get("best_qps_intentir"),
+            "target_oracle_portable_qps_native": target_portable.get("best_qps_native"),
             "source_replay_best_ratio": _best_ratio(source_res),
             "target_oracle_best_ratio": _best_ratio(target_res),
             "guided_first_candidate": _first_candidate_summary(guided_res),
@@ -833,10 +942,20 @@ def main() -> int:
         f"evidence_primary: {str((payload.get('evidence_source') or {}).get('primary') or '')}",
         f"hardware_cluster: {str(hardware_model.get('arch_cluster') or '')}",
         f"guided_best_ratio: {payload['comparisons']['guided_best_ratio']}",
+        f"guided_best_qps_intentir: {payload['comparisons']['guided_best_qps_intentir']}",
+        f"guided_best_qps_native: {payload['comparisons']['guided_best_qps_native']}",
         f"source_replay_raw_ratio: {payload['comparisons']['source_replay_raw_ratio']}",
+        f"source_replay_raw_qps_intentir: {payload['comparisons']['source_replay_raw_qps_intentir']}",
+        f"source_replay_raw_qps_native: {payload['comparisons']['source_replay_raw_qps_native']}",
         f"source_replay_portable_ratio: {payload['comparisons']['source_replay_portable_ratio']}",
+        f"source_replay_portable_qps_intentir: {payload['comparisons']['source_replay_portable_qps_intentir']}",
+        f"source_replay_portable_qps_native: {payload['comparisons']['source_replay_portable_qps_native']}",
         f"target_oracle_raw_ratio: {payload['comparisons']['target_oracle_raw_ratio']}",
+        f"target_oracle_raw_qps_intentir: {payload['comparisons']['target_oracle_raw_qps_intentir']}",
+        f"target_oracle_raw_qps_native: {payload['comparisons']['target_oracle_raw_qps_native']}",
         f"target_oracle_portable_ratio: {payload['comparisons']['target_oracle_portable_ratio']}",
+        f"target_oracle_portable_qps_intentir: {payload['comparisons']['target_oracle_portable_qps_intentir']}",
+        f"target_oracle_portable_qps_native: {payload['comparisons']['target_oracle_portable_qps_native']}",
         f"guided_vs_source_replay_raw: {payload['comparisons']['guided_vs_source_replay_raw']}",
         f"guided_vs_source_replay_portable: {payload['comparisons']['guided_vs_source_replay_portable']}",
         f"guided_vs_target_oracle_raw: {payload['comparisons']['guided_vs_target_oracle_raw']}",

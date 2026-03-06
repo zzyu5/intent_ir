@@ -81,6 +81,8 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
                             "kernel_kind": "attn2d_causal_softmax_v6",
                             "bindings": {"ATTN_BLOCK_KV": 64},
                             "ratio": 0.81,
+                            "qps_native": 200.0,
+                            "qps_intentir": 162.0,
                             "coverage_rc": 0,
                             "perf_rc": 0,
                         },
@@ -148,8 +150,11 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["comparisons"]["source_replay_analysis"]["status"] == "failed"
     assert payload["comparisons"]["source_replay_raw_ratio"] is None
     assert payload["comparisons"]["source_replay_portable_ratio"] is None
+    assert payload["comparisons"]["guided_best_qps_intentir"] == 162.0
+    assert payload["comparisons"]["guided_best_qps_native"] == 200.0
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")
     assert "hardware_cluster: cuda_tc_mid_smem" in txt
+    assert "guided_best_qps_intentir: 162.0" in txt
     assert "guided_outcome: ok" in txt
     assert "source_replay_outcome: failed" in txt
     assert "target_oracle_outcome: candidate_unavailable" in txt
