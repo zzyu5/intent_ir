@@ -62,6 +62,16 @@ def _load_text_artifact(text_value: object, path_value: object, meta_path: objec
     return "", ""
 
 
+def _resolve_existing_path(*values: object) -> str:
+    for raw in values:
+        if raw is None:
+            continue
+        p = Path(str(raw))
+        if p.is_file():
+            return str(p)
+    return ""
+
+
 def _build_intent_summary(intent: IntentFunction) -> dict[str, object]:
     return {
         "name": str(intent.name or ""),
@@ -178,6 +188,14 @@ def run_org_sidecar(
             (getattr(getattr(desc, "artifacts", None), "extra", {}) or {}).get("ptx_path"),
             (getattr(desc, "meta", {}) or {}).get("ptx_original_path"),
         )
+        llvm_ir_path = _resolve_existing_path(
+            (getattr(getattr(desc, "artifacts", None), "extra", {}) or {}).get("llvm_ir_path"),
+            (getattr(desc, "meta", {}) or {}).get("llvm_ir_original_path"),
+        )
+        cubin_path = _resolve_existing_path(
+            (getattr(getattr(desc, "artifacts", None), "extra", {}) or {}).get("cubin_path"),
+            (getattr(desc, "meta", {}) or {}).get("cubin_original_path"),
+        )
         if ttgir_text.strip():
             ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=str(spec_name), artifact_path=(ttgir_path or None))
             extra_evidence["ttgir_facts"] = dict(ttgir_facts)
@@ -189,6 +207,9 @@ def run_org_sidecar(
             "ttgir_available": bool(ttgir_facts is not None),
             "ttgir_path": (ttgir_path or None),
             "ptx_available": bool((ptx_facts or {}).get("artifacts", {}).get("ptx_available")),
+            "ptx_path": (ptx_path or None),
+            "llvm_ir_path": (llvm_ir_path or None),
+            "cubin_path": (cubin_path or None),
             "ttir_available": bool((ttir_summary or {}).get("available")),
         }
 
@@ -289,6 +310,8 @@ def run_org_sidecar(
 
     build_hardware_model = load_org_attr("org.mapping.hardware_model", "build_hardware_model")
     hardware_model = build_hardware_model(target=str(backend_target or ""), arch=str(target_arch))
+    org_report["hardware_model"] = hardware_model.to_json_dict()
+    org_report["source_oracle_available"] = bool(source_oracle_facts.get("available"))
 
     try:
         budget = int(_org_budget())

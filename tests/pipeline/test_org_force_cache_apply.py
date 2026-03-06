@@ -24,10 +24,12 @@ def _dummy_intent(name: str) -> IntentFunction:
     )
 
 
-def _dummy_desc(*, kernel: str, ttgir_path: Path | None = None) -> KernelDescriptor:
+def _dummy_desc(*, kernel: str, ttgir_path: Path | None = None, ptx_path: Path | None = None) -> KernelDescriptor:
     desc = KernelDescriptor(schema_version="kernel_desc_v1.0", name=str(kernel), frontend="triton")
     desc.source_text = "def kernel(): pass"
     desc.artifacts = KernelArtifactBundle(ttgir_path=(str(ttgir_path) if ttgir_path is not None else None))
+    if ptx_path is not None:
+        desc.artifacts.extra["ptx_path"] = str(ptx_path)
     return desc
 
 
@@ -152,22 +154,28 @@ def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pyt
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
     _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
     ttgir = tmp_path / "flash.ttgir"
+    ptx = tmp_path / "flash.ptx"
     ttgir.write_text(
         '#blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [2, 16], warpsPerCTA = [4, 1], order = [1, 0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @flash_attention2d_kernel(%Q_ptr: !tt.ptr<f32>) {\n    %pid_q = tt.get_program_id x : i32\n    %k_33 = tt.load %k_32, %k_25, %cst_2 : tensor<32x64x!tt.ptr<f32>, #blocked>\n    %m_ij = "tt.reduce"(%scores_46) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %max = arith.maxnumf %lhs, %rhs : f32\n      tt.reduce.return %max : f32\n    }) : (tensor<32xf32, #ttg.slice<{dim = 1, parent = #blocked}>>) -> f32\n    tt.return\n  }\n}\n',
         encoding="utf-8",
     )
+    ptx.write_text("cp.async.cg.shared.global;\nshfl.sync.bfly;\nbar.sync 0;\n", encoding="utf-8")
     report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
     _run_org_plugin(
         spec_name="flash_attention2d",
         out_dir=tmp_path,
-        desc=_dummy_desc(kernel="flash_attention2d", ttgir_path=ttgir),
+        desc=_dummy_desc(kernel="flash_attention2d", ttgir_path=ttgir, ptx_path=ptx),
         intent=_dummy_intent("flash_attention2d"),
         report=report,
         shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
         triton_provider="native",
         backend_target="cuda_5090d",
     )
-    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    evidence_source = (report["org"] or {}).get("evidence_source", {})
+    assert evidence_source.get("primary") == "ttgir"
+    assert evidence_source.get("ptx_available") is True
+    assert str(evidence_source.get("ptx_path") or "").endswith("flash.ptx")
+    assert isinstance((report["org"] or {}).get("hardware_model"), dict)
     assert (tmp_path / "flash_attention2d.org_plan.json").is_file()
 
 
