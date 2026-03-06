@@ -50,6 +50,7 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
             "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
             "compiler_stack": "python",
             "evidence_source": {"primary": "ttgir", "ptx_available": True},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
         },
         "org_doc": {
             "source_context": {
@@ -131,6 +132,7 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["shape_bindings"] == {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64}
     assert payload["compiler_stack"] == "python"
     assert payload["evidence_source"]["primary"] == "ttgir"
+    assert payload["hardware_model"]["arch_cluster"] == "cuda_tc_mid_smem"
     assert payload["comparisons"]["guided_outcome"]["status"] == "ok"
     assert payload["comparisons"]["source_replay_outcome"]["status"] == "failed"
     assert payload["comparisons"]["source_replay_outcome"]["failure"]["reason_code"] == "intentir_unavailable"
@@ -138,7 +140,10 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["comparisons"]["target_oracle_outcome"]["failure"]["reason_code"] == "candidate_unavailable"
     assert payload["source_candidate_origin"] == "plan.source_oracle"
     assert payload["comparisons"]["source_replay_analysis"]["status"] == "failed"
+    assert payload["comparisons"]["source_replay_raw_ratio"] is None
+    assert payload["comparisons"]["source_replay_portable_ratio"] is None
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")
+    assert "hardware_cluster: cuda_tc_mid_smem" in txt
     assert "guided_outcome: ok" in txt
     assert "source_replay_outcome: failed" in txt
     assert "target_oracle_outcome: candidate_unavailable" in txt
@@ -159,6 +164,7 @@ def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monk
             "shape_bindings": {"M": 32, "N": 32, "K": 32},
             "compiler_stack": "python",
             "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
         }
     }
     report_path.write_text(json.dumps(report), encoding="utf-8")
@@ -235,9 +241,16 @@ def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monk
     assert source_analysis["repair"]["reason"] == "async_binding_removed"
     assert target_analysis["status"] == "requires_substitution"
     assert payload["target_candidate_origin"] == "tuning_db:sm120"
+    assert payload["comparisons"]["source_replay_raw_ratio"] is None
+    assert payload["comparisons"]["source_replay_portable_ratio"] == 1.01
+    assert payload["comparisons"]["target_oracle_portable_ratio"] == 1.01
+    assert payload["comparisons"]["guided_vs_portable_target_oracle"] == 1.0
+    assert payload["comparisons"]["source_replay_portable_outcome"]["status"] == "portable_repair_ok"
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")
     assert "source_replay_repair:" in txt
     assert "target_oracle_repair:" in txt
+    assert "source_replay_portable:" in txt
+    assert "target_oracle_portable:" in txt
 
 
 def test_make_outcome_reports_process_error_without_graph(tmp_path) -> None:

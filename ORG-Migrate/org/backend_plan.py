@@ -11,6 +11,10 @@ class BackendCandidate:
     kernel_kind: str
     bindings: dict[str, int] = field(default_factory=dict)
     note: str = ""
+    score: float | None = None
+    score_reason: str = ""
+    cluster: str = ""
+    portability_note: str = ""
 
     def to_json_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -19,6 +23,14 @@ class BackendCandidate:
         }
         if str(self.note or "").strip():
             out["note"] = str(self.note)
+        if self.score is not None:
+            out["score"] = float(self.score)
+        if str(self.score_reason or "").strip():
+            out["score_reason"] = str(self.score_reason)
+        if str(self.cluster or "").strip():
+            out["cluster"] = str(self.cluster)
+        if str(self.portability_note or "").strip():
+            out["portability_note"] = str(self.portability_note)
         return out
 
     @classmethod
@@ -38,7 +50,22 @@ class BackendCandidate:
                     bindings[key] = int(v)
                 except Exception:
                     continue
-        return cls(kernel_kind=kind, bindings=bindings, note=str(obj.get("note") or "").strip())
+        score_raw = obj.get("score")
+        score: float | None = None
+        if score_raw is not None:
+            try:
+                score = float(score_raw)
+            except Exception:
+                score = None
+        return cls(
+            kernel_kind=kind,
+            bindings=bindings,
+            note=str(obj.get("note") or "").strip(),
+            score=score,
+            score_reason=str(obj.get("score_reason") or "").strip(),
+            cluster=str(obj.get("cluster") or "").strip(),
+            portability_note=str(obj.get("portability_note") or "").strip(),
+        )
 
 
 @dataclass(frozen=True)

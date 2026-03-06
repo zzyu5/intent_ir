@@ -174,6 +174,17 @@ def _first_candidate_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _candidate_summary_from_line(candidate: str, *, ratio: float | None = None) -> dict[str, Any]:
+    kernel_kind, bindings = _parse_candidate_line(candidate)
+    return {
+        "kernel_kind": str(kernel_kind),
+        "bindings": {str(k): int(v) for k, v in dict(bindings or {}).items() if str(k).strip()},
+        "ratio": (None if ratio is None else float(ratio)),
+        "coverage_rc": None,
+        "perf_rc": None,
+    }
+
+
 def _candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
     summary = result.get("summary")
     if not isinstance(summary, dict):
@@ -412,6 +423,57 @@ def _analyze_replay_candidate(
     }
 
 
+def _portable_outcome(
+    *,
+    label: str,
+    analysis: dict[str, Any],
+    raw_outcome: dict[str, Any],
+) -> dict[str, Any]:
+    status = str(analysis.get("status") or "")
+    candidate = str(analysis.get("candidate") or "")
+    candidate_origin = str(analysis.get("candidate_origin") or "")
+    if status == "replayable":
+        return {
+            "status": "raw_replayable",
+            "best_ratio": raw_outcome.get("best_ratio"),
+            "candidate": candidate,
+            "candidate_origin": candidate_origin,
+            "reason": "raw_replayable",
+            "first_candidate": dict(raw_outcome.get("first_candidate") or {}),
+            "repair": {},
+        }
+    repair = dict(analysis.get("repair") or {})
+    repair_candidate = str(repair.get("repair_candidate") or "")
+    repair_ratio = repair.get("repair_ratio")
+    if repair_candidate and repair_ratio is not None:
+        return {
+            "status": "portable_repair_ok",
+            "best_ratio": float(repair_ratio),
+            "candidate": repair_candidate,
+            "candidate_origin": "guided_repair",
+            "reason": str(repair.get("reason") or "repair"),
+            "first_candidate": _candidate_summary_from_line(repair_candidate, ratio=float(repair_ratio)),
+            "repair": repair,
+        }
+    missing = _missing_candidate_outcome(label)
+    return {
+        "status": ("candidate_unavailable" if status == "candidate_unavailable" else "portable_missing"),
+        "best_ratio": None,
+        "candidate": repair_candidate,
+        "candidate_origin": ("guided_repair" if repair_candidate else candidate_origin),
+        "reason": (str(repair.get("reason") or "") or str((raw_outcome.get("failure") or {}).get("reason_code") or "") or "portable_missing"),
+        "first_candidate": {},
+        "repair": repair,
+        "failure": (dict(raw_outcome.get("failure") or {}) if raw_outcome else dict(missing.get("failure") or {})),
+    }
+
+
+def _safe_ratio(num: float | None, den: float | None) -> float | None:
+    if num is None or den is None or float(den) == 0.0:
+        return None
+    return float(num) / float(den)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare source-oracle replay vs ORG-guided candidates on target GPU.")
     parser.add_argument("--report", required=True, help="Path to <kernel>.json report emitted by full_pipeline_verify.")
@@ -430,6 +492,7 @@ def main() -> int:
     report = _load_json(report_path)
     kernel = str(report_path.stem)
     org = dict(report.get("org") or {})
+    hardware_model = dict(org.get("hardware_model") or {})
     plan_path = Path(str(org.get("plan_path") or report_path.with_name(f"{kernel}.org_plan.json"))).resolve()
     candidates_txt_path = Path(str(org.get("candidates_txt_path") or report_path.with_name(f"{kernel}.org_candidates.txt"))).resolve()
     if not plan_path.is_file():
@@ -532,6 +595,8 @@ def main() -> int:
         replay_result=target_res,
         guided_res=guided_res,
     )
+    source_portable = _portable_outcome(label="source_replay", analysis=source_analysis, raw_outcome=source_outcome)
+    target_portable = _portable_outcome(label="target_oracle", analysis=target_analysis, raw_outcome=target_outcome)
 
     payload = {
         "kernel": kernel,
@@ -541,6 +606,7 @@ def main() -> int:
         "shape_bindings": shape_bindings,
         "compiler_stack": compiler_stack,
         "evidence_source": dict(org.get("evidence_source") or {}),
+        "hardware_model": hardware_model,
         "guided_candidate_file": str(candidates_txt_path),
         "source_candidate": source_candidate,
         "source_candidate_origin": source_candidate_origin,
@@ -551,6 +617,10 @@ def main() -> int:
         "target_oracle": target_res,
         "comparisons": {
             "guided_best_ratio": _best_ratio(guided_res),
+            "source_replay_raw_ratio": _best_ratio(source_res),
+            "source_replay_portable_ratio": source_portable.get("best_ratio"),
+            "target_oracle_raw_ratio": _best_ratio(target_res),
+            "target_oracle_portable_ratio": target_portable.get("best_ratio"),
             "source_replay_best_ratio": _best_ratio(source_res),
             "target_oracle_best_ratio": _best_ratio(target_res),
             "guided_first_candidate": _first_candidate_summary(guided_res),
@@ -564,13 +634,21 @@ def main() -> int:
             "target_oracle_outcome": target_outcome,
             "source_replay_analysis": source_analysis,
             "target_oracle_analysis": target_analysis,
+            "source_replay_portable_outcome": source_portable,
+            "target_oracle_portable_outcome": target_portable,
         },
     }
     gp = payload["comparisons"]["guided_best_ratio"]
-    sp = payload["comparisons"]["source_replay_best_ratio"]
-    tp = payload["comparisons"]["target_oracle_best_ratio"]
-    payload["comparisons"]["guided_vs_source_replay"] = (None if gp is None or sp is None or sp == 0 else gp / sp)
-    payload["comparisons"]["guided_vs_target_oracle"] = (None if gp is None or tp is None or tp == 0 else gp / tp)
+    sp_raw = payload["comparisons"]["source_replay_raw_ratio"]
+    sp_portable = payload["comparisons"]["source_replay_portable_ratio"]
+    tp_raw = payload["comparisons"]["target_oracle_raw_ratio"]
+    tp_portable = payload["comparisons"]["target_oracle_portable_ratio"]
+    payload["comparisons"]["guided_vs_source_replay_raw"] = _safe_ratio(gp, sp_raw)
+    payload["comparisons"]["guided_vs_source_replay_portable"] = _safe_ratio(gp, sp_portable)
+    payload["comparisons"]["guided_vs_target_oracle_raw"] = _safe_ratio(gp, tp_raw)
+    payload["comparisons"]["guided_vs_portable_target_oracle"] = _safe_ratio(gp, tp_portable)
+    payload["comparisons"]["guided_vs_source_replay"] = payload["comparisons"]["guided_vs_source_replay_raw"]
+    payload["comparisons"]["guided_vs_target_oracle"] = payload["comparisons"]["guided_vs_target_oracle_raw"]
 
     out_file = out_root / "comparison.json"
     out_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -582,16 +660,23 @@ def main() -> int:
         f"compiler_stack: {compiler_stack}",
         f"shape_bindings: {json.dumps(shape_bindings, ensure_ascii=False, sort_keys=True)}",
         f"evidence_primary: {str((payload.get('evidence_source') or {}).get('primary') or '')}",
+        f"hardware_cluster: {str(hardware_model.get('arch_cluster') or '')}",
         f"guided_best_ratio: {payload['comparisons']['guided_best_ratio']}",
-        f"source_replay_best_ratio: {payload['comparisons']['source_replay_best_ratio']}",
-        f"target_oracle_best_ratio: {payload['comparisons']['target_oracle_best_ratio']}",
-        f"guided_vs_source_replay: {payload['comparisons']['guided_vs_source_replay']}",
-        f"guided_vs_target_oracle: {payload['comparisons']['guided_vs_target_oracle']}",
+        f"source_replay_raw_ratio: {payload['comparisons']['source_replay_raw_ratio']}",
+        f"source_replay_portable_ratio: {payload['comparisons']['source_replay_portable_ratio']}",
+        f"target_oracle_raw_ratio: {payload['comparisons']['target_oracle_raw_ratio']}",
+        f"target_oracle_portable_ratio: {payload['comparisons']['target_oracle_portable_ratio']}",
+        f"guided_vs_source_replay_raw: {payload['comparisons']['guided_vs_source_replay_raw']}",
+        f"guided_vs_source_replay_portable: {payload['comparisons']['guided_vs_source_replay_portable']}",
+        f"guided_vs_target_oracle_raw: {payload['comparisons']['guided_vs_target_oracle_raw']}",
+        f"guided_vs_portable_target_oracle: {payload['comparisons']['guided_vs_portable_target_oracle']}",
         f"guided_outcome: {payload['comparisons']['guided_outcome']['status']}",
         f"source_replay_outcome: {payload['comparisons']['source_replay_outcome']['status']}",
         f"target_oracle_outcome: {payload['comparisons']['target_oracle_outcome']['status']}",
         f"source_replay_analysis: {payload['comparisons']['source_replay_analysis']['status']}",
         f"target_oracle_analysis: {payload['comparisons']['target_oracle_analysis']['status']}",
+        f"source_replay_portable_outcome: {payload['comparisons']['source_replay_portable_outcome']['status']}",
+        f"target_oracle_portable_outcome: {payload['comparisons']['target_oracle_portable_outcome']['status']}",
     ]
     fail = payload["comparisons"].get("source_replay_failure") or {}
     if fail:
@@ -629,6 +714,18 @@ def main() -> int:
                 ]
             )
         )
+    portable = dict(payload["comparisons"].get("source_replay_portable_outcome") or {})
+    if portable:
+        lines.append(
+            "source_replay_portable: "
+            + ", ".join(
+                [
+                    f"candidate={portable.get('candidate')}",
+                    f"reason={portable.get('reason')}",
+                    f"ratio={portable.get('best_ratio')}",
+                ]
+            )
+        )
     repair = dict((payload["comparisons"].get("target_oracle_analysis") or {}).get("repair") or {})
     if repair:
         lines.append(
@@ -638,6 +735,18 @@ def main() -> int:
                     f"reason={repair.get('reason')}",
                     f"repair_candidate={repair.get('repair_candidate')}",
                     f"repair_ratio={repair.get('repair_ratio')}",
+                ]
+            )
+        )
+    portable = dict(payload["comparisons"].get("target_oracle_portable_outcome") or {})
+    if portable:
+        lines.append(
+            "target_oracle_portable: "
+            + ", ".join(
+                [
+                    f"candidate={portable.get('candidate')}",
+                    f"reason={portable.get('reason')}",
+                    f"ratio={portable.get('best_ratio')}",
                 ]
             )
         )
