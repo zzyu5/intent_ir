@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -207,6 +208,7 @@ def test_force_cache_apply_matmul_fused_epilogue_requires_ttgir(monkeypatch: pyt
 def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.delenv("INTENTIR_ORG_SOURCE_ARCH", raising=False)
     _write_seed(out_dir=tmp_path, kernel="matmul_fused_epilogue2d")
     ttgir = tmp_path / "matmul.ttgir"
     ttgir.write_text(
@@ -228,8 +230,13 @@ def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch:
     assert (report["org"] or {}).get("compiler_stack") == "python"
     assert (report["org"] or {}).get("compiler_cpp_wave") in {"", "wave2"}
     assert ((report["org"] or {}).get("hardware_model") or {}).get("arch_cluster") == "cuda_tc_mid_smem"
+    source_oracle_facts = json.loads(Path(str((report["org"] or {}).get("source_oracle_facts_path"))).read_text(encoding="utf-8"))
+    assert source_oracle_facts["available"] is True
+    assert source_oracle_facts["oracle"]["arch"] == "sm90"
+    assert source_oracle_facts["oracle"]["bindings"]["MMA_ASYNC_COPY"] == 1
     assert Path(str((report["org"] or {}).get("ttgir_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("source_oracle_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("hardware_model_path"))).is_file()
     assert (tmp_path / "matmul_fused_epilogue2d.org_plan.json").is_file()
+    assert (tmp_path / "matmul_fused_epilogue2d.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "matmul_tile_v2"

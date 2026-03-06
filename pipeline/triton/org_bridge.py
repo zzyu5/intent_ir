@@ -86,6 +86,7 @@ def _build_intent_summary(intent: IntentFunction) -> dict[str, object]:
 
 def _resolve_source_oracle_facts(*, spec_name: str, shape_bindings: Mapping[str, int]) -> dict[str, Any]:
     source_arch = _normalize_cuda_arch_key(os.getenv("INTENTIR_ORG_SOURCE_ARCH", ""))
+    target_arch = _detect_cuda_arch() or _normalize_cuda_arch_key(str(os.getenv("INTENTIR_CUDA_SM", "") or ""))
     source_stack_env = str(os.getenv("INTENTIR_ORG_SOURCE_COMPILER_STACK", "") or "").strip().lower()
     source_stack = source_stack_env or _compiler_stack_name()
     source_db_env = str(os.getenv("INTENTIR_ORG_SOURCE_TUNING_DB", "") or "").strip()
@@ -93,6 +94,7 @@ def _resolve_source_oracle_facts(*, spec_name: str, shape_bindings: Mapping[str,
     return extract_source_oracle_facts(
         kernel=str(spec_name),
         source_arch=str(source_arch),
+        target_arch=str(target_arch),
         shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
         compiler_stack=str(source_stack),
         db_path=(str(source_db_env) if source_db_env else None),
