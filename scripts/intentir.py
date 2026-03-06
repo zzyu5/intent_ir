@@ -176,6 +176,105 @@ def _candidate_id(kernel_kind: str, bindings: dict[str, int], *, idx: int) -> st
     return f"{idx:02d}_{slug}_{h}"
 
 
+def _read_json_if_exists(path: Path) -> dict[str, object] | None:
+    p = Path(path)
+    if not p.is_file():
+        return None
+    try:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _resolve_artifact_path(raw: str, *, artifact_root: Path) -> Path | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    p = Path(text)
+    if p.is_absolute():
+        return p
+    repo_rel = (ROOT / p).resolve()
+    if repo_rel.exists():
+        return repo_rel
+    local_rel = (artifact_root / p).resolve()
+    if local_rel.exists():
+        return local_rel
+    return repo_rel
+
+
+def _validate_tune_coverage_artifacts(
+    *,
+    kernel: str,
+    coverage_dir: Path,
+) -> tuple[bool, str, dict[str, int]]:
+    report_path = coverage_dir / f"{kernel}.json"
+    report = _read_json_if_exists(report_path)
+    if report is None:
+        return False, f"missing_or_invalid_report:{report_path}", {}
+
+    baseline = report.get("baseline") if isinstance(report.get("baseline"), dict) else {}
+    shapes = baseline.get("shapes") if isinstance(baseline, dict) else {}
+    default_when: dict[str, int] = {}
+    if isinstance(shapes, dict):
+        for key in ("HEAD_DIM", "M", "N", "K", "Q_CTX", "KV_CTX"):
+            try:
+                if key in shapes:
+                    default_when[key] = int(shapes[key])
+            except Exception:
+                continue
+
+    diff = report.get("diff") if isinstance(report.get("diff"), dict) else {}
+    if not bool(diff.get("ok")):
+        return False, "coverage_diff_not_ok", default_when
+
+    mlir = report.get("mlir") if isinstance(report.get("mlir"), dict) else {}
+    if not bool(mlir.get("llvm_emit_ok")):
+        return False, "llvm_emit_not_ok", default_when
+
+    for err_key in (
+        "downstream_cuda_std_cpp_llvm_contract_error",
+        "downstream_cuda_std_llvm_contract_error",
+        "downstream_llvm_contract_error",
+    ):
+        err = str(mlir.get(err_key) or "").strip()
+        if err:
+            return False, f"{err_key}:{err}", default_when
+
+    contract_path = None
+    for path_key in (
+        "downstream_cuda_std_cpp_llvm_contract_path",
+        "downstream_cuda_std_llvm_contract_path",
+        "downstream_llvm_contract_path",
+        "downstream_contract_path",
+    ):
+        raw = str(mlir.get(path_key) or "").strip()
+        if not raw:
+            continue
+        contract_path = _resolve_artifact_path(raw, artifact_root=coverage_dir)
+        if contract_path is not None:
+            break
+    if contract_path is None or not contract_path.is_file():
+        return False, "missing_downstream_cuda_contract", default_when
+
+    contract = _read_json_if_exists(contract_path)
+    if contract is None:
+        return False, f"invalid_contract_json:{contract_path}", default_when
+    artifacts = contract.get("artifacts") if isinstance(contract.get("artifacts"), dict) else {}
+    executable = contract.get("executable") if isinstance(contract.get("executable"), dict) else {}
+    if str(artifacts.get("cuda_ptx_origin") or "").strip() != "llvm_llc":
+        return False, "cuda_ptx_origin_not_llvm_llc", default_when
+    if bool(artifacts.get("runtime_fallback")):
+        return False, "runtime_fallback_present", default_when
+    if str(executable.get("format") or "").strip() != "cuda_ptx":
+        return False, "missing_cuda_ptx_executable", default_when
+    exec_path = _resolve_artifact_path(str(executable.get("path") or ""), artifact_root=coverage_dir)
+    if exec_path is None or not exec_path.is_file():
+        return False, "missing_kernel_ptx", default_when
+
+    return True, "", default_when
+
+
 def _cmd_tune(args: argparse.Namespace) -> int:
     backend_target = str(args.backend_target).strip()
     if not backend_target.startswith("cuda"):
@@ -214,6 +313,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         "INTENTIR_CUDA_REQUIRE_LLVM_PTX": "1",
         "INTENTIR_EVIDENCE_MODE": str(evidence_mode),
         "INTENTIR_CUDA_REAL_MLIR_WAVE": str(wave),
+        "INTENTIR_MODE": str(args.intentir_mode),
     }
     # Preserve user-provided SM string (e.g. sm_120a) if present; otherwise set a normalized one.
     if not str(os.getenv("INTENTIR_CUDA_SM", "")).strip():
@@ -250,19 +350,23 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         if kernel_source == "triton_native":
             rc_cov = _run(
                 _python_cmd(
-                    "scripts/triton/full_pipeline_verify.py",
+                    "scripts/intentir.py",
+                    "suite",
                     "--suite",
-                    "coverage",
+                    "triton-native-coverage",
                     "--backend-target",
                     str(backend_target),
                     "--kernel",
                     str(kernel),
                     "--cases-limit",
                     str(int(args.cases_limit)),
-                    "--no-stage-c",
-                    "--no-mutation-kill",
-                    "--out-dir",
+                    "--intentir-mode",
+                    str(args.intentir_mode),
+                    "--intentir-miss-policy",
+                    str(args.intentir_miss_policy),
+                    "--out-root",
                     str(cov_dir),
+                    "--stream",
                 ),
                 stream=True,
                 dry_run=bool(args.dry_run),
@@ -283,23 +387,27 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                     str(int(args.cases_limit)),
                     "--out-root",
                     str(cov_dir),
+                    "--intentir-mode",
+                    str(args.intentir_mode),
+                    "--intentir-miss-policy",
+                    str(args.intentir_miss_policy),
                     "--cuda-runtime-backend",
                     str(args.cuda_runtime_backend),
                     "--stream",
                 ),
-            stream=True,
-            dry_run=bool(args.dry_run),
-            env_overrides=env,
-        )
-        if rc_cov == 0 and (not bool(args.dry_run)) and (not default_when):
-            try:
-                report = json.loads((cov_dir / f"{kernel}.json").read_text(encoding="utf-8"))
-                baseline = report.get("baseline") if isinstance(report, dict) else None
-                shapes = (baseline or {}).get("shapes") if isinstance(baseline, dict) else None
-                if isinstance(shapes, dict) and "HEAD_DIM" in shapes:
-                    default_when["HEAD_DIM"] = int(shapes["HEAD_DIM"])
-            except Exception:
-                default_when = {}
+                stream=True,
+                dry_run=bool(args.dry_run),
+                env_overrides=env,
+            )
+        coverage_detail = ""
+        coverage_valid = bool(rc_cov == 0)
+        if coverage_valid and (not bool(args.dry_run)):
+            coverage_valid, coverage_detail, inferred_when = _validate_tune_coverage_artifacts(
+                kernel=str(kernel),
+                coverage_dir=cov_dir,
+            )
+            if inferred_when and (not default_when):
+                default_when = dict(inferred_when)
         if rc_cov != 0:
             results.append(
                 {
@@ -310,6 +418,21 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                     "perf_rc": None,
                     "ratio": None,
                     "error": f"coverage_rc={rc_cov}",
+                    "coverage_dir": str(cov_dir),
+                    "perf_dir": str(perf_dir),
+                }
+            )
+            continue
+        if not coverage_valid:
+            results.append(
+                {
+                    "candidate": cand_id,
+                    "kernel_kind": str(kernel_kind),
+                    "bindings": dict(bindings),
+                    "coverage_rc": int(rc_cov),
+                    "perf_rc": None,
+                    "ratio": None,
+                    "error": f"coverage_artifacts_invalid:{coverage_detail}",
                     "coverage_dir": str(cov_dir),
                     "perf_dir": str(perf_dir),
                 }
@@ -352,6 +475,10 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                 str(int(args.perf_iters)),
                 "--perf-repeats",
                 str(int(args.perf_repeats)),
+                "--intentir-mode",
+                str(args.intentir_mode),
+                "--intentir-miss-policy",
+                str(args.intentir_miss_policy),
                 "--cuda-runtime-backend",
                 str(args.cuda_runtime_backend),
                 "--stream",
@@ -395,6 +522,10 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         "candidates": results,
     }
     (out_root / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if bool(args.dry_run):
+        print(f"[intentir][tune] dry-run summary: {out_root / 'summary.json'}", flush=True)
+        return 0
 
     best = None
     best_ratio = None
@@ -1313,6 +1444,8 @@ def _build_parser() -> argparse.ArgumentParser:
     tune.add_argument("--perf-repeats", type=int, default=3)
     tune.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     tune.add_argument("--evidence-mode", choices=["on", "off"], default="off")
+    tune.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
+    tune.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     tune.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
     tune.set_defaults(func=_cmd_tune)
 
