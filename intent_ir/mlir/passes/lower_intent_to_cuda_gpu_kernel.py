@@ -146,7 +146,7 @@ def _rewrite_legacy_llvm_intr_fma(module_text: str) -> str:
             out_lines.append(line)
             continue
         indent, dst, a, b, c, _sig, out_ty = m.groups()
-        out_lines.append(f"{indent}{dst} = math.fma {a}, {b}, {c} : {out_ty}")
+        out_lines.append(f'{indent}{dst} = "llvm.intr.fma"({a}, {b}, {c}) : ({out_ty}, {out_ty}, {out_ty}) -> {out_ty}')
     out = "\n".join(out_lines)
     if text.endswith("\n"):
         out += "\n"
