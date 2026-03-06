@@ -27,8 +27,8 @@ class BackendCandidate:
         kind = str(obj.get("kernel_kind") or "").strip()
         if not kind:
             raise ValueError("BackendCandidate.kernel_kind must be non-empty")
-        bindings_raw = obj.get("bindings")
         bindings: dict[str, int] = {}
+        bindings_raw = obj.get("bindings")
         if isinstance(bindings_raw, Mapping):
             for k, v in dict(bindings_raw).items():
                 key = str(k).strip()
@@ -38,20 +38,11 @@ class BackendCandidate:
                     bindings[key] = int(v)
                 except Exception:
                     continue
-        note = str(obj.get("note") or "").strip()
-        return cls(kernel_kind=kind, bindings=bindings, note=note)
+        return cls(kernel_kind=kind, bindings=bindings, note=str(obj.get("note") or "").strip())
 
 
 @dataclass(frozen=True)
 class BackendModule:
-    """
-    Minimal, explainable backend building block for ORG -> codegen planning.
-
-    Phase-1 note: modules may correspond to coarse-grained templates, but the
-    interface is "module-like" so we can refine to finer-grained composition
-    later without changing the ORG contract.
-    """
-
     id: str
     kind: str
     provides: list[str] = field(default_factory=list)
@@ -78,23 +69,16 @@ class BackendModule:
         obj = dict(raw or {})
         module_id = str(obj.get("id") or "").strip()
         kind = str(obj.get("kind") or "").strip()
-        if not module_id:
-            raise ValueError("BackendModule.id must be non-empty")
-        if not kind:
-            raise ValueError("BackendModule.kind must be non-empty")
-        provides = [str(x) for x in list(obj.get("provides") or []) if str(x).strip()]
-        requires = [str(x) for x in list(obj.get("requires") or []) if str(x).strip()]
-        params = [str(x) for x in list(obj.get("params") or []) if str(x).strip()]
-        constraints = [str(x) for x in list(obj.get("constraints") or []) if str(x).strip()]
-        attrs = dict(obj.get("attrs") or {}) if isinstance(obj.get("attrs"), Mapping) else {}
+        if not module_id or not kind:
+            raise ValueError("BackendModule requires non-empty id and kind")
         return cls(
             id=module_id,
             kind=kind,
-            provides=provides,
-            requires=requires,
-            params=params,
-            constraints=constraints,
-            attrs=attrs,
+            provides=[str(x) for x in list(obj.get("provides") or []) if str(x).strip()],
+            requires=[str(x) for x in list(obj.get("requires") or []) if str(x).strip()],
+            params=[str(x) for x in list(obj.get("params") or []) if str(x).strip()],
+            constraints=[str(x) for x in list(obj.get("constraints") or []) if str(x).strip()],
+            attrs=(dict(obj.get("attrs") or {}) if isinstance(obj.get("attrs"), Mapping) else {}),
         )
 
 
@@ -106,9 +90,7 @@ class BackendModuleEdge:
     attrs: dict[str, Any] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"src": str(self.src), "dst": str(self.dst)}
-        if str(self.edge_type or "").strip():
-            out["edge_type"] = str(self.edge_type)
+        out: dict[str, Any] = {"src": str(self.src), "dst": str(self.dst), "edge_type": str(self.edge_type or "depends_on")}
         if self.attrs:
             out["attrs"] = dict(self.attrs)
         return out
@@ -118,101 +100,74 @@ class BackendModuleEdge:
         obj = dict(raw or {})
         src = str(obj.get("src") or "").strip()
         dst = str(obj.get("dst") or "").strip()
-        if not src:
-            raise ValueError("BackendModuleEdge.src must be non-empty")
-        if not dst:
-            raise ValueError("BackendModuleEdge.dst must be non-empty")
-        edge_type = str(obj.get("edge_type") or obj.get("type") or "depends_on").strip() or "depends_on"
-        attrs = dict(obj.get("attrs") or {}) if isinstance(obj.get("attrs"), Mapping) else {}
-        return cls(src=src, dst=dst, edge_type=edge_type, attrs=attrs)
+        if not src or not dst:
+            raise ValueError("BackendModuleEdge requires non-empty src and dst")
+        return cls(
+            src=src,
+            dst=dst,
+            edge_type=str(obj.get("edge_type") or obj.get("type") or "depends_on").strip() or "depends_on",
+            attrs=(dict(obj.get("attrs") or {}) if isinstance(obj.get("attrs"), Mapping) else {}),
+        )
 
 
 @dataclass
 class BackendPlan:
     schema_version: str = BACKEND_PLAN_SCHEMA_VERSION_V1
     kernel: str = ""
-    target: str = ""
-    hardware: dict[str, Any] = field(default_factory=dict)
-    modules: list[BackendModule] = field(default_factory=list)
+    source_oracle: dict[str, Any] = field(default_factory=dict)
+    hardware_model: dict[str, Any] = field(default_factory=dict)
+    selected_modules: list[BackendModule] = field(default_factory=list)
     module_edges: list[BackendModuleEdge] = field(default_factory=list)
-    passes: list[str] = field(default_factory=list)
-    selected_variants: list[str] = field(default_factory=list)
     param_space: dict[str, Any] = field(default_factory=dict)
     constraints: list[str] = field(default_factory=list)
-    trace: dict[str, Any] = field(default_factory=dict)
+    substitutions: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[BackendCandidate] = field(default_factory=list)
-    meta: dict[str, Any] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
+        return {
             "schema_version": str(self.schema_version),
             "kernel": str(self.kernel),
-            "target": str(self.target),
-            "hardware": dict(self.hardware or {}),
-            "modules": [m.to_json_dict() for m in list(self.modules or [])],
+            "source_oracle": dict(self.source_oracle or {}),
+            "hardware_model": dict(self.hardware_model or {}),
+            "selected_modules": [m.to_json_dict() for m in list(self.selected_modules or [])],
             "module_edges": [e.to_json_dict() for e in list(self.module_edges or [])],
-            "passes": [str(x) for x in list(self.passes or []) if str(x).strip()],
-            "selected_variants": [str(x) for x in list(self.selected_variants or []) if str(x).strip()],
             "param_space": dict(self.param_space or {}),
             "constraints": [str(x) for x in list(self.constraints or []) if str(x).strip()],
-            "trace": dict(self.trace or {}),
+            "substitutions": [dict(x) for x in list(self.substitutions or []) if isinstance(x, Mapping)],
             "candidates": [c.to_json_dict() for c in list(self.candidates or [])],
+            "notes": [str(x) for x in list(self.notes or []) if str(x).strip()],
         }
-        if self.meta:
-            out["meta"] = dict(self.meta)
-        return out
 
     @classmethod
     def from_json_dict(cls, raw: Mapping[str, Any]) -> "BackendPlan":
         obj = dict(raw or {})
-        schema = str(obj.get("schema_version") or "").strip() or BACKEND_PLAN_SCHEMA_VERSION_V1
-        kernel = str(obj.get("kernel") or "").strip()
-        target = str(obj.get("target") or "").strip()
-        hardware = dict(obj.get("hardware") or {}) if isinstance(obj.get("hardware"), Mapping) else {}
-        modules_raw = obj.get("modules") or []
-        modules: list[BackendModule] = []
-        if isinstance(modules_raw, list):
-            for x in modules_raw:
-                if isinstance(x, Mapping):
-                    modules.append(BackendModule.from_json_dict(x))
-        module_edges_raw = obj.get("module_edges") or obj.get("module_edge") or []
+        selected_modules: list[BackendModule] = []
+        for item in list(obj.get("selected_modules") or []):
+            if isinstance(item, Mapping):
+                selected_modules.append(BackendModule.from_json_dict(item))
         module_edges: list[BackendModuleEdge] = []
-        if isinstance(module_edges_raw, list):
-            for x in module_edges_raw:
-                if isinstance(x, Mapping):
-                    module_edges.append(BackendModuleEdge.from_json_dict(x))
-        passes = [str(x) for x in list(obj.get("passes") or []) if str(x).strip()]
-        selected_variants = [str(x) for x in list(obj.get("selected_variants") or []) if str(x).strip()]
-        param_space = dict(obj.get("param_space") or {}) if isinstance(obj.get("param_space"), Mapping) else {}
-        constraints = [str(x) for x in list(obj.get("constraints") or []) if str(x).strip()]
-        trace = dict(obj.get("trace") or {}) if isinstance(obj.get("trace"), Mapping) else {}
-        candidates_raw = obj.get("candidates") or []
+        for item in list(obj.get("module_edges") or []):
+            if isinstance(item, Mapping):
+                module_edges.append(BackendModuleEdge.from_json_dict(item))
         candidates: list[BackendCandidate] = []
-        if isinstance(candidates_raw, list):
-            for x in candidates_raw:
-                if isinstance(x, Mapping):
-                    candidates.append(BackendCandidate.from_json_dict(x))
-        meta = dict(obj.get("meta") or {}) if isinstance(obj.get("meta"), Mapping) else {}
+        for item in list(obj.get("candidates") or []):
+            if isinstance(item, Mapping):
+                candidates.append(BackendCandidate.from_json_dict(item))
+        substitutions = [dict(x) for x in list(obj.get("substitutions") or []) if isinstance(x, Mapping)]
         return cls(
-            schema_version=schema,
-            kernel=kernel,
-            target=target,
-            hardware=hardware,
-            modules=modules,
+            schema_version=str(obj.get("schema_version") or BACKEND_PLAN_SCHEMA_VERSION_V1),
+            kernel=str(obj.get("kernel") or ""),
+            source_oracle=(dict(obj.get("source_oracle") or {}) if isinstance(obj.get("source_oracle"), Mapping) else {}),
+            hardware_model=(dict(obj.get("hardware_model") or {}) if isinstance(obj.get("hardware_model"), Mapping) else {}),
+            selected_modules=selected_modules,
             module_edges=module_edges,
-            passes=passes,
-            selected_variants=selected_variants,
-            param_space=param_space,
-            constraints=constraints,
-            trace=trace,
+            param_space=(dict(obj.get("param_space") or {}) if isinstance(obj.get("param_space"), Mapping) else {}),
+            constraints=[str(x) for x in list(obj.get("constraints") or []) if str(x).strip()],
+            substitutions=substitutions,
             candidates=candidates,
-            meta=meta,
+            notes=[str(x) for x in list(obj.get("notes") or []) if str(x).strip()],
         )
 
 
-__all__ = [
-    "BackendCandidate",
-    "BackendModule",
-    "BackendModuleEdge",
-    "BackendPlan",
-]
+__all__ = ["BackendCandidate", "BackendModule", "BackendModuleEdge", "BackendPlan"]
