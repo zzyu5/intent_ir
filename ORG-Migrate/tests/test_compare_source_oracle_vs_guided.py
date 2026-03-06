@@ -258,6 +258,98 @@ def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monk
     assert payload["comparisons"]["source_replay_raw_ratio"] is None
     assert payload["comparisons"]["source_replay_portable_ratio"] == 1.01
     assert payload["comparisons"]["target_oracle_portable_ratio"] == 1.01
+
+
+def test_compare_tool_prefers_matmul_cluster_variant_shift_repair(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "matmul_fused_epilogue2d.json"
+    plan_path = tmp_path / "matmul_fused_epilogue2d.org_plan.json"
+    candidates_path = tmp_path / "matmul_fused_epilogue2d.org_candidates.txt"
+    out_root = tmp_path / "compare"
+
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"M": 32, "N": 32, "K": 32},
+            "compiler_stack": "python",
+            "compiler_cpp_wave": "",
+            "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(json.dumps({"source_oracle": {"kernel_kind": "", "bindings": {}}}), encoding="utf-8")
+    candidates_path.write_text("matmul_tile_v2\n", encoding="utf-8")
+
+    source_root = out_root / "source_replay"
+    target_root = out_root / "target_oracle"
+    _write_graph(source_root, ok=False, reason_code="lowering_missing_op", reason_detail="async path unsupported", skip_reason="intentir_unavailable")
+    _write_graph(target_root, ok=False, reason_code="lowering_missing_op", reason_detail="async path unsupported", skip_reason="intentir_unavailable")
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        if out_dir.name == "guided":
+            return {
+                "returncode": 0,
+                "out_root": str(out_dir),
+                "summary": {
+                    "candidates": [
+                        {
+                            "kernel_kind": "matmul_mma_tf32_v1",
+                            "bindings": {"MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32},
+                            "ratio": 0.91,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
+                        },
+                        {
+                            "kernel_kind": "matmul_tile_v2",
+                            "bindings": {},
+                            "ratio": 1.09,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
+                        },
+                    ]
+                },
+            }
+        if out_dir.name == "source_replay":
+            return {
+                "returncode": 0,
+                "out_root": str(source_root),
+                "summary": {"candidates": [{"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_ASYNC_COPY": 1, "MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32}, "ratio": None}]},
+            }
+        if out_dir.name == "target_oracle":
+            return {
+                "returncode": 0,
+                "out_root": str(target_root),
+                "summary": {"candidates": [{"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_ASYNC_COPY": 1, "MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32}, "ratio": None}]},
+            }
+        raise AssertionError(f"unexpected out_root {out_dir}")
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "matmul_mma_tf32_v1:MMA_ASYNC_COPY=1,MMA_BK=32,MMA_BM=32,MMA_BN=32")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "matmul_mma_tf32_v1:MMA_ASYNC_COPY=1,MMA_BK=32,MMA_BM=32,MMA_BN=32")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+
+    assert module.main() == 0
+    payload = json.loads((out_root / "comparison.json").read_text(encoding="utf-8"))
+    assert payload["comparisons"]["source_replay_analysis"]["repair"]["reason"] == "cluster_variant_shift"
+    assert payload["comparisons"]["source_replay_analysis"]["repair"]["repair_candidate"] == "matmul_tile_v2"
+    assert payload["comparisons"]["source_replay_portable_ratio"] == 1.09
+    assert payload["comparisons"]["target_oracle_portable_ratio"] == 1.09
     assert payload["comparisons"]["guided_vs_portable_target_oracle"] == 1.0
     assert payload["comparisons"]["source_replay_portable_outcome"]["status"] == "portable_repair_ok"
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")

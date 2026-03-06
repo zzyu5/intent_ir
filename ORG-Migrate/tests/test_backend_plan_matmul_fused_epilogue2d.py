@@ -75,9 +75,10 @@ def test_backend_plan_matmul_fused_epilogue_chain() -> None:
     assert plan.candidates
     assert any(candidate.kernel_kind == "matmul_mma_tf32_v1" for candidate in plan.candidates)
     assert plan.hardware_model["arch_cluster"] == "cuda_tc_mid_smem"
-    assert plan.candidates[0].kernel_kind == "matmul_mma_tf32_v1"
-    assert plan.candidates[0].bindings == {"MMA_BM": 32, "MMA_BN": 32, "MMA_BK": 32}
-    assert plan.candidates[0].portability_note == "drop:MMA_ASYNC_COPY"
+    assert plan.candidates[0].kernel_kind == "matmul_tile_v2"
+    assert plan.candidates[0].bindings == {}
+    assert plan.candidates[0].portability_note == "cluster_prefers_tile_v2"
+    assert "mid_smem_portable_tile" in str(plan.candidates[0].score_reason)
     assert any(item.get("reason") == "incomplete async evidence" for item in plan.substitutions)
     assert any(str(x).startswith("preserve:") for x in plan.notes)
 

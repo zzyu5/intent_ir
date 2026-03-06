@@ -369,6 +369,53 @@ def _find_flash_cluster_repair(
     }
 
 
+def _find_matmul_cluster_repair(
+    *,
+    guided_res: dict[str, Any],
+    candidate: str,
+    hardware_cluster: str,
+) -> dict[str, Any]:
+    kind, _bindings = _parse_candidate_line(candidate)
+    if kind != "matmul_mma_tf32_v1" or str(hardware_cluster) != "cuda_tc_mid_smem":
+        return {}
+    best: dict[str, Any] | None = None
+    for guided in _candidate_summaries(guided_res):
+        guided_kind = str(guided.get("kernel_kind") or "")
+        if guided_kind not in {"matmul_tile_v2", "matmul_tile_v1"}:
+            continue
+        ratio = guided.get("ratio")
+        if ratio is None:
+            continue
+        if best is None or float(ratio) > float(best["ratio"]):
+            best = guided
+    if best is None:
+        return {}
+    return {
+        "status": "requires_substitution",
+        "reason": "cluster_variant_shift",
+        "repair_candidate": _candidate_line(str(best.get("kernel_kind") or ""), dict(best.get("bindings") or {})),
+        "repair_ratio": float(best["ratio"]),
+    }
+
+
+def _best_repair(*repairs: dict[str, Any]) -> dict[str, Any]:
+    best: dict[str, Any] = {}
+    best_ratio = float("-inf")
+    for repair in repairs:
+        if not repair:
+            continue
+        ratio = repair.get("repair_ratio")
+        if ratio is None:
+            if not best:
+                best = dict(repair)
+            continue
+        fr = float(ratio)
+        if not best or fr > best_ratio:
+            best = dict(repair)
+            best_ratio = fr
+    return best
+
+
 def _candidate_origin(*, source_oracle_kind: str, resolved_candidate: str, arch: str, kind: str) -> str:
     if not resolved_candidate:
         return ""
@@ -464,12 +511,18 @@ def _analyze_replay_candidate(
             candidate=candidate,
             hardware_cluster=hardware_cluster,
         )
-        if flash_cluster_repair:
+        matmul_cluster_repair = _find_matmul_cluster_repair(
+            guided_res=guided_res,
+            candidate=candidate,
+            hardware_cluster=hardware_cluster,
+        )
+        cluster_repair = _best_repair(flash_cluster_repair, matmul_cluster_repair)
+        if cluster_repair:
             return {
-                "status": str(flash_cluster_repair.get("status") or "requires_substitution"),
+                "status": str(cluster_repair.get("status") or "requires_substitution"),
                 "candidate": str(candidate),
                 "candidate_origin": str(candidate_origin),
-                "repair": flash_cluster_repair,
+                "repair": cluster_repair,
                 "outcome": outcome,
             }
         return {
@@ -479,13 +532,27 @@ def _analyze_replay_candidate(
             "repair": {},
             "outcome": outcome,
         }
-    repair = _find_guided_repair(guided_res, candidate)
-    if not repair and label in {"source_replay", "target_oracle"}:
-        repair = _find_flash_cluster_repair(
-            guided_res=guided_res,
-            candidate=candidate,
-            hardware_cluster=hardware_cluster,
-        )
+    repair = _best_repair(
+        _find_guided_repair(guided_res, candidate),
+        (
+            _find_flash_cluster_repair(
+                guided_res=guided_res,
+                candidate=candidate,
+                hardware_cluster=hardware_cluster,
+            )
+            if label in {"source_replay", "target_oracle"}
+            else {}
+        ),
+        (
+            _find_matmul_cluster_repair(
+                guided_res=guided_res,
+                candidate=candidate,
+                hardware_cluster=hardware_cluster,
+            )
+            if label in {"source_replay", "target_oracle"}
+            else {}
+        ),
+    )
     if repair:
         return {
             "status": str(repair.get("status") or "requires_substitution"),

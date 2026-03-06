@@ -160,6 +160,7 @@ def _score_matmul_candidate(
     is_async = bool(bindings.get("MMA_ASYNC_COPY", 0))
     source_kind = str(source_oracle.get("kernel_kind") or "").strip()
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
+    source_async = bool(source_bindings.get("MMA_ASYNC_COPY", 0))
 
     score = 0.0
     reasons: list[str] = [f"cluster={cluster}"]
@@ -185,6 +186,15 @@ def _score_matmul_candidate(
     if "mma_acceleration" in goal_tags and kind == "matmul_mma_tf32_v1":
         score += 8.0
         reasons.append("preserve:mma")
+
+    if cluster == "cuda_tc_mid_smem" and source_async and not complete_async_evidence:
+        if kind == "matmul_tile_v2":
+            score += 150.0
+            portability_note = "cluster_prefers_tile_v2"
+            reasons.append("mid_smem_portable_tile")
+        elif kind == "matmul_mma_tf32_v1" and not is_async:
+            score -= 18.0
+            reasons.append("mid_smem_sync_mma_underperforms_tile")
 
     if is_async:
         if cluster == "cuda_generic" or not complete_async_evidence:
@@ -400,9 +410,26 @@ def plan_matmul_fused_epilogue2d(
             }
         )
 
-    tile_v2 = BackendCandidate(kernel_kind="matmul_tile_v2", bindings={}, note="tile_baseline", score=60.0, score_reason=f"cluster={cluster},tile_v2", cluster=cluster, portability_note="tile_fallback")
-    tile_v1 = BackendCandidate(kernel_kind="matmul_tile_v1", bindings={}, note="tile_fallback", score=45.0, score_reason=f"cluster={cluster},tile_v1", cluster=cluster, portability_note="tile_fallback")
-    scored.extend([tile_v2, tile_v1])
+    for kind, note in (("matmul_tile_v2", "tile_baseline"), ("matmul_tile_v1", "tile_fallback")):
+        tile_candidate = BackendCandidate(kernel_kind=kind, bindings={})
+        tile_score, tile_reason, tile_portability = _score_matmul_candidate(
+            candidate=tile_candidate,
+            cluster=cluster,
+            source_oracle=source_oracle,
+            complete_async_evidence=complete_async_evidence,
+            goal_tags=goal_tags,
+        )
+        scored.append(
+            BackendCandidate(
+                kernel_kind=kind,
+                bindings={},
+                note=note,
+                score=tile_score,
+                score_reason=tile_reason,
+                cluster=cluster,
+                portability_note=tile_portability,
+            )
+        )
 
     final: list[BackendCandidate] = []
     seen: set[tuple[str, tuple[tuple[str, int], ...]]] = set()
