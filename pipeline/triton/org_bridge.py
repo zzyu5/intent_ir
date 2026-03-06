@@ -10,7 +10,6 @@ from typing import Any, Mapping
 from intent_ir.ir import IntentFunction
 
 from pipeline.triton.core import (
-    _apply_source_oracle_ordering,
     _candidate_line,
     _compiler_stack_name,
     _detect_cuda_arch,
@@ -74,6 +73,21 @@ def _build_intent_summary(intent: IntentFunction) -> dict[str, object]:
     }
 
 
+def _resolve_source_oracle_facts(*, spec_name: str, shape_bindings: Mapping[str, int]) -> dict[str, Any]:
+    source_arch = _normalize_cuda_arch_key(os.getenv("INTENTIR_ORG_SOURCE_ARCH", ""))
+    source_stack_env = str(os.getenv("INTENTIR_ORG_SOURCE_COMPILER_STACK", "") or "").strip().lower()
+    source_stack = source_stack_env or _compiler_stack_name()
+    source_db_env = str(os.getenv("INTENTIR_ORG_SOURCE_TUNING_DB", "") or "").strip()
+    extract_source_oracle_facts = load_org_attr("org.facts.source_oracle", "extract_source_oracle_facts")
+    return extract_source_oracle_facts(
+        kernel=str(spec_name),
+        source_arch=str(source_arch),
+        shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
+        compiler_stack=str(source_stack),
+        db_path=(str(source_db_env) if source_db_env else None),
+    )
+
+
 def run_org_sidecar(
     *,
     spec_name: str,
@@ -103,7 +117,6 @@ def run_org_sidecar(
     static_ok = False
     if isinstance(report.get("static_validation"), dict):
         static_ok = bool((report.get("static_validation") or {}).get("ok"))
-
     if (not diff_ok) or (not static_ok):
         reason = f"skip_org: diff_ok={diff_ok} static_ok={static_ok}"
         org_report["skipped"] = True
@@ -125,11 +138,19 @@ def run_org_sidecar(
     org_report["org_path"] = str(org_path)
 
     intent_summary = _build_intent_summary(intent)
+    target_arch = _detect_cuda_arch() or _normalize_cuda_arch_key(str(backend_target or "")) or ""
+    source_oracle_facts = _resolve_source_oracle_facts(spec_name=spec_name, shape_bindings=shape_bindings)
+    source_oracle = dict(source_oracle_facts.get("oracle") or {})
+
     extra_evidence = {
         "shape_bindings": {str(k): int(v) for k, v in dict(shape_bindings or {}).items() if str(k).strip()},
         "backend_target": (str(backend_target) if backend_target is not None else None),
         "triton_provider": str(triton_provider),
         "contract_level": str((report.get("contract") or {}).get("level") or ""),
+        "source_arch": str(source_oracle.get("arch") or ""),
+        "target_arch": str(target_arch),
+        "source_compiler_stack": str(source_oracle.get("compiler_stack") or ""),
+        "source_oracle_facts": dict(source_oracle_facts),
     }
     quality = {
         "diff_ok": bool(diff_ok),
@@ -138,14 +159,9 @@ def run_org_sidecar(
     }
     llm_fallback_used = bool((report.get("llm_fallback") or {}).get("used"))
 
-    org_doc = None
-    org_raw_json: dict[str, Any] | None = None
-    org_trace: dict[str, Any] = {}
-    cache_used = False
     ttgir_facts: dict[str, Any] | None = None
     ptx_facts: dict[str, Any] | None = None
     ttir_summary: dict[str, Any] | None = None
-
     if desc is not None:
         build_ttir_summary = load_org_attr("org.facts.ttir", "build_ttir_summary")
         extract_ttgir_mechanism_facts = load_org_attr("org.facts.ttgir", "extract_ttgir_mechanism_facts")
@@ -163,16 +179,11 @@ def run_org_sidecar(
             (getattr(desc, "meta", {}) or {}).get("ptx_original_path"),
         )
         if ttgir_text.strip():
-            ttgir_facts = extract_ttgir_mechanism_facts(
-                ttgir_text,
-                kernel_name=str(spec_name),
-                artifact_path=(ttgir_path or None),
-            )
-        ptx_facts = extract_ptx_mechanism_facts(
-            ptx_text,
-            kernel_name=str(spec_name),
-            artifact_path=(ptx_path or None),
-        )
+            ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=str(spec_name), artifact_path=(ttgir_path or None))
+            extra_evidence["ttgir_facts"] = dict(ttgir_facts)
+        ptx_facts = extract_ptx_mechanism_facts(ptx_text, kernel_name=str(spec_name), artifact_path=(ptx_path or None))
+        extra_evidence["ptx_facts"] = dict(ptx_facts)
+        extra_evidence["ttir_summary"] = dict(ttir_summary)
         org_report["evidence_source"] = {
             "primary": ("ttgir" if ttgir_facts is not None else "ttir"),
             "ttgir_available": bool(ttgir_facts is not None),
@@ -181,19 +192,17 @@ def run_org_sidecar(
             "ttir_available": bool((ttir_summary or {}).get("available")),
         }
 
-    if mode in {"apply", "strict"} and str(spec_name) == "flash_attention2d" and ttgir_facts is None:
+    if mode in {"apply", "strict"} and str(spec_name) in {"flash_attention2d", "matmul_fused_epilogue2d"} and ttgir_facts is None:
         org_report["ok"] = False
         org_report["error"] = "ttgir_missing"
         if mode == "strict":
             raise RuntimeError("ttgir_missing")
         return
 
-    if ttgir_facts is not None:
-        extra_evidence["ttgir_facts"] = dict(ttgir_facts)
-    if ptx_facts is not None:
-        extra_evidence["ptx_facts"] = dict(ptx_facts)
-    if ttir_summary is not None:
-        extra_evidence["ttir_summary"] = dict(ttir_summary)
+    org_doc = None
+    org_raw_json: dict[str, Any] | None = None
+    org_trace: dict[str, Any] = {}
+    cache_used = False
 
     try:
         load_org_seed = load_org_attr("org.io", "load_org_seed")
@@ -203,7 +212,6 @@ def run_org_sidecar(
 
         should_try_cache = bool(seed_policy in {"auto", "force_cache"})
         should_try_llm = bool(seed_policy in {"auto", "force_llm"})
-
         if should_try_cache and seed_path.is_file():
             cache_allowed = True
             cache_reason = "trusted"
@@ -211,9 +219,9 @@ def run_org_sidecar(
                 try:
                     seed = load_org_seed(seed_path)
                     cache_allowed, cache_reason = is_seed_trusted_for_auto(seed)
-                except Exception as e:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     cache_allowed = False
-                    cache_reason = f"invalid_seed:{type(e).__name__}"
+                    cache_reason = f"invalid_seed:{type(exc).__name__}"
             if cache_allowed:
                 seed = load_org_seed(seed_path)
                 org_doc = seed.org
@@ -241,26 +249,21 @@ def run_org_sidecar(
             org_trace = dict(candidate.llm_trace)
             org_report["llm_trace"] = dict(org_trace)
             org_report["prompt_hash"] = str(candidate.prompt_hash)
-
             if (not llm_fallback_used) and diff_ok and static_ok and seed_policy in {"auto", "force_llm"}:
-                try:
-                    save_org_seed(
-                        path=seed_path,
-                        kernel=spec_name,
-                        triton_provider=str(triton_provider),
-                        backend_target=backend_target,
-                        org=org_doc,
-                        raw_json=org_raw_json,
-                        llm_trace=org_trace,
-                        quality=quality,
-                    )
-                    org_report["seed_saved"] = True
-                except Exception as e:  # noqa: BLE001
-                    org_report["seed_saved"] = False
-                    org_report["seed_error"] = f"{type(e).__name__}: {e}"
-    except Exception as e:  # noqa: BLE001
+                save_org_seed(
+                    path=seed_path,
+                    kernel=spec_name,
+                    triton_provider=str(triton_provider),
+                    backend_target=backend_target,
+                    org=org_doc,
+                    raw_json=org_raw_json,
+                    llm_trace=org_trace,
+                    quality=quality,
+                )
+                org_report["seed_saved"] = True
+    except Exception as exc:  # noqa: BLE001
         org_report["ok"] = False
-        org_report["error"] = f"{type(e).__name__}: {e}"
+        org_report["error"] = f"{type(exc).__name__}: {exc}"
         if mode == "strict":
             raise
         return
@@ -272,134 +275,84 @@ def run_org_sidecar(
             raise RuntimeError("org_doc_missing")
         return
 
-    try:
-        org_path.write_text(json.dumps(org_doc.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
-        org_report["ok"] = True
-        org_report["cache_used"] = bool(cache_used)
-    except Exception as e:  # noqa: BLE001
-        org_report["ok"] = False
-        org_report["error"] = f"write_org_error:{type(e).__name__}: {e}"
-        if mode == "strict":
-            raise
-        return
+    org_path.write_text(json.dumps(org_doc.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    org_report["ok"] = True
+    org_report["cache_used"] = bool(cache_used)
 
     if mode not in {"apply", "strict"}:
         return
-
     backend_norm = str(backend_target or "").strip().lower()
     if backend_norm and not backend_norm.startswith("cuda"):
         org_report["apply_skipped"] = True
         org_report["apply_reason"] = "backend_target_not_cuda"
         return
 
-    source_oracle: dict[str, object] | None = None
-    source_arch = _normalize_cuda_arch_key(os.getenv("INTENTIR_ORG_SOURCE_ARCH", ""))
-    if source_arch:
-        source_stack_env = str(os.getenv("INTENTIR_ORG_SOURCE_COMPILER_STACK", "") or "").strip().lower()
-        source_stack = source_stack_env or _compiler_stack_name()
-        source_db_env = str(os.getenv("INTENTIR_ORG_SOURCE_TUNING_DB", "") or "").strip()
-        try:
-            from pipeline.common.tuning_db import load_tuning_db_jsonl, resolve_tuning_db_path, resolve_tuning_entries
-
-            db_path = resolve_tuning_db_path(
-                path=(Path(source_db_env) if source_db_env else None),
-                backend="cuda",
-            )
-            if db_path is not None and Path(db_path).is_file():
-                db = load_tuning_db_jsonl(path=Path(db_path), backend="cuda")
-                entries = db.get((str(spec_name), str(source_arch))) or []
-                merged, kk = resolve_tuning_entries(
-                    entries,
-                    shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
-                    compiler_stack=str(source_stack),
-                )
-                kk = str(kk or "").strip()
-                merged = {str(k): int(v) for k, v in dict(merged).items() if str(k).strip()}
-                if kk or merged:
-                    source_oracle = {
-                        "arch": str(source_arch),
-                        "compiler_stack": str(source_stack),
-                        "db_path": str(db_path),
-                        "kernel_kind": str(kk),
-                        "bindings": dict(merged),
-                    }
-        except Exception as e:  # noqa: BLE001
-            org_report["source_oracle_error"] = f"{type(e).__name__}: {e}"
+    build_hardware_model = load_org_attr("org.mapping.hardware_model", "build_hardware_model")
+    hardware_model = build_hardware_model(target=str(backend_target or ""), arch=str(target_arch))
 
     try:
-        stack = _compiler_stack_name()
         budget = int(_org_budget())
-        enum_budget = max(int(budget), 32)
-        if source_oracle is not None:
-            enum_budget = max(enum_budget, 128)
-
         if str(spec_name) == "flash_attention2d":
             plan_flash_attention2d = load_org_attr("org.mapping.cuda.flash_attention2d", "plan_flash_attention2d")
-            enable_cpp_extras = stack in {"cpp", "cpp_plugin", "c++"}
             plan = plan_flash_attention2d(
                 org_doc,
                 shape_bindings=dict(shape_bindings),
-                target=str(backend_target or "cuda"),
-                budget=enum_budget,
-                enable_cpp_extras=bool(enable_cpp_extras),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                budget=int(budget),
+            )
+        elif str(spec_name) == "matmul_fused_epilogue2d":
+            plan_matmul_fused_epilogue2d = load_org_attr(
+                "org.mapping.cuda.matmul_fused_epilogue2d", "plan_matmul_fused_epilogue2d"
+            )
+            plan = plan_matmul_fused_epilogue2d(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                budget=int(budget),
             )
         else:
             org_report["apply_skipped"] = True
             org_report["apply_reason"] = "org_kernel_deferred"
             return
 
-        if source_oracle is not None:
-            org_report["source_oracle"] = dict(source_oracle)
-            _apply_source_oracle_ordering(plan, oracle=source_oracle, budget=int(budget))
-        else:
-            if int(budget) > 0:
-                plan.candidates = list(plan.candidates or [])[: int(budget)]
-
         plan_path.write_text(json.dumps(plan.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
         org_report["plan_path"] = str(plan_path)
+        org_report["arch"] = str(target_arch)
+        org_report["source_oracle"] = dict(source_oracle)
 
-        arch = _detect_cuda_arch() or ""
-        org_report["arch"] = str(arch)
-
-        head_dim = int(shape_bindings.get("HEAD_DIM") or 0)
-        when = {"HEAD_DIM": int(head_dim)} if head_dim > 0 else {}
         lines_jsonl: list[str] = []
-        lines_txt: list[str] = []
-        lines_txt.append(f"# kernel={spec_name} target={backend_target} budget={budget} compiler_stack={stack} arch={arch}")
-        if source_oracle is not None:
-            so_kind = str(source_oracle.get("kernel_kind") or "").strip()
-            so_arch = str(source_oracle.get("arch") or "").strip()
-            so_stack = str(source_oracle.get("compiler_stack") or "").strip()
-            so_bind = source_oracle.get("bindings")
-            flat = ""
-            if isinstance(so_bind, Mapping):
-                flat = ",".join(f"{k}={int(v)}" for k, v in sorted({str(k): int(v) for k, v in dict(so_bind).items()}.items()))
-            lines_txt.append(f"# source_oracle arch={so_arch} compiler_stack={so_stack} kernel_kind={so_kind} bindings={flat}")
-        lines_txt.append("# candidate syntax: <kernel_kind>:K=V,A=B")
-        lines_txt.append("# tune supports: python scripts/intentir.py tune --candidate-file <this_file> ...")
-        stack_norm = "cpp_plugin" if stack in {"cpp", "c++"} else str(stack)
-        for c in list(plan.candidates or []):
-            lines_txt.append(_candidate_line(c.kernel_kind, c.bindings))
-            entry = {
-                "schema_version": "intentir_tuning_db_entry_v1",
-                "backend": "cuda",
-                "compiler_stack": str(stack_norm),
-                "kernel": str(spec_name),
-                "arch": str(arch),
-                "when": dict(when),
-                "bindings": {str(k): int(v) for k, v in dict(c.bindings or {}).items()},
-                "kernel_kind": str(c.kernel_kind),
-                "note": "org_candidate",
-            }
-            lines_jsonl.append(json.dumps(entry, ensure_ascii=False))
+        lines_txt: list[str] = [
+            f"# kernel={spec_name} target={backend_target} budget={budget} compiler_stack={_compiler_stack_name()} arch={target_arch}",
+            "# candidate syntax: <kernel_kind>:K=V,A=B",
+            "# tune supports: python scripts/intentir.py tune --candidate-file <this_file> ...",
+        ]
+        for candidate in list(plan.candidates or []):
+            lines_txt.append(_candidate_line(candidate.kernel_kind, candidate.bindings))
+            lines_jsonl.append(
+                json.dumps(
+                    {
+                        "schema_version": "intentir_tuning_db_entry_v1",
+                        "backend": "cuda",
+                        "compiler_stack": str(_compiler_stack_name()),
+                        "kernel": str(spec_name),
+                        "arch": str(target_arch),
+                        "bindings": {str(k): int(v) for k, v in dict(candidate.bindings or {}).items()},
+                        "kernel_kind": str(candidate.kernel_kind),
+                        "note": "org_candidate",
+                    },
+                    ensure_ascii=False,
+                )
+            )
         cand_jsonl_path.write_text("\n".join(lines_jsonl) + ("\n" if lines_jsonl else ""), encoding="utf-8")
         cand_txt_path.write_text("\n".join(lines_txt) + "\n", encoding="utf-8")
         org_report["candidates_path"] = str(cand_jsonl_path)
         org_report["candidates_txt_path"] = str(cand_txt_path)
         org_report["candidates_count"] = int(len(list(plan.candidates or [])))
-    except Exception as e:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         org_report["apply_ok"] = False
-        org_report["apply_error"] = f"{type(e).__name__}: {e}"
+        org_report["apply_error"] = f"{type(exc).__name__}: {exc}"
         if mode == "strict":
             raise
 
