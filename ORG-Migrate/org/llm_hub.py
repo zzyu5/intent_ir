@@ -123,21 +123,33 @@ def _evidence_blob(descriptor: KernelDescriptor, *, intent_summary: Mapping[str,
             out["meta"] = meta_out
         return out
 
+    extra_dict = dict(extra or {}) if isinstance(extra, Mapping) else {}
     ev: dict[str, Any] = {
         "kernel": descriptor.name,
         "frontend": descriptor.frontend,
-        "io_spec": descriptor.io_spec,
-        "launch": descriptor.launch,
-        "frontend_facts": descriptor.frontend_facts,
-        "frontend_constraints": _summarize_frontend_constraints(descriptor.frontend_constraints),
-        "meta": {
-            "versions": {k: descriptor.meta.get(k) for k in ("triton", "torch", "tilelang") if descriptor.meta.get(k) is not None}
-        },
     }
+    if isinstance(extra_dict.get("ttgir_facts"), Mapping):
+        ev["ttgir_facts"] = dict(extra_dict.get("ttgir_facts") or {})
+    if isinstance(extra_dict.get("ptx_facts"), Mapping):
+        ev["ptx_facts"] = dict(extra_dict.get("ptx_facts") or {})
+    if isinstance(extra_dict.get("ttir_summary"), Mapping):
+        ev["ttir_summary"] = dict(extra_dict.get("ttir_summary") or {})
     if isinstance(intent_summary, Mapping):
         ev["intent_summary"] = dict(intent_summary)
-    if isinstance(extra, Mapping) and dict(extra):
-        ev["extra"] = dict(extra)
+    ev["io_spec"] = descriptor.io_spec
+    ev["launch"] = descriptor.launch
+    ev["frontend_facts"] = descriptor.frontend_facts
+    ev["frontend_constraints"] = _summarize_frontend_constraints(descriptor.frontend_constraints)
+    ev["meta"] = {
+        "versions": {k: descriptor.meta.get(k) for k in ("triton", "torch", "tilelang") if descriptor.meta.get(k) is not None}
+    }
+    runtime_extra = {
+        str(k): v
+        for k, v in extra_dict.items()
+        if str(k) not in {"ttgir_facts", "ptx_facts", "ttir_summary"} and str(k).strip()
+    }
+    if runtime_extra:
+        ev["extra"] = runtime_extra
     return json.dumps(ev, ensure_ascii=False)
 
 

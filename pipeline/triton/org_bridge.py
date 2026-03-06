@@ -47,6 +47,22 @@ def load_org_attr(module_name: str, attr_name: str):
     return getattr(mod, str(attr_name))
 
 
+def _load_text_artifact(text_value: object, path_value: object, meta_path: object) -> tuple[str, str]:
+    text = str(text_value or "")
+    if text.strip():
+        return text, ""
+    for raw in (path_value, meta_path):
+        if raw is None:
+            continue
+        p = Path(str(raw))
+        if p.is_file():
+            try:
+                return p.read_text(encoding="utf-8"), str(p)
+            except Exception:
+                continue
+    return "", ""
+
+
 def _build_intent_summary(intent: IntentFunction) -> dict[str, object]:
     return {
         "name": str(intent.name or ""),
@@ -126,6 +142,58 @@ def run_org_sidecar(
     org_raw_json: dict[str, Any] | None = None
     org_trace: dict[str, Any] = {}
     cache_used = False
+    ttgir_facts: dict[str, Any] | None = None
+    ptx_facts: dict[str, Any] | None = None
+    ttir_summary: dict[str, Any] | None = None
+
+    if desc is not None:
+        build_ttir_summary = load_org_attr("org.facts.ttir", "build_ttir_summary")
+        extract_ttgir_mechanism_facts = load_org_attr("org.facts.ttgir", "extract_ttgir_mechanism_facts")
+        extract_ptx_mechanism_facts = load_org_attr("org.facts.ptx", "extract_ptx_mechanism_facts")
+
+        ttir_summary = build_ttir_summary(desc)
+        ttgir_text, ttgir_path = _load_text_artifact(
+            getattr(getattr(desc, "artifacts", None), "ttgir_text", None),
+            getattr(getattr(desc, "artifacts", None), "ttgir_path", None),
+            (getattr(desc, "meta", {}) or {}).get("ttgir_original_path"),
+        )
+        ptx_text, ptx_path = _load_text_artifact(
+            getattr(getattr(desc, "artifacts", None), "ptx_text", None),
+            (getattr(getattr(desc, "artifacts", None), "extra", {}) or {}).get("ptx_path"),
+            (getattr(desc, "meta", {}) or {}).get("ptx_original_path"),
+        )
+        if ttgir_text.strip():
+            ttgir_facts = extract_ttgir_mechanism_facts(
+                ttgir_text,
+                kernel_name=str(spec_name),
+                artifact_path=(ttgir_path or None),
+            )
+        ptx_facts = extract_ptx_mechanism_facts(
+            ptx_text,
+            kernel_name=str(spec_name),
+            artifact_path=(ptx_path or None),
+        )
+        org_report["evidence_source"] = {
+            "primary": ("ttgir" if ttgir_facts is not None else "ttir"),
+            "ttgir_available": bool(ttgir_facts is not None),
+            "ttgir_path": (ttgir_path or None),
+            "ptx_available": bool((ptx_facts or {}).get("artifacts", {}).get("ptx_available")),
+            "ttir_available": bool((ttir_summary or {}).get("available")),
+        }
+
+    if mode in {"apply", "strict"} and str(spec_name) == "flash_attention2d" and ttgir_facts is None:
+        org_report["ok"] = False
+        org_report["error"] = "ttgir_missing"
+        if mode == "strict":
+            raise RuntimeError("ttgir_missing")
+        return
+
+    if ttgir_facts is not None:
+        extra_evidence["ttgir_facts"] = dict(ttgir_facts)
+    if ptx_facts is not None:
+        extra_evidence["ptx_facts"] = dict(ptx_facts)
+    if ttir_summary is not None:
+        extra_evidence["ttir_summary"] = dict(ttir_summary)
 
     try:
         load_org_seed = load_org_attr("org.io", "load_org_seed")
@@ -275,53 +343,9 @@ def run_org_sidecar(
                 budget=enum_budget,
                 enable_cpp_extras=bool(enable_cpp_extras),
             )
-        elif str(spec_name) == "masked_attention2d":
-            plan_masked_attention2d = load_org_attr("org.mapping.cuda.masked_attention2d", "plan_masked_attention2d")
-            plan = plan_masked_attention2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                target=str(backend_target or "cuda"),
-                budget=enum_budget,
-                compiler_stack=str(stack),
-            )
-        elif str(spec_name) == "_attn_fwd":
-            plan_attn_fwd = load_org_attr("org.mapping.cuda.attn_fwd", "plan_attn_fwd")
-            plan = plan_attn_fwd(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                target=str(backend_target or "cuda"),
-                budget=enum_budget,
-                compiler_stack=str(stack),
-            )
-        elif str(spec_name) == "matmul_fused_epilogue2d":
-            plan_matmul_fused_epilogue2d = load_org_attr(
-                "org.mapping.cuda.matmul_fused_epilogue2d", "plan_matmul_fused_epilogue2d"
-            )
-            plan = plan_matmul_fused_epilogue2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                target=str(backend_target or "cuda"),
-                budget=enum_budget,
-            )
-        elif str(spec_name) == "ai_bench_softmax":
-            plan_ai_bench_softmax = load_org_attr("org.mapping.cuda.ai_bench_softmax", "plan_ai_bench_softmax")
-            plan = plan_ai_bench_softmax(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                target=str(backend_target or "cuda"),
-                budget=enum_budget,
-            )
-        elif str(spec_name) == "ai_bench_matmul":
-            plan_ai_bench_matmul = load_org_attr("org.mapping.cuda.ai_bench_matmul", "plan_ai_bench_matmul")
-            plan = plan_ai_bench_matmul(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                target=str(backend_target or "cuda"),
-                budget=enum_budget,
-            )
         else:
             org_report["apply_skipped"] = True
-            org_report["apply_reason"] = "kernel_not_supported"
+            org_report["apply_reason"] = "org_kernel_deferred"
             return
 
         if source_oracle is not None:
