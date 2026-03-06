@@ -54,12 +54,53 @@ def test_backend_plan_matmul_fused_epilogue_chain() -> None:
     plan = plan_matmul_fused_epilogue2d(
         _org_matmul(),
         shape_bindings={"M": 32, "N": 32, "K": 32},
-        source_oracle={"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_BM": 32, "MMA_BN": 32, "MMA_BK": 32}},
+        source_oracle={"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_BM": 32, "MMA_BN": 32, "MMA_BK": 32, "MMA_ASYNC_COPY": 1}},
         hardware_model=build_hardware_model(target="cuda_5090d", arch="sm120"),
+        ttgir_facts={
+            "mechanisms": {
+                "staging.operand_tile_stage": {"present": True, "attrs": {"resident_bytes_hint": 4096}},
+                "pipeline.stage_hint": {"present": False, "attrs": {"pipeline_depth_hint": None}},
+            }
+        },
+        ptx_facts={
+            "mechanisms": {
+                "pipeline.async_copy": {"present": True, "attrs": {"complete_async_pipeline": False}},
+                "primitive.mma": {"present": True, "attrs": {"complete_matrix_pipeline": True}},
+            }
+        },
         budget=8,
     )
     assert plan.selected_modules
     assert any(module.id == "mma_core" for module in plan.selected_modules)
     assert plan.candidates
     assert any(candidate.kernel_kind == "matmul_mma_tf32_v1" for candidate in plan.candidates)
+    assert plan.hardware_model["arch_cluster"] == "cuda_tc_mid_smem"
+    assert plan.candidates[0].kernel_kind == "matmul_mma_tf32_v1"
+    assert plan.candidates[0].bindings == {"MMA_BM": 32, "MMA_BN": 32, "MMA_BK": 32}
+    assert plan.candidates[0].portability_note == "drop:MMA_ASYNC_COPY"
+    assert any(item.get("reason") == "incomplete async evidence" for item in plan.substitutions)
     assert any(str(x).startswith("preserve:") for x in plan.notes)
+
+
+def test_backend_plan_matmul_large_smem_can_keep_async_candidate() -> None:
+    plan = plan_matmul_fused_epilogue2d(
+        _org_matmul(),
+        shape_bindings={"M": 32, "N": 32, "K": 32},
+        source_oracle={"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_BM": 32, "MMA_BN": 32, "MMA_BK": 32, "MMA_ASYNC_COPY": 1}},
+        hardware_model=build_hardware_model(target="cuda_h100", arch="sm90"),
+        ttgir_facts={
+            "mechanisms": {
+                "staging.operand_tile_stage": {"present": True, "attrs": {"resident_bytes_hint": 4096}},
+                "pipeline.stage_hint": {"present": True, "attrs": {"pipeline_depth_hint": 2}},
+            }
+        },
+        ptx_facts={
+            "mechanisms": {
+                "pipeline.async_copy": {"present": True, "attrs": {"complete_async_pipeline": True}},
+                "primitive.mma": {"present": True, "attrs": {"complete_matrix_pipeline": True}},
+            }
+        },
+        budget=8,
+    )
+    assert plan.hardware_model["arch_cluster"] == "cuda_tc_large_smem"
+    assert any(candidate.bindings.get("MMA_ASYNC_COPY") == 1 for candidate in plan.candidates)

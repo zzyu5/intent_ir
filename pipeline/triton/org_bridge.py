@@ -321,6 +321,7 @@ def run_org_sidecar(
     build_hardware_model = load_org_attr("org.mapping.hardware_model", "build_hardware_model")
     hardware_model = build_hardware_model(target=str(backend_target or ""), arch=str(target_arch))
     org_report["hardware_model"] = hardware_model.to_json_dict()
+    org_report["hardware_cluster"] = str(hardware_model.arch_cluster)
     org_report["source_oracle_available"] = bool(source_oracle_facts.get("available"))
     hardware_model_path.write_text(json.dumps(hardware_model.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     org_report["hardware_model_path"] = str(hardware_model_path)
@@ -334,6 +335,8 @@ def run_org_sidecar(
                 shape_bindings=dict(shape_bindings),
                 source_oracle=dict(source_oracle),
                 hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
                 budget=int(budget),
             )
         elif str(spec_name) == "matmul_fused_epilogue2d":
@@ -345,6 +348,8 @@ def run_org_sidecar(
                 shape_bindings=dict(shape_bindings),
                 source_oracle=dict(source_oracle),
                 hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
                 budget=int(budget),
             )
         else:

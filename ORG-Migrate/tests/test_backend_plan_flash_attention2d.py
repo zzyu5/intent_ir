@@ -54,10 +54,49 @@ def test_backend_plan_flash_attention2d_chain() -> None:
         shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
         source_oracle={"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}},
         hardware_model=build_hardware_model(target="cuda_5090d", arch="sm120"),
+        ttgir_facts={
+            "mechanisms": {
+                "staging.q_resident_state": {"present": True, "attrs": {"resident_bytes_hint": 256}},
+                "staging.kv_streamed_tiles": {"present": True, "attrs": {"resident_bytes_hint": 32768}},
+                "pipeline.stage_hint": {"present": False, "attrs": {"pipeline_depth_hint": None}},
+            }
+        },
+        ptx_facts={"mechanisms": {"pipeline.async_copy": {"present": True, "attrs": {"complete_async_pipeline": False}}}},
         budget=8,
     )
     assert plan.selected_modules
+    assert plan.hardware_model["arch_cluster"] == "cuda_tc_mid_smem"
     assert plan.param_space["ATTN_BLOCK_KV"][0] == 64
     assert plan.candidates
-    assert plan.candidates[0].kernel_kind in {"attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"}
+    assert [c.kernel_kind for c in plan.candidates[:4]] == [
+        "attn2d_causal_softmax_v6",
+        "attn2d_causal_softmax_v6",
+        "attn2d_causal_softmax_v6",
+        "attn2d_causal_softmax_v6",
+    ]
+    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}
+    assert plan.candidates[0].score is not None
+    assert "cluster=cuda_tc_mid_smem" in str(plan.candidates[0].score_reason)
     assert any(str(x).startswith("preserve:") for x in plan.notes)
+    assert any(item.get("reason") == "incomplete async evidence" for item in plan.substitutions)
+
+
+def test_backend_plan_flash_attention2d_large_smem_allows_v7_front() -> None:
+    plan = plan_flash_attention2d(
+        _org_flash(),
+        shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+        source_oracle={"kernel_kind": "attn2d_causal_softmax_v7", "bindings": {"ATTN_BLOCK_KV": 64}},
+        hardware_model=build_hardware_model(target="cuda_h100", arch="sm90"),
+        ttgir_facts={
+            "mechanisms": {
+                "staging.q_resident_state": {"present": True, "attrs": {"resident_bytes_hint": 256}},
+                "staging.kv_streamed_tiles": {"present": True, "attrs": {"resident_bytes_hint": 32768}},
+                "pipeline.stage_hint": {"present": True, "attrs": {"pipeline_depth_hint": 2}},
+            }
+        },
+        ptx_facts={"mechanisms": {"pipeline.async_copy": {"present": True, "attrs": {"complete_async_pipeline": True}}}},
+        budget=8,
+    )
+    assert plan.hardware_model["arch_cluster"] == "cuda_tc_large_smem"
+    assert plan.candidates[0].kernel_kind == "attn2d_causal_softmax_v7"
+    assert plan.candidates[0].bindings.get("ATTN_BLOCK_KV") == 64

@@ -48,10 +48,8 @@ def _ordered_param_values(defaults: list[int], preferred: int | None, allowed: l
     if allowed:
         allowed_set = {int(x) for x in allowed}
         vals = [int(x) for x in vals if int(x) in allowed_set]
-        if preferred is not None and int(preferred) in allowed_set and int(preferred) not in vals:
-            vals.insert(0, int(preferred))
-    if preferred is not None and int(preferred) in vals:
-        vals = [int(preferred)] + [int(x) for x in vals if int(x) != int(preferred)]
+    if preferred is not None and int(preferred) not in vals and (not allowed or int(preferred) in set(allowed)):
+        vals.append(int(preferred))
     return _ordered_unique(vals)
 
 
@@ -83,7 +81,6 @@ def _selected_modules(
 
     if "streaming_softmax_state" in goal_tags or "online_softmax_reduce" in mechanism_tags:
         selected_ids.add("online_softmax_reduce")
-
     if "latency_hiding" in goal_tags or "prefetch_pipeline" in mechanism_tags:
         if hardware_model.supports_async_copy:
             selected_ids.add("prefetch_pipeline")
@@ -96,22 +93,16 @@ def _selected_modules(
                 }
             )
 
-    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
-    if source_kind == "attn2d_causal_softmax_v7":
-        selected_ids.add("backend_v7")
-        selected_ids.add("backend_v6")
-    else:
-        selected_ids.add("backend_v6")
-        selected_ids.add("backend_v7")
-
+    selected_ids.update({"backend_v6", "backend_v7"})
     selected_modules = [m for m in modules if m.id in selected_ids]
     selected_edges = [e for e in module_edges if e.src in selected_ids and e.dst in selected_ids]
-    if source_kind == "attn2d_causal_softmax_v7" and "backend_v7" not in selected_ids:
+    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
+    if source_kind == "attn2d_causal_softmax_v7":
         substitutions.append(
             {
-                "from": "source.variant.v7",
-                "to": "backend_v6",
-                "reason": "source variant v7 not preserved in selected modules",
+                "from": "source.variant.preference",
+                "to": "cluster_ranked_variants",
+                "reason": f"variant ranking follows {hardware_model.arch_cluster}",
             }
         )
     return selected_modules, selected_edges, substitutions
@@ -121,12 +112,114 @@ def _candidate_key(candidate: BackendCandidate) -> tuple[str, tuple[tuple[str, i
     return str(candidate.kernel_kind), tuple(sorted((str(k), int(v)) for k, v in dict(candidate.bindings or {}).items()))
 
 
+def _fact_present(facts: Mapping[str, Any] | None, key: str) -> bool:
+    mechanisms = dict((facts or {}).get("mechanisms") or {})
+    return bool(dict(mechanisms.get(str(key)) or {}).get("present"))
+
+
+def _fact_attr(facts: Mapping[str, Any] | None, key: str, attr: str, default: Any = None) -> Any:
+    mechanisms = dict((facts or {}).get("mechanisms") or {})
+    attrs = dict(dict(mechanisms.get(str(key)) or {}).get("attrs") or {})
+    return attrs.get(str(attr), default)
+
+
+def _flash_resident_bytes_hint(*, block_kv: int, head_dim: int, ttgir_facts: Mapping[str, Any] | None) -> int:
+    q_bytes = int(_fact_attr(ttgir_facts, "staging.q_resident_state", "resident_bytes_hint", head_dim * 4) or (head_dim * 4))
+    kv_bytes = int(_fact_attr(ttgir_facts, "staging.kv_streamed_tiles", "resident_bytes_hint", (block_kv * head_dim * 4 * 2)) or (block_kv * head_dim * 4 * 2))
+    output_bytes = int(head_dim * 4)
+    return int(q_bytes + kv_bytes + output_bytes)
+
+
+def _complete_async_evidence(
+    *,
+    ttgir_facts: Mapping[str, Any] | None,
+    ptx_facts: Mapping[str, Any] | None,
+) -> bool:
+    return bool(
+        _fact_present(ttgir_facts, "pipeline.stage_hint")
+        and _fact_present(ttgir_facts, "staging.kv_streamed_tiles")
+        and _fact_present(ttgir_facts, "staging.q_resident_state")
+        and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False))
+    )
+
+
+def _score_flash_candidate(
+    *,
+    candidate: BackendCandidate,
+    goal_tags: set[str],
+    cluster: str,
+    source_oracle: Mapping[str, Any],
+    kv_ctx: int,
+    head_dim: int,
+    ttgir_facts: Mapping[str, Any] | None,
+    async_evidence_ok: bool,
+) -> tuple[float, str, str]:
+    kind = str(candidate.kernel_kind)
+    bindings = {str(k): int(v) for k, v in dict(candidate.bindings or {}).items()}
+    block_kv = int(bindings.get("ATTN_BLOCK_KV", 16))
+    score_warps = int(bindings.get("ATTN_SCORE_WARPS", 0))
+    is_async = bool(bindings.get("FLASH_ATTN_ASYNC_COPY", 0))
+    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
+    source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
+    resident_bytes = _flash_resident_bytes_hint(block_kv=block_kv, head_dim=head_dim, ttgir_facts=ttgir_facts)
+    v7_front_allowed = bool(
+        "avoid_materialization" in goal_tags
+        and "streaming_softmax_state" in goal_tags
+        and async_evidence_ok
+    )
+
+    score = 0.0
+    reasons: list[str] = [f"cluster={cluster}", f"resident_bytes={resident_bytes}"]
+    portability_note = "portable"
+
+    if cluster == "cuda_tc_mid_smem":
+        score += (140.0 if kind == "attn2d_causal_softmax_v6" else 40.0)
+    elif cluster == "cuda_tc_large_smem":
+        score += (120.0 if kind == "attn2d_causal_softmax_v6" else (126.0 if v7_front_allowed else 90.0))
+    else:
+        score += (100.0 if kind == "attn2d_causal_softmax_v6" else 60.0)
+
+    score += {64: 30.0, 32: 20.0, 16: 10.0}.get(int(block_kv), 0.0)
+    reasons.append(f"block_kv={block_kv}")
+    if kind == "attn2d_causal_softmax_v6":
+        score += {6: 15.0, 4: 10.0, 2: 2.0}.get(int(score_warps), 0.0)
+        reasons.append(f"score_warps={score_warps}")
+    if kind == "attn2d_causal_softmax_v7" and not v7_front_allowed:
+        score -= 60.0
+        portability_note = "cluster_prefers_v6"
+        reasons.append("v7_front_disallowed")
+    if "streaming_softmax_state" in goal_tags and kind == "attn2d_causal_softmax_v6":
+        score += 8.0
+        reasons.append("preserve:streaming_softmax_state")
+    if "avoid_materialization" in goal_tags and kind == "attn2d_causal_softmax_v7" and v7_front_allowed:
+        score += 12.0
+        reasons.append("preserve:avoid_materialization")
+    if resident_bytes > 0 and cluster == "cuda_tc_mid_smem":
+        budget_bytes = int(128 * 1024 * 0.8)
+        if resident_bytes > budget_bytes:
+            score -= 80.0
+            portability_note = "resident_bytes_over_budget"
+            reasons.append("resident_bytes_over_budget")
+    if source_kind == kind and {str(k): int(v) for k, v in source_bindings.items()} == bindings:
+        score += 4.0
+        reasons.append("source_exact")
+    if is_async:
+        score += (6.0 if cluster == "cuda_tc_mid_smem" else 14.0)
+        reasons.append("async_pipeline")
+    if kv_ctx == block_kv:
+        score += 3.0
+        reasons.append("full_kv_tile")
+    return score, ",".join(reasons), portability_note
+
+
 def plan_flash_attention2d(
     org: OrgDoc,
     *,
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
+    ttgir_facts: Mapping[str, Any] | None = None,
+    ptx_facts: Mapping[str, Any] | None = None,
     budget: int = 32,
 ) -> BackendPlan:
     b = max(1, int(budget))
@@ -136,7 +229,7 @@ def plan_flash_attention2d(
     goal_tags = _goal_tags(org)
     mechanism_tags = _mechanism_tags(org)
 
-    modules, module_edges, passes = flash_attention2d_catalog(hardware_model)
+    modules, module_edges, _passes = flash_attention2d_catalog(hardware_model)
     selected_modules, selected_edges, substitutions = _selected_modules(
         modules=modules,
         module_edges=module_edges,
@@ -165,23 +258,19 @@ def plan_flash_attention2d(
             constraints=["HEAD_DIM == 64"],
             substitutions=substitutions,
             candidates=[],
-            notes=[f"goals={sorted(goal_tags)}"],
+            notes=[f"goals={sorted(goal_tags)}", f"cluster={hardware_model.arch_cluster}"],
         )
 
     dim_candidates_norm = collect_dim_candidate_ints_normalized(org)
-    source_bindings = {
-        str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()
-    }
-    preferred_block = _coerce_int(source_bindings.get("ATTN_BLOCK_KV"))
-    preferred_score = _coerce_int(source_bindings.get("ATTN_SCORE_WARPS"))
+    source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
     block_candidates = _ordered_param_values(
-        defaults=[32, 64, 16],
-        preferred=preferred_block,
+        defaults=[64, 32, 16],
+        preferred=_coerce_int(source_bindings.get("ATTN_BLOCK_KV")),
         allowed=union_dim_candidate_ints(dim_candidates_norm, "tile_kv", "ATTN_BLOCK_KV", "BLOCK_KV"),
     )
     score_candidates = _ordered_param_values(
         defaults=[6, 4, 2],
-        preferred=preferred_score,
+        preferred=_coerce_int(source_bindings.get("ATTN_SCORE_WARPS")),
         allowed=union_dim_candidate_ints(dim_candidates_norm, "score_warps", "ATTN_SCORE_WARPS", "SCORE_WARPS"),
     )
     block_candidates = [int(x) for x in block_candidates if int(x) <= int(kv_ctx)]
@@ -195,8 +284,9 @@ def plan_flash_attention2d(
             }
         )
 
+    cluster = str(hardware_model.arch_cluster)
     exact_kind = str(source_oracle.get("kernel_kind") or "").strip()
-    exact_bindings = {str(k): int(v) for k, v in source_bindings.items()}
+    exact_bindings = dict(source_bindings)
     want_pipeline = "latency_hiding" in goal_tags or "prefetch_pipeline" in mechanism_tags
     if exact_kind:
         preserve_notes.append(f"source_oracle_variant={exact_kind}")
@@ -205,11 +295,22 @@ def plan_flash_attention2d(
     if want_pipeline:
         preserve_notes.append("preserve:prefetch_pipeline")
 
+    async_evidence_ok = _complete_async_evidence(ttgir_facts=ttgir_facts, ptx_facts=ptx_facts)
+    if want_pipeline and not async_evidence_ok:
+        substitutions.append(
+            {
+                "from": "flash.prefetch_pipeline",
+                "to": "flash.sync_prefetch",
+                "reason": "incomplete async evidence",
+            }
+        )
+        preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
+
     param_space = {
         "kernel_kind": ["attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"],
         "ATTN_BLOCK_KV": list(block_candidates),
         "ATTN_SCORE_WARPS": list(score_candidates),
-        "FLASH_ATTN_ASYNC_COPY": ([1] if want_pipeline and hardware_model.supports_async_copy else []),
+        "FLASH_ATTN_ASYNC_COPY": ([1] if want_pipeline and hardware_model.supports_async_copy and async_evidence_ok else []),
     }
     constraints = [
         "HEAD_DIM == 64",
@@ -217,67 +318,139 @@ def plan_flash_attention2d(
         "ATTN_SCORE_WARPS in {2,4,6}",
         "resident_working_set preserved",
         "streaming_softmax_state preserved",
+        "async requires complete pipeline evidence",
     ]
 
-    ordered: list[BackendCandidate] = []
+    scored: list[BackendCandidate] = []
     if exact_kind in {"attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"}:
-        ordered.append(BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings), note="source_exact"))
-
-    for bk in block_candidates:
-        ordered.append(
+        score, score_reason, portability_note = _score_flash_candidate(
+            candidate=BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings)),
+            goal_tags=goal_tags,
+            cluster=cluster,
+            source_oracle=source_oracle,
+            kv_ctx=kv_ctx,
+            head_dim=head_dim,
+            ttgir_facts=ttgir_facts,
+            async_evidence_ok=async_evidence_ok,
+        )
+        scored.append(
             BackendCandidate(
-                kernel_kind="attn2d_causal_softmax_v7",
-                bindings={"ATTN_BLOCK_KV": int(bk)},
-                note=("goal_mix" if goal_tags else "default"),
+                kernel_kind=exact_kind,
+                bindings=dict(exact_bindings),
+                note="source_exact",
+                score=score,
+                score_reason=score_reason,
+                cluster=cluster,
+                portability_note=portability_note,
             )
         )
+
     for bk in block_candidates:
         for sw in score_candidates:
-            ordered.append(
+            candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v6", bindings={"ATTN_BLOCK_KV": int(bk), "ATTN_SCORE_WARPS": int(sw)})
+            score, score_reason, portability_note = _score_flash_candidate(
+                candidate=candidate,
+                goal_tags=goal_tags,
+                cluster=cluster,
+                source_oracle=source_oracle,
+                kv_ctx=kv_ctx,
+                head_dim=head_dim,
+                ttgir_facts=ttgir_facts,
+                async_evidence_ok=async_evidence_ok,
+            )
+            scored.append(
                 BackendCandidate(
-                    kernel_kind="attn2d_causal_softmax_v6",
-                    bindings={"ATTN_BLOCK_KV": int(bk), "ATTN_SCORE_WARPS": int(sw)},
-                    note=("goal_mix" if goal_tags else "default"),
+                    kernel_kind=candidate.kernel_kind,
+                    bindings=dict(candidate.bindings),
+                    note="cluster_rank",
+                    score=score,
+                    score_reason=score_reason,
+                    cluster=cluster,
+                    portability_note=portability_note,
                 )
             )
 
-    if want_pipeline and hardware_model.supports_async_copy:
-        async_candidates: list[BackendCandidate] = []
-        async_ok = False
+    for bk in block_candidates:
+        candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v7", bindings={"ATTN_BLOCK_KV": int(bk)})
+        score, score_reason, portability_note = _score_flash_candidate(
+            candidate=candidate,
+            goal_tags=goal_tags,
+            cluster=cluster,
+            source_oracle=source_oracle,
+            kv_ctx=kv_ctx,
+            head_dim=head_dim,
+            ttgir_facts=ttgir_facts,
+            async_evidence_ok=async_evidence_ok,
+        )
+        scored.append(
+            BackendCandidate(
+                kernel_kind=candidate.kernel_kind,
+                bindings=dict(candidate.bindings),
+                note="cluster_rank",
+                score=score,
+                score_reason=score_reason,
+                cluster=cluster,
+                portability_note=portability_note,
+            )
+        )
+
+    if want_pipeline and hardware_model.supports_async_copy and async_evidence_ok:
+        preferred_score = score_candidates[0]
         for bk in block_candidates:
-            sw = preferred_score if preferred_score is not None else score_candidates[0]
-            ok, reason = _async_copy_guardrails(kv_ctx=kv_ctx, head_dim=head_dim, block_kv=int(bk), score_warps=int(sw))
-            if ok:
-                async_ok = True
-                async_candidates.append(
-                    BackendCandidate(
-                        kernel_kind="attn2d_causal_softmax_v7",
-                        bindings={"ATTN_BLOCK_KV": int(bk), "FLASH_ATTN_ASYNC_COPY": 1},
-                        note="latency_hiding_async",
-                    )
-                )
-            else:
+            ok, reason = _async_copy_guardrails(kv_ctx=kv_ctx, head_dim=head_dim, block_kv=int(bk), score_warps=int(preferred_score))
+            if not ok:
                 substitutions.append(
                     {
                         "from": "flash.prefetch_pipeline",
                         "to": "flash.sync_prefetch",
                         "reason": reason,
-                        "detail": {"ATTN_BLOCK_KV": int(bk), "ATTN_SCORE_WARPS": int(sw)},
+                        "detail": {"ATTN_BLOCK_KV": int(bk), "ATTN_SCORE_WARPS": int(preferred_score)},
                     }
                 )
-        ordered = async_candidates + ordered
-        if (source_bindings.get("FLASH_ATTN_ASYNC_COPY") or 0) == 1 and not async_ok:
-            substitutions.append(
-                {
-                    "from": "source.prefetch_pipeline",
-                    "to": "flash.sync_prefetch",
-                    "reason": "source async-copy candidate has no valid target realization",
-                }
+                continue
+            candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v7", bindings={"ATTN_BLOCK_KV": int(bk), "FLASH_ATTN_ASYNC_COPY": 1})
+            score, score_reason, portability_note = _score_flash_candidate(
+                candidate=candidate,
+                goal_tags=goal_tags,
+                cluster=cluster,
+                source_oracle=source_oracle,
+                kv_ctx=kv_ctx,
+                head_dim=head_dim,
+                ttgir_facts=ttgir_facts,
+                async_evidence_ok=async_evidence_ok,
             )
-            preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
+            scored.append(
+                BackendCandidate(
+                    kernel_kind=candidate.kernel_kind,
+                    bindings=dict(candidate.bindings),
+                    note="latency_hiding_async",
+                    score=score,
+                    score_reason=score_reason,
+                    cluster=cluster,
+                    portability_note=portability_note,
+                )
+            )
+
+    if (source_bindings.get("FLASH_ATTN_ASYNC_COPY") or 0) == 1 and not any(c.bindings.get("FLASH_ATTN_ASYNC_COPY") == 1 for c in scored):
+        substitutions.append(
+            {
+                "from": "source.prefetch_pipeline",
+                "to": "flash.sync_prefetch",
+                "reason": "source async-copy candidate has no valid target realization",
+            }
+        )
 
     final: list[BackendCandidate] = []
     seen: set[tuple[str, tuple[tuple[str, int], ...]]] = set()
+    ordered = sorted(
+        scored,
+        key=lambda c: (
+            -float(c.score if c.score is not None else 0.0),
+            0 if c.kernel_kind == "attn2d_causal_softmax_v6" else 1,
+            -int(c.bindings.get("ATTN_BLOCK_KV", 0)),
+            -int(c.bindings.get("ATTN_SCORE_WARPS", 0)),
+        ),
+    )
     for candidate in ordered:
         key = _candidate_key(candidate)
         if key in seen:
@@ -301,6 +474,8 @@ def plan_flash_attention2d(
             f"goals={sorted(goal_tags)}",
             f"mechanisms={sorted(mechanism_tags)}",
             f"source_kernel_kind={exact_kind or 'none'}",
+            f"cluster={cluster}",
+            f"async_evidence={bool(async_evidence_ok)}",
             *preserve_notes,
         ],
     )

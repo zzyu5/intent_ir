@@ -48,10 +48,8 @@ def _ordered_param_values(defaults: list[int], preferred: int | None, allowed: l
     if allowed:
         allowed_set = {int(x) for x in allowed}
         vals = [int(x) for x in vals if int(x) in allowed_set]
-        if preferred is not None and int(preferred) in allowed_set and int(preferred) not in vals:
-            vals.insert(0, int(preferred))
-    if preferred is not None and int(preferred) in vals:
-        vals = [int(preferred)] + [int(x) for x in vals if int(x) != int(preferred)]
+    if preferred is not None and int(preferred) not in vals and (not allowed or int(preferred) in set(allowed)):
+        vals.append(int(preferred))
     return _ordered_unique(vals)
 
 
@@ -125,12 +123,94 @@ def _candidate_key(candidate: BackendCandidate) -> tuple[str, tuple[tuple[str, i
     return str(candidate.kernel_kind), tuple(sorted((str(k), int(v)) for k, v in dict(candidate.bindings or {}).items()))
 
 
+def _fact_present(facts: Mapping[str, Any] | None, key: str) -> bool:
+    mechanisms = dict((facts or {}).get("mechanisms") or {})
+    return bool(dict(mechanisms.get(str(key)) or {}).get("present"))
+
+
+def _fact_attr(facts: Mapping[str, Any] | None, key: str, attr: str, default: Any = None) -> Any:
+    mechanisms = dict((facts or {}).get("mechanisms") or {})
+    attrs = dict(dict(mechanisms.get(str(key)) or {}).get("attrs") or {})
+    return attrs.get(str(attr), default)
+
+
+def _complete_async_evidence(
+    *,
+    ttgir_facts: Mapping[str, Any] | None,
+    ptx_facts: Mapping[str, Any] | None,
+) -> bool:
+    return bool(
+        _fact_present(ttgir_facts, "staging.operand_tile_stage")
+        and _fact_present(ttgir_facts, "pipeline.stage_hint")
+        and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False))
+        and bool(_fact_attr(ptx_facts, "primitive.mma", "complete_matrix_pipeline", False))
+    )
+
+
+def _score_matmul_candidate(
+    *,
+    candidate: BackendCandidate,
+    cluster: str,
+    source_oracle: Mapping[str, Any],
+    complete_async_evidence: bool,
+    goal_tags: set[str],
+) -> tuple[float, str, str]:
+    kind = str(candidate.kernel_kind)
+    bindings = {str(k): int(v) for k, v in dict(candidate.bindings or {}).items()}
+    is_async = bool(bindings.get("MMA_ASYNC_COPY", 0))
+    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
+    source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
+
+    score = 0.0
+    reasons: list[str] = [f"cluster={cluster}"]
+    portability_note = "portable"
+
+    if kind == "matmul_mma_tf32_v1":
+        score += 120.0
+        reasons.append("mma_core")
+    elif kind == "matmul_tile_v2":
+        score += 60.0
+        portability_note = "tile_fallback"
+    else:
+        score += 45.0
+        portability_note = "tile_fallback"
+
+    if kind == "matmul_mma_tf32_v1":
+        score += {32: 12.0, 16: 6.0, 64: 4.0}.get(int(bindings.get("MMA_BK", 0)), 0.0)
+        score += {32: 10.0, 64: 4.0}.get(int(bindings.get("MMA_BM", 0)), 0.0)
+        score += {32: 10.0, 16: 4.0}.get(int(bindings.get("MMA_BN", 0)), 0.0)
+    if "fused_epilogue_avoid_writeback" in goal_tags and kind.startswith("matmul_"):
+        score += 4.0
+        reasons.append("preserve:epilogue")
+    if "mma_acceleration" in goal_tags and kind == "matmul_mma_tf32_v1":
+        score += 8.0
+        reasons.append("preserve:mma")
+
+    if is_async:
+        if cluster == "cuda_generic" or not complete_async_evidence:
+            score -= 80.0
+            portability_note = "async_portability_blocked"
+            reasons.append("async_portability_blocked")
+        elif cluster == "cuda_tc_mid_smem":
+            score -= 10.0
+            reasons.append("async_mid_smem")
+        else:
+            score += 10.0
+            reasons.append("async_large_smem")
+    if source_kind == kind and source_bindings == bindings:
+        score += 4.0
+        reasons.append("source_exact")
+    return score, ",".join(reasons), portability_note
+
+
 def plan_matmul_fused_epilogue2d(
     org: OrgDoc,
     *,
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
+    ttgir_facts: Mapping[str, Any] | None = None,
+    ptx_facts: Mapping[str, Any] | None = None,
     budget: int = 32,
 ) -> BackendPlan:
     b = max(1, int(budget))
@@ -140,7 +220,7 @@ def plan_matmul_fused_epilogue2d(
     goal_tags = _goal_tags(org)
     mechanism_tags = _mechanism_tags(org)
 
-    modules, module_edges, passes = matmul_fused_epilogue2d_catalog(hardware_model)
+    modules, module_edges, _passes = matmul_fused_epilogue2d_catalog(hardware_model)
     selected_modules, selected_edges, substitutions = _selected_modules(
         modules=modules,
         module_edges=module_edges,
@@ -169,7 +249,7 @@ def plan_matmul_fused_epilogue2d(
             constraints=["K % 8 == 0"],
             substitutions=substitutions,
             candidates=[],
-            notes=[f"goals={sorted(goal_tags)}"],
+            notes=[f"goals={sorted(goal_tags)}", f"cluster={hardware_model.arch_cluster}"],
         )
 
     dim_candidates_norm = collect_dim_candidate_ints_normalized(org)
@@ -190,23 +270,14 @@ def plan_matmul_fused_epilogue2d(
         allowed=union_dim_candidate_ints(dim_candidates_norm, "tile_k", "MMA_BK", "BLOCK_K"),
     )
 
-    param_space = {
-        "kernel_kind": ["matmul_mma_tf32_v1", "matmul_tile_v2", "matmul_tile_v1"],
-        "MMA_BM": list(bm_values),
-        "MMA_BN": list(bn_values),
-        "MMA_BK": list(bk_values),
-        "MMA_ASYNC_COPY": ([1] if hardware_model.supports_async_copy and "prefetch_pipeline" in {m.id for m in selected_modules} else []),
-    }
-    constraints = [
-        "MMA_BM%16==0",
-        "MMA_BN%16==0",
-        "MMA_BK%8==0",
-        "fused_epilogue_avoid_writeback preserved",
-    ]
-
+    cluster = str(hardware_model.arch_cluster)
     exact_kind = str(source_oracle.get("kernel_kind") or "").strip()
     exact_bindings = dict(source_bindings)
-    want_async = any(m.id == "prefetch_pipeline" for m in selected_modules)
+    want_async = bool(
+        any(m.id == "prefetch_pipeline" for m in selected_modules)
+        and hardware_model.supports_async_copy
+        and "latency_hiding" in goal_tags
+    )
     want_mma = any(m.id == "mma_core" for m in selected_modules)
     if exact_kind:
         preserve_notes.append(f"source_oracle_variant={exact_kind}")
@@ -214,14 +285,35 @@ def plan_matmul_fused_epilogue2d(
         preserve_notes.append("preserve:mma_core")
     if "epilogue_fused_writeback" in mechanism_tags or "fused_epilogue_avoid_writeback" in goal_tags:
         preserve_notes.append("preserve:epilogue_fused_writeback")
-    if want_async:
-        preserve_notes.append("preserve:prefetch_pipeline")
-    ordered: list[BackendCandidate] = []
-    if exact_kind in {"matmul_mma_tf32_v1", "matmul_tile_v2", "matmul_tile_v1"}:
-        ordered.append(BackendCandidate(kernel_kind=exact_kind, bindings=exact_bindings, note="source_exact"))
 
+    complete_async_evidence = _complete_async_evidence(ttgir_facts=ttgir_facts, ptx_facts=ptx_facts)
+    if want_async and not complete_async_evidence:
+        substitutions.append(
+            {
+                "from": "matmul.prefetch_pipeline",
+                "to": "matmul.sync_prefetch",
+                "reason": "incomplete async evidence",
+            }
+        )
+        preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
+
+    param_space = {
+        "kernel_kind": ["matmul_mma_tf32_v1", "matmul_tile_v2", "matmul_tile_v1"],
+        "MMA_BM": list(bm_values),
+        "MMA_BN": list(bn_values),
+        "MMA_BK": list(bk_values),
+        "MMA_ASYNC_COPY": ([1] if want_async and complete_async_evidence and cluster != "cuda_generic" else []),
+    }
+    constraints = [
+        "MMA_BM%16==0",
+        "MMA_BN%16==0",
+        "MMA_BK%8==0",
+        "fused_epilogue_avoid_writeback preserved",
+        "portable sync MMA outranks async on mid_smem",
+    ]
+
+    scored: list[BackendCandidate] = []
     if want_mma:
-        async_ok = False
         for bm in bm_values:
             if (m_dim % int(bm)) != 0:
                 continue
@@ -235,31 +327,36 @@ def plan_matmul_fused_epilogue2d(
                 for bk in bk_values:
                     if (k_dim % int(bk)) != 0:
                         continue
-                    ordered.append(
+                    sync_candidate = BackendCandidate(kernel_kind="matmul_mma_tf32_v1", bindings={"MMA_BM": int(bm), "MMA_BN": int(bn), "MMA_BK": int(bk)})
+                    score, score_reason, portability_note = _score_matmul_candidate(
+                        candidate=sync_candidate,
+                        cluster=cluster,
+                        source_oracle=source_oracle,
+                        complete_async_evidence=complete_async_evidence,
+                        goal_tags=goal_tags,
+                    )
+                    if exact_kind == "matmul_mma_tf32_v1" and int(source_bindings.get("MMA_ASYNC_COPY", 0)) == 1 and sync_candidate.bindings == {
+                        "MMA_BM": int(source_bindings.get("MMA_BM", bm)),
+                        "MMA_BN": int(source_bindings.get("MMA_BN", bn)),
+                        "MMA_BK": int(source_bindings.get("MMA_BK", bk)),
+                    }:
+                        score += 30.0
+                        portability_note = "drop:MMA_ASYNC_COPY"
+                        score_reason = f"{score_reason},portable_mma_repair"
+                    scored.append(
                         BackendCandidate(
-                            kernel_kind="matmul_mma_tf32_v1",
-                            bindings={"MMA_BM": int(bm), "MMA_BN": int(bn), "MMA_BK": int(bk)},
-                            note="mma_neighbor",
+                            kernel_kind=sync_candidate.kernel_kind,
+                            bindings=dict(sync_candidate.bindings),
+                            note="portable_mma_neighbor",
+                            score=score,
+                            score_reason=score_reason,
+                            cluster=cluster,
+                            portability_note=portability_note,
                         )
                     )
-                    if want_async:
+                    if want_async and complete_async_evidence and cluster != "cuda_generic":
                         ok, reason = _mma_async_guardrails(bm=int(bm), bn=int(bn), bk=int(bk), threads=int(threads))
-                        if ok:
-                            async_ok = True
-                            ordered.insert(
-                                0,
-                                BackendCandidate(
-                                    kernel_kind="matmul_mma_tf32_v1",
-                                    bindings={
-                                        "MMA_BM": int(bm),
-                                        "MMA_BN": int(bn),
-                                        "MMA_BK": int(bk),
-                                        "MMA_ASYNC_COPY": 1,
-                                    },
-                                    note="latency_hiding_async",
-                                ),
-                            )
-                        else:
+                        if not ok:
                             substitutions.append(
                                 {
                                     "from": "matmul.prefetch_pipeline",
@@ -268,21 +365,58 @@ def plan_matmul_fused_epilogue2d(
                                     "detail": {"MMA_BM": int(bm), "MMA_BN": int(bn), "MMA_BK": int(bk)},
                                 }
                             )
-        if (source_bindings.get("MMA_ASYNC_COPY") or 0) == 1 and want_async and not async_ok:
-            substitutions.append(
-                {
-                    "from": "source.prefetch_pipeline",
-                    "to": "matmul.sync_prefetch",
-                    "reason": "source async MMA path has no valid target realization",
-                }
-            )
-            preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
+                            continue
+                        async_candidate = BackendCandidate(
+                            kernel_kind="matmul_mma_tf32_v1",
+                            bindings={"MMA_BM": int(bm), "MMA_BN": int(bn), "MMA_BK": int(bk), "MMA_ASYNC_COPY": 1},
+                        )
+                        async_score, async_reason, async_portability = _score_matmul_candidate(
+                            candidate=async_candidate,
+                            cluster=cluster,
+                            source_oracle=source_oracle,
+                            complete_async_evidence=complete_async_evidence,
+                            goal_tags=goal_tags,
+                        )
+                        scored.append(
+                            BackendCandidate(
+                                kernel_kind=async_candidate.kernel_kind,
+                                bindings=dict(async_candidate.bindings),
+                                note="portable_async_mma",
+                                score=async_score,
+                                score_reason=async_reason,
+                                cluster=cluster,
+                                portability_note=async_portability,
+                            )
+                        )
 
-    ordered.append(BackendCandidate(kernel_kind="matmul_tile_v2", bindings={}, note="tile_baseline"))
-    ordered.append(BackendCandidate(kernel_kind="matmul_tile_v1", bindings={}, note="tile_fallback"))
+    if exact_kind == "matmul_mma_tf32_v1" and int(source_bindings.get("MMA_ASYNC_COPY", 0)) == 1 and not any(
+        c.note == "portable_mma_neighbor" and c.portability_note == "drop:MMA_ASYNC_COPY" for c in scored
+    ):
+        substitutions.append(
+            {
+                "from": "source.prefetch_pipeline",
+                "to": "matmul.sync_prefetch",
+                "reason": "source async MMA path has no valid portable target realization",
+            }
+        )
+
+    tile_v2 = BackendCandidate(kernel_kind="matmul_tile_v2", bindings={}, note="tile_baseline", score=60.0, score_reason=f"cluster={cluster},tile_v2", cluster=cluster, portability_note="tile_fallback")
+    tile_v1 = BackendCandidate(kernel_kind="matmul_tile_v1", bindings={}, note="tile_fallback", score=45.0, score_reason=f"cluster={cluster},tile_v1", cluster=cluster, portability_note="tile_fallback")
+    scored.extend([tile_v2, tile_v1])
 
     final: list[BackendCandidate] = []
     seen: set[tuple[str, tuple[tuple[str, int], ...]]] = set()
+    ordered = sorted(
+        scored,
+        key=lambda c: (
+            -float(c.score if c.score is not None else 0.0),
+            0 if c.kernel_kind == "matmul_mma_tf32_v1" else (1 if c.kernel_kind == "matmul_tile_v2" else 2),
+            -int(c.bindings.get("MMA_BK", 0)),
+            -int(c.bindings.get("MMA_BM", 0)),
+            -int(c.bindings.get("MMA_BN", 0)),
+            0 if int(c.bindings.get("MMA_ASYNC_COPY", 0)) == 0 else 1,
+        ),
+    )
     for candidate in ordered:
         key = _candidate_key(candidate)
         if key in seen:
@@ -306,6 +440,8 @@ def plan_matmul_fused_epilogue2d(
             f"goals={sorted(goal_tags)}",
             f"mechanisms={sorted(mechanism_tags)}",
             f"source_kernel_kind={exact_kind or 'none'}",
+            f"cluster={cluster}",
+            f"async_evidence={bool(complete_async_evidence)}",
             *preserve_notes,
         ],
     )
