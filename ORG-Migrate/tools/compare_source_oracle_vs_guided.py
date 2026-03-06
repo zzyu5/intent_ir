@@ -22,6 +22,13 @@ def _candidate_line(kernel_kind: str, bindings: dict[str, int]) -> str:
     return f"{kernel_kind}:{flat}" if flat else str(kernel_kind)
 
 
+def _coerce_int(x: Any) -> int | None:
+    try:
+        return int(x)
+    except Exception:
+        return None
+
+
 def _parse_candidate_line(candidate: str) -> tuple[str, dict[str, int]]:
     raw = str(candidate or "").strip()
     if not raw:
@@ -309,6 +316,37 @@ def _find_guided_repair(guided_res: dict[str, Any], candidate: str) -> dict[str,
     return {}
 
 
+def _find_flash_cluster_repair(
+    *,
+    guided_res: dict[str, Any],
+    candidate: str,
+    hardware_cluster: str,
+) -> dict[str, Any]:
+    kind, bindings = _parse_candidate_line(candidate)
+    if kind != "attn2d_causal_softmax_v7" or str(hardware_cluster) != "cuda_tc_mid_smem":
+        return {}
+    block_kv = _coerce_int(bindings.get("ATTN_BLOCK_KV"))
+    best: dict[str, Any] | None = None
+    for guided in _candidate_summaries(guided_res):
+        if str(guided.get("kernel_kind") or "") != "attn2d_causal_softmax_v6":
+            continue
+        gb = {str(k): int(v) for k, v in dict(guided.get("bindings") or {}).items()}
+        if block_kv is not None and int(gb.get("ATTN_BLOCK_KV", -1)) != int(block_kv):
+            continue
+        if guided.get("ratio") is None:
+            continue
+        if best is None or float(guided["ratio"]) > float(best["ratio"]):
+            best = guided
+    if best is None:
+        return {}
+    return {
+        "status": "requires_substitution",
+        "reason": "cluster_variant_shift",
+        "repair_candidate": _candidate_line(str(best.get("kernel_kind") or ""), dict(best.get("bindings") or {})),
+        "repair_ratio": float(best["ratio"]),
+    }
+
+
 def _candidate_origin(*, source_oracle_kind: str, resolved_candidate: str, arch: str, kind: str) -> str:
     if not resolved_candidate:
         return ""
@@ -386,6 +424,7 @@ def _analyze_replay_candidate(
     candidate_origin: str,
     replay_result: dict[str, Any],
     guided_res: dict[str, Any],
+    hardware_cluster: str,
 ) -> dict[str, Any]:
     if not str(candidate or "").strip():
         missing = _missing_candidate_outcome(label)
@@ -398,6 +437,19 @@ def _analyze_replay_candidate(
         }
     outcome = _make_outcome(replay_result)
     if outcome["status"] == "ok":
+        flash_cluster_repair = _find_flash_cluster_repair(
+            guided_res=guided_res,
+            candidate=candidate,
+            hardware_cluster=hardware_cluster,
+        )
+        if flash_cluster_repair:
+            return {
+                "status": str(flash_cluster_repair.get("status") or "requires_substitution"),
+                "candidate": str(candidate),
+                "candidate_origin": str(candidate_origin),
+                "repair": flash_cluster_repair,
+                "outcome": outcome,
+            }
         return {
             "status": "replayable",
             "candidate": str(candidate),
@@ -406,6 +458,12 @@ def _analyze_replay_candidate(
             "outcome": outcome,
         }
     repair = _find_guided_repair(guided_res, candidate)
+    if not repair and label in {"source_replay", "target_oracle"}:
+        repair = _find_flash_cluster_repair(
+            guided_res=guided_res,
+            candidate=candidate,
+            hardware_cluster=hardware_cluster,
+        )
     if repair:
         return {
             "status": str(repair.get("status") or "requires_substitution"),
@@ -493,6 +551,7 @@ def main() -> int:
     kernel = str(report_path.stem)
     org = dict(report.get("org") or {})
     hardware_model = dict(org.get("hardware_model") or {})
+    hardware_cluster = str(hardware_model.get("arch_cluster") or "")
     plan_path = Path(str(org.get("plan_path") or report_path.with_name(f"{kernel}.org_plan.json"))).resolve()
     candidates_txt_path = Path(str(org.get("candidates_txt_path") or report_path.with_name(f"{kernel}.org_candidates.txt"))).resolve()
     if not plan_path.is_file():
@@ -587,6 +646,7 @@ def main() -> int:
         candidate_origin=source_candidate_origin,
         replay_result=source_res,
         guided_res=guided_res,
+        hardware_cluster=hardware_cluster,
     )
     target_analysis = _analyze_replay_candidate(
         label="target_oracle",
@@ -594,6 +654,7 @@ def main() -> int:
         candidate_origin=target_candidate_origin,
         replay_result=target_res,
         guided_res=guided_res,
+        hardware_cluster=hardware_cluster,
     )
     source_portable = _portable_outcome(label="source_replay", analysis=source_analysis, raw_outcome=source_outcome)
     target_portable = _portable_outcome(label="target_oracle", analysis=target_analysis, raw_outcome=target_outcome)
