@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,6 +72,13 @@ def _git_head() -> str:
     return str(p.stdout).strip()
 
 
+def _resolve_generator(raw: str) -> str:
+    generator = str(raw or "").strip() or "Ninja"
+    if generator.lower() == "ninja" and shutil.which("ninja") is None:
+        return "Unix Makefiles"
+    return generator
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--toolchain-prefix", type=Path, default=DEFAULT_TOOLCHAIN_PREFIX)
@@ -104,6 +112,8 @@ def main() -> None:
         shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
 
+    generator = _resolve_generator(str(args.generator))
+
     cfg_cmd = [
         "cmake",
         "-S",
@@ -111,7 +121,7 @@ def main() -> None:
         "-B",
         str(build_dir),
         "-G",
-        str(args.generator),
+        str(generator),
         f"-DCMAKE_BUILD_TYPE={args.build_type}",
         f"-DMLIR_DIR={mlir_dir}",
         f"-DLLVM_DIR={llvm_dir}",
@@ -148,6 +158,7 @@ def main() -> None:
         "generated_at": _utc_now_iso(),
         "repo_head": _git_head(),
         "toolchain_prefix": str(toolchain),
+        "generator": str(generator),
         "mlir_opt_version": _tool_version(mlir_opt) if mlir_opt.is_file() else "",
         "plugin_src": str(PLUGIN_SRC),
         "plugin_path": str(out_lib),
@@ -162,4 +173,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
