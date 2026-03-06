@@ -152,9 +152,12 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["comparisons"]["source_replay_portable_ratio"] is None
     assert payload["comparisons"]["guided_best_qps_intentir"] == 162.0
     assert payload["comparisons"]["guided_best_qps_native"] == 200.0
+    assert payload["comparisons"]["shared_native_qps"] == 200.0
+    assert payload["comparisons"]["guided_shared_native_ratio"] == 0.81
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")
     assert "hardware_cluster: cuda_tc_mid_smem" in txt
     assert "guided_best_qps_intentir: 162.0" in txt
+    assert "shared_native_qps: 200.0" in txt
     assert "guided_outcome: ok" in txt
     assert "source_replay_outcome: failed" in txt
     assert "target_oracle_outcome: candidate_unavailable" in txt

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -720,6 +721,24 @@ def _safe_ratio(num: float | None, den: float | None) -> float | None:
     return float(num) / float(den)
 
 
+def _median_or_none(values: list[float]) -> float | None:
+    vals = [float(x) for x in values if x is not None]
+    if not vals:
+        return None
+    return float(statistics.median(vals))
+
+
+def _spread_ratio(values: list[float]) -> float | None:
+    vals = [float(x) for x in values if x is not None]
+    if len(vals) < 2:
+        return None
+    lo = min(vals)
+    hi = max(vals)
+    if lo == 0.0:
+        return None
+    return float(hi / lo)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare source-oracle replay vs ORG-guided candidates on target GPU.")
     parser.add_argument("--report", required=True, help="Path to <kernel>.json report emitted by full_pipeline_verify.")
@@ -919,6 +938,21 @@ def main() -> int:
     sp_portable = payload["comparisons"]["source_replay_portable_ratio"]
     tp_raw = payload["comparisons"]["target_oracle_raw_ratio"]
     tp_portable = payload["comparisons"]["target_oracle_portable_ratio"]
+    native_qps_values = [
+        payload["comparisons"].get("guided_best_qps_native"),
+        payload["comparisons"].get("source_replay_raw_qps_native"),
+        payload["comparisons"].get("target_oracle_raw_qps_native"),
+    ]
+    shared_native_qps = _median_or_none(native_qps_values)
+    payload["comparisons"]["shared_native_qps"] = shared_native_qps
+    payload["comparisons"]["native_qps_spread_ratio"] = _spread_ratio(native_qps_values)
+    payload["comparisons"]["guided_shared_native_ratio"] = _safe_ratio(payload["comparisons"].get("guided_best_qps_intentir"), shared_native_qps)
+    payload["comparisons"]["source_replay_portable_shared_native_ratio"] = _safe_ratio(
+        payload["comparisons"].get("source_replay_portable_qps_intentir"), shared_native_qps
+    )
+    payload["comparisons"]["target_oracle_portable_shared_native_ratio"] = _safe_ratio(
+        payload["comparisons"].get("target_oracle_portable_qps_intentir"), shared_native_qps
+    )
     payload["comparisons"]["guided_vs_source_replay_raw"] = _safe_ratio(gp, sp_raw)
     payload["comparisons"]["guided_vs_source_replay_portable"] = _safe_ratio(gp, sp_portable)
     payload["comparisons"]["guided_vs_target_oracle_raw"] = _safe_ratio(gp, tp_raw)
@@ -956,6 +990,11 @@ def main() -> int:
         f"target_oracle_portable_ratio: {payload['comparisons']['target_oracle_portable_ratio']}",
         f"target_oracle_portable_qps_intentir: {payload['comparisons']['target_oracle_portable_qps_intentir']}",
         f"target_oracle_portable_qps_native: {payload['comparisons']['target_oracle_portable_qps_native']}",
+        f"shared_native_qps: {payload['comparisons']['shared_native_qps']}",
+        f"native_qps_spread_ratio: {payload['comparisons']['native_qps_spread_ratio']}",
+        f"guided_shared_native_ratio: {payload['comparisons']['guided_shared_native_ratio']}",
+        f"source_replay_portable_shared_native_ratio: {payload['comparisons']['source_replay_portable_shared_native_ratio']}",
+        f"target_oracle_portable_shared_native_ratio: {payload['comparisons']['target_oracle_portable_shared_native_ratio']}",
         f"guided_vs_source_replay_raw: {payload['comparisons']['guided_vs_source_replay_raw']}",
         f"guided_vs_source_replay_portable: {payload['comparisons']['guided_vs_source_replay_portable']}",
         f"guided_vs_target_oracle_raw: {payload['comparisons']['guided_vs_target_oracle_raw']}",

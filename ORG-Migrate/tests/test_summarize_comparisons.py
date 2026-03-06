@@ -47,6 +47,11 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                     "target_oracle_portable_ratio": 0.9,
                     "target_oracle_portable_qps_intentir": 180.0,
                     "target_oracle_portable_qps_native": 200.0,
+                    "shared_native_qps": 200.0,
+                    "native_qps_spread_ratio": 1.0,
+                    "guided_shared_native_ratio": 0.8,
+                    "source_replay_portable_shared_native_ratio": 0.75,
+                    "target_oracle_portable_shared_native_ratio": 0.9,
                     "source_replay_best_ratio": 0.7,
                     "target_oracle_best_ratio": 0.9,
                     "guided_vs_source_replay_raw": None,
@@ -107,6 +112,7 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
     assert row["kernel"] == "flash_attention2d"
     assert row["guided_best_ratio"] == 0.8
     assert row["guided_best_qps_intentir"] == 162.0
+    assert row["shared_native_qps"] == 200.0
     assert row["compiler_stack"] == "python"
     assert row["compiler_cpp_wave"] == ""
     assert row["source_compiler_stack"] == "cpp_plugin"
