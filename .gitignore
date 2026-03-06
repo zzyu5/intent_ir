@@ -3,6 +3,9 @@ intent_ir/llm_providers.local.json
 
 # Documentation directory
 doc/
+!ORG-Migrate/
+!ORG-Migrate/doc/
+!ORG-Migrate/doc/*.md
 
 # Archived local-only materials (history; not part of runtime/gates)
 archive/doc/
