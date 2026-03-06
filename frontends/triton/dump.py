@@ -45,4 +45,23 @@ def find_latest_ttgir(dump_dir: Path, name_hint: str) -> Optional[Path]:
     return _find_latest_artifact(dump_dir, suffix=".ttgir", name_hint=name_hint)
 
 
-__all__ = ["prepare_dump_and_cache_dirs", "find_latest_ttir", "find_latest_ttgir"]
+def find_latest_ptx(dump_dir: Path, name_hint: str) -> Optional[Path]:
+    return _find_latest_artifact(dump_dir, suffix=".ptx", name_hint=name_hint)
+
+
+def find_latest_llir(dump_dir: Path, name_hint: str) -> Optional[Path]:
+    return _find_latest_artifact(dump_dir, suffix=".llir", name_hint=name_hint)
+
+
+def find_latest_cubin(dump_dir: Path, name_hint: str) -> Optional[Path]:
+    return _find_latest_artifact(dump_dir, suffix=".cubin", name_hint=name_hint)
+
+
+__all__ = [
+    "prepare_dump_and_cache_dirs",
+    "find_latest_ttir",
+    "find_latest_ttgir",
+    "find_latest_ptx",
+    "find_latest_llir",
+    "find_latest_cubin",
+]
