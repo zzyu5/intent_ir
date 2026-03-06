@@ -1,9 +1,13 @@
 """
-Triton frontend: ORG (Optimization Rationale Graph) prompt builder.
+Triton frontend: ORG prompt builder for rationale-first extraction.
 
-This is intentionally separate from `llm_intent.py`:
-- `llm_intent.py` extracts semantic intent (IntentIR JSON).
-- `llm_org.py` extracts optimization rationale (why/how/dims + evidence).
+The runtime injects `source_context` and `source_oracle`; the LLM is responsible
+for the reasoning-bearing sections only:
+  - goals
+  - mechanisms
+  - dims
+  - evidence
+  - notes (optional)
 """
 
 from __future__ import annotations
@@ -13,70 +17,74 @@ from typing import Dict, List, Optional
 
 SYSTEM_PROMPT = """You are an expert kernel performance engineer.
 Given a Triton @triton.jit kernel source and an Evidence appendix (JSON),
-produce ONE Optimization Rationale Graph (ORG) JSON object.
+produce ONE strict ORG JSON object.
 
 Hard rules:
 - Output must be STRICT JSON object (no prose, no code fences).
 - schema_version MUST be "intentir_org_v1".
-- Required top-level keys:
-  - schema_version (string)
-  - kernel (string)
-  - nodes (list)
-  - edges (list; can be empty)
-  - meta (optional object)
-- Each node MUST be an object with keys:
-  - id (string)
-  - node_type (one of: tiling, staging, overlap_pipeline, parallel_mapping, communication, special_primitive)
-  - why (list[string])  # optimization goals/intent (hardware-agnostic)
-  - how (list[string])  # abstract mechanisms/structure (still hardware-agnostic)
-  - dims (list[ string | {name:string, allowed?:list, note?:string} ])
-  - constraints (list[string])  # symbolic constraints (no numeric tuning results)
-  - evidence (list[ {kind:string, path:string, detail?:string} ])  # cite evidence appendix paths
-  - attrs (optional object)
+- Top-level keys you must output:
+  - schema_version
+  - kernel
+  - goals
+  - mechanisms
+  - dims
+  - evidence
+  - notes (optional)
+- Runtime will inject `source_context` and `source_oracle`; do NOT invent or emit hardware mapping decisions.
 
-IMPORTANT:
-- Do NOT output any hardware mapping decisions. Do NOT choose backend variants.
-- Do NOT output numeric parameter values (e.g., "ATTN_BLOCK_KV=32"). Instead output dims names and constraints like:
-  "ATTN_BLOCK_KV in {16,32,64}" and "threads <= 1024".
-- When possible, express discrete candidate sets via `dims` objects with `allowed`, e.g.:
-  {"name":"ATTN_BLOCK_KV","allowed":[16,32,64]}.
-- Evidence.path MUST reference fields inside the provided Evidence appendix JSON (e.g., "frontend_facts.has_async")
-  or the provided intent_summary section, not raw TTIR lines.
-- Prefer stable, transferable tags in why/how, e.g.:
-  why: resident_working_set, iterate_in_scratchpad, streaming_softmax_state, avoid_materialization,
-       hide_memory_latency, avoid_recompute
-  how: scratchpad_staging, online_softmax, double_buffering, pipeline_overlap,
-       warp_reduce, block_reduce, score_cache
+Goal objects:
+- id: string
+- tag: one of:
+  resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding,
+  operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback
+- summary: short explanation of the performance objective
+- scope: short scope string (for example: kv_loop, q_state, epilogue, reduction)
+- tensors: list[string]
+- evidence_refs: list[string]
 
-If the kernel is attention-like, make sure ORG captures:
-- "streaming softmax state" and "avoid attention matrix materialization"
-- "working set residency" (what should live in scratchpad/near storage, at what loop window)
-- pipeline/overlap intent if present in evidence
+Mechanism objects:
+- id: string
+- tag: free-form but precise mechanism name
+- category: one of: tiling, staging, pipeline, mapping, communication, primitive, fusion
+- supports_goals: list[goal.id]
+- attrs: object
+- dims: list[dim.name]
+- evidence_refs: list[string]
 
-Edges:
-- Edge src/dst MUST be node.id strings (e.g., "n0"). Do NOT embed node objects.
-- If you are not confident about dependencies, set edges to an empty list.
+Dim objects:
+- name: string
+- role: string
+- candidates or range: choose one
+- constraints: list[string]
+- evidence_refs: list[string]
 
-Minimal example shape (you must still fill real content):
-{
-  "schema_version":"intentir_org_v1",
-  "kernel":"flash_attention2d",
-  "nodes":[{"id":"n0","node_type":"tiling","why":[],"how":[],"dims":[],"constraints":[],"evidence":[]}],
-  "edges":[]
-}
+Evidence objects:
+- id: string
+- kind: string
+- path: string
+- summary: short summary
+- text (optional): short excerpt or normalized witness
+
+Important:
+- Separate WHY from HOW from DIMS. Do NOT collapse them into one object.
+- Do NOT output backend variant names or target parameter assignments.
+- Do NOT output numeric tuning decisions copied from source oracle. You may output candidate sets for dimensions.
+- Every goal and every mechanism must have at least one evidence ref.
+- Prefer evidence from TTGIR/PTX/source_oracle facts over TTIR summaries when available.
+
+Kernel-specific expectations:
+- For flash_attention2d, capture:
+  resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
+- For matmul_fused_epilogue2d, capture:
+  operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
 """
 
 
-SYSTEM_PROMPT_COMPACT = """You are an expert kernel performance engineer.
-Return ONE strict ORG JSON object (intentir_org_v1). No prose, no code fences.
+SYSTEM_PROMPT_COMPACT = """Return ONE strict ORG JSON object.
 
-Top-level keys: schema_version,kernel,nodes,edges (meta optional).
-Each node: id,node_type,why,how,dims,constraints,evidence (attrs optional).
-
-Do NOT map to hardware/backends. Do NOT output numeric parameter values.
-Use evidence.path strings that reference Evidence appendix JSON fields.
-
-Edge rule: edges can be empty; if present, edge.src/edge.dst MUST be node.id strings.
+Required keys: schema_version, kernel, goals, mechanisms, dims, evidence (notes optional).
+Runtime injects source_context/source_oracle; do not output hardware mapping or target numeric assignments.
+Each goal/mechanism/dim must be evidence-backed.
 """
 
 
@@ -93,13 +101,13 @@ def build_messages(
     user_lines.append("Triton kernel:")
     user_lines.append(str(triton_src))
     if extra_instruction:
-        user_lines.append("\nExtra instructions:")
+        user_lines.append("")
+        user_lines.append("Evidence appendix and instructions:")
         user_lines.append(str(extra_instruction))
-    content = "\n".join(user_lines)
     return [
         {"role": "system", "content": (SYSTEM_PROMPT_COMPACT if compact else SYSTEM_PROMPT)},
-        {"role": "user", "content": content},
+        {"role": "user", "content": "\n".join(user_lines)},
     ]
 
 
-__all__ = ["build_messages", "SYSTEM_PROMPT"]
+__all__ = ["SYSTEM_PROMPT", "build_messages"]

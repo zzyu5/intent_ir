@@ -1,11 +1,9 @@
 """
-LLMOrgHub: unified "KernelDescriptor (+ Intent summary) -> OrgDoc" entrypoint.
+LLMOrgHub: unified "KernelDescriptor (+ evidence bundle) -> OrgDoc" entrypoint.
 
-This is intentionally separate from IntentIR semantic lifting:
-- IntentIR LLM (Task1/2) outputs IntentFunction (semantic IR).
-- ORG LLM (this module) outputs optimization rationale (why/how/dims + evidence).
-
-ORG output must NOT perform hardware mapping; mapping is deterministic in backends.
+The LLM is responsible for rationale-bearing sections only. Runtime injects:
+- source_context
+- source_oracle
 """
 
 from __future__ import annotations
@@ -21,33 +19,6 @@ from intent_ir.llm import DEFAULT_MODEL, LLMClientError, extract_json_object_wit
 from org.schema import OrgDoc, OrgValidationError, validate_org_doc
 
 
-def _dim_naming_hints(kernel_name: str) -> list[str]:
-    k = str(kernel_name or "").strip()
-    if not k:
-        return []
-    if k == "flash_attention2d":
-        return [
-            "- If you mention the KV tile length, name the dim `ATTN_BLOCK_KV` (alias: `BLOCK_KV`).",
-            "- If you mention the number of score warps, name the dim `ATTN_SCORE_WARPS`.",
-        ]
-    if k == "_attn_fwd":
-        return [
-            "- If you mention the Q tile size, name the dim `ATTN_FWD_BLOCK_M` (alias: `BLOCK_M`).",
-            "- If you mention the KV tile size, name the dim `ATTN_FWD_BLOCK_KV` (alias: `BLOCK_KV`).",
-        ]
-    if k in {"ai_bench_matmul", "matmul_fused_epilogue2d"}:
-        return [
-            "- If you mention MMA tile sizes, name dims `MMA_BM`, `MMA_BN`, `MMA_BK` (aliases: `BLOCK_M/N/K`).",
-            "- If you mention async copy / double-buffering, include dim name `MMA_ASYNC_COPY` (allowed set may include 0/1).",
-        ]
-    if k == "ai_bench_softmax":
-        return [
-            "- If you mention the block thread count, name the dim `SOFTMAX_BLOCK_THREADS` (alias: `BLOCK_THREADS`).",
-            "- If you mention vec4 vectorization, include dim name `SOFTMAX_VEC4` (allowed set may include 0/1).",
-        ]
-    return []
-
-
 def _hash_messages(messages: List[Dict[str, str]]) -> str:
     payload = json.dumps(messages, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
@@ -60,10 +31,7 @@ def _maybe_truncate_source(source_text: str) -> str:
     max_chars = 60000
     head = 400
     tail = 120
-    try:
-        if len(text) <= max_chars and len(lines) <= max_lines:
-            return text
-    except Exception:
+    if len(text) <= max_chars and len(lines) <= max_lines:
         return text
     head_lines = lines[: max(0, int(head))]
     tail_lines = lines[-max(0, int(tail)) :] if int(tail) > 0 else []
@@ -71,86 +39,85 @@ def _maybe_truncate_source(source_text: str) -> str:
     return "\n".join([banner, *head_lines, "[IntentIR][ORG] ... TRUNCATED ...", *tail_lines])
 
 
-def _evidence_blob(descriptor: KernelDescriptor, *, intent_summary: Mapping[str, Any] | None, extra: Mapping[str, Any] | None) -> str:
-    """
-    Keep evidence bounded and stable so provider prompts stay small.
-    """
-
-    def _summarize_frontend_constraints(fc: Any) -> Any:
-        if not isinstance(fc, dict):
-            return fc
-        out: Dict[str, Any] = {}
-        for k in ("needs_mask", "suggested_edge_cases"):
-            if k in fc:
-                out[k] = fc.get(k)
-
-        meta = fc.get("meta")
-        if not isinstance(meta, dict):
-            if "meta" in fc:
-                out["meta"] = meta
-            return out
-
-        meta_out: Dict[str, Any] = {}
-        for k in ("symbol_ranges", "tile_hints", "static_ints"):
-            if k in meta:
-                meta_out[k] = meta.get(k)
-
-        pc = meta.get("predicate_clauses")
-        if isinstance(pc, list):
-            clipped: List[str] = []
-            for x in pc[:64]:
-                s = str(x)
-                if len(s) > 256:
-                    s = s[:256] + "…"
-                if s.strip():
-                    clipped.append(s)
-            meta_out["predicate_clauses"] = clipped
-
-        aw = meta.get("access_witness")
-        if isinstance(aw, dict):
-            accesses = aw.get("accesses")
-            meta_out["access_witness_summary"] = {
-                "num_accesses": (len(accesses) if isinstance(accesses, list) else None),
-                "tensor_penalty": aw.get("tensor_penalty"),
-                "dominant_axis": aw.get("dominant_axis"),
-                "dominant_range": aw.get("dominant_range"),
-                "dominant_range_len": aw.get("dominant_range_len"),
-                "has_contiguous_range": aw.get("has_contiguous_range"),
-                "notes": (list(aw.get("notes") or [])[:8] if isinstance(aw.get("notes"), list) else None),
-            }
-
-        if meta_out:
-            out["meta"] = meta_out
-        return out
-
+def _ordered_evidence_blob(
+    descriptor: KernelDescriptor,
+    *,
+    intent_summary: Mapping[str, Any] | None,
+    extra: Mapping[str, Any] | None,
+) -> str:
     extra_dict = dict(extra or {}) if isinstance(extra, Mapping) else {}
-    ev: dict[str, Any] = {
+    ordered: dict[str, Any] = {
         "kernel": descriptor.name,
         "frontend": descriptor.frontend,
     }
-    if isinstance(extra_dict.get("ttgir_facts"), Mapping):
-        ev["ttgir_facts"] = dict(extra_dict.get("ttgir_facts") or {})
-    if isinstance(extra_dict.get("ptx_facts"), Mapping):
-        ev["ptx_facts"] = dict(extra_dict.get("ptx_facts") or {})
-    if isinstance(extra_dict.get("ttir_summary"), Mapping):
-        ev["ttir_summary"] = dict(extra_dict.get("ttir_summary") or {})
+    for key in ("ttgir_facts", "ptx_facts", "source_oracle_facts", "ttir_summary"):
+        value = extra_dict.get(key)
+        if isinstance(value, Mapping):
+            ordered[key] = dict(value)
     if isinstance(intent_summary, Mapping):
-        ev["intent_summary"] = dict(intent_summary)
-    ev["io_spec"] = descriptor.io_spec
-    ev["launch"] = descriptor.launch
-    ev["frontend_facts"] = descriptor.frontend_facts
-    ev["frontend_constraints"] = _summarize_frontend_constraints(descriptor.frontend_constraints)
-    ev["meta"] = {
-        "versions": {k: descriptor.meta.get(k) for k in ("triton", "torch", "tilelang") if descriptor.meta.get(k) is not None}
-    }
+        ordered["intent_summary"] = dict(intent_summary)
+    ordered["io_spec"] = dict(getattr(descriptor, "io_spec", {}) or {})
+    ordered["launch"] = dict(getattr(descriptor, "launch", {}) or {})
+    frontend_facts = dict(getattr(descriptor, "frontend_facts", {}) or {})
+    if frontend_facts:
+        ordered["frontend_facts"] = frontend_facts
+    frontend_constraints = dict(getattr(descriptor, "frontend_constraints", {}) or {})
+    if frontend_constraints:
+        ordered["frontend_constraints"] = frontend_constraints
     runtime_extra = {
         str(k): v
         for k, v in extra_dict.items()
-        if str(k) not in {"ttgir_facts", "ptx_facts", "ttir_summary"} and str(k).strip()
+        if str(k) not in {"ttgir_facts", "ptx_facts", "source_oracle_facts", "ttir_summary"} and str(k).strip()
     }
     if runtime_extra:
-        ev["extra"] = runtime_extra
-    return json.dumps(ev, ensure_ascii=False)
+        ordered["extra"] = runtime_extra
+    return json.dumps(ordered, ensure_ascii=False)
+
+
+def _build_source_context(
+    descriptor: KernelDescriptor,
+    *,
+    extra_evidence: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    extra = dict(extra_evidence or {}) if isinstance(extra_evidence, Mapping) else {}
+    artifacts: dict[str, str | None] = {}
+    art = getattr(descriptor, "artifacts", None)
+    for key in ("ttir_path", "ttgir_path", "ptx_text"):
+        value = getattr(art, key, None) if art is not None else None
+        if value is not None:
+            artifacts[key.replace("_text", "")] = str(value)
+    meta = dict(getattr(descriptor, "meta", {}) or {})
+    for key in ("ttir_original_path", "ttgir_original_path", "ptx_original_path"):
+        if meta.get(key) is not None:
+            artifacts[key] = str(meta.get(key))
+    return {
+        "frontend": str(descriptor.frontend),
+        "source_arch": str(extra.get("source_arch") or ""),
+        "target_arch": str(extra.get("target_arch") or ""),
+        "shape_bindings": {str(k): int(v) for k, v in dict(extra.get("shape_bindings") or {}).items() if str(k).strip()},
+        "artifacts": artifacts,
+    }
+
+
+def _build_source_oracle(extra_evidence: Mapping[str, Any] | None) -> dict[str, Any]:
+    extra = dict(extra_evidence or {}) if isinstance(extra_evidence, Mapping) else {}
+    facts = extra.get("source_oracle_facts")
+    if isinstance(facts, Mapping):
+        oracle = dict((dict(facts).get("oracle") or {}))
+        return {
+            "kernel_kind": str(oracle.get("kernel_kind") or ""),
+            "bindings": {str(k): int(v) for k, v in dict(oracle.get("bindings") or {}).items() if str(k).strip()},
+            "arch": str(oracle.get("arch") or ""),
+            "compiler_stack": str(oracle.get("compiler_stack") or ""),
+            "evidence_refs": [str(x) for x in list(oracle.get("evidence_refs") or []) if str(x).strip()],
+        }
+    return {
+        "kernel_kind": "",
+        "bindings": {},
+        "arch": str(extra.get("source_arch") or ""),
+        "compiler_stack": str(extra.get("source_compiler_stack") or ""),
+        "evidence_refs": [],
+    }
 
 
 @dataclass(frozen=True)
@@ -180,35 +147,26 @@ class LLMOrgHub:
         model: Optional[str] = None,
     ) -> CandidateOrg:
         requested = str(model or self.default_model)
-        evidence = _evidence_blob(descriptor, intent_summary=intent_summary, extra=extra_evidence)
-        dim_hints = _dim_naming_hints(descriptor.name)
-        extra_lines: list[str] = [
-            "Evidence appendix (JSON):",
-            evidence,
-            "",
-            "Hard rules: output must be ONE strict ORG JSON object (intentir_org_v1).",
-            "Do NOT map to hardware or output numeric parameter values; only dims + constraints + why/how.",
-        ]
-        if dim_hints:
-            extra_lines.extend(["", "Dim naming hints (for backend mapper):", *dim_hints])
-        extra_instruction = "\n".join(extra_lines).strip()
+        evidence = _ordered_evidence_blob(descriptor, intent_summary=intent_summary, extra=extra_evidence)
+        extra_instruction = "\n".join(
+            [
+                "Evidence appendix (JSON):",
+                evidence,
+                "",
+                "Hard rule: return ONE ORG JSON object with goals/mechanisms/dims/evidence only.",
+                "Runtime will inject source_context and source_oracle; do not invent backend mappings or target parameter values.",
+            ]
+        ).strip()
 
         src = _maybe_truncate_source(descriptor.source_text)
         compact = bool(src.startswith("[IntentIR][ORG] SOURCE TRUNCATED"))
-
         if descriptor.frontend == "triton":
             from org.frontends.triton.llm_org import build_messages  # noqa: PLC0415
 
-            messages = build_messages(
-                src,
-                kernel_name=descriptor.name,
-                extra_instruction=extra_instruction,
-                compact=compact,
-            )
+            messages = build_messages(src, kernel_name=descriptor.name, extra_instruction=extra_instruction, compact=compact)
         else:
             raise NotImplementedError(f"LLMOrgHub does not support frontend={descriptor.frontend}")
 
-        prompt_hash = _hash_messages(messages)
         chat_kwargs = dict(self.extra_chat_kwargs)
         chat_kwargs.setdefault("max_tokens", 4096)
         chat_kwargs.setdefault("temperature", 0)
@@ -219,7 +177,9 @@ class LLMOrgHub:
         raw_json: dict[str, Any] | None = None
         trace: dict[str, Any] = {}
         cur_messages = list(messages)
-        cur_prompt_hash = str(prompt_hash)
+        cur_prompt_hash = _hash_messages(messages)
+        source_context = _build_source_context(descriptor, extra_evidence=extra_evidence)
+        source_oracle = _build_source_oracle(extra_evidence)
 
         for attempt in range(max(0, int(self.max_schema_retries)) + 1):
             cur_prompt_hash = _hash_messages(cur_messages)
@@ -230,34 +190,30 @@ class LLMOrgHub:
                     max_parse_retries=int(self.max_parse_retries),
                     **chat_kwargs,
                 )
-            except LLMClientError as e:
-                raise LLMClientError(f"ORG LLM failed: {e}") from e
+            except LLMClientError as exc:
+                raise LLMClientError(f"ORG LLM failed: {exc}") from exc
 
             try:
-                org = validate_org_doc(raw_json)
+                org = validate_org_doc(raw_json, source_context=source_context, source_oracle=source_oracle)
                 return CandidateOrg(org=org, raw_json=dict(raw_json), llm_trace=dict(trace), prompt_hash=str(cur_prompt_hash))
-            except OrgValidationError as e:
-                # Repair loop: ask the model to fix schema issues without re-mapping to hardware.
+            except OrgValidationError as exc:
                 if attempt >= int(self.max_schema_retries):
-                    raise OrgValidationError(f"invalid ORG JSON: {e}", path=getattr(e, "path", "")) from e
+                    raise OrgValidationError(f"invalid ORG JSON: {exc}", path=getattr(exc, "path", "")) from exc
                 repair_user = (
                     "Your previous ORG JSON failed schema validation.\n"
-                    f"Error: {e}\n\n"
-                    "Return ONE corrected ORG JSON object (intentir_org_v1) only. No prose, no code fences.\n"
-                    "Keep the same schema_version/kernel/nodes/edges keys and fix types/fields.\n"
-                    "Do NOT map to hardware or output tuned numeric assignments.\n"
+                    f"Error: {exc}\n\n"
+                    "Return ONE corrected ORG JSON object only.\n"
+                    "Keep top-level keys: schema_version, kernel, goals, mechanisms, dims, evidence, notes(optional).\n"
+                    "Do not emit source_context/source_oracle; runtime injects them.\n"
                 )
-                try:
-                    prev = json.dumps(raw_json, ensure_ascii=False, sort_keys=True)
-                except Exception:
-                    prev = ""
+                prev = json.dumps(raw_json, ensure_ascii=False, sort_keys=True) if raw_json is not None else ""
                 cur_messages = list(messages)
                 if prev:
                     cur_messages.append({"role": "assistant", "content": prev})
                 cur_messages.append({"role": "user", "content": repair_user})
                 continue
-            except Exception as e:
-                raise OrgValidationError(f"invalid ORG JSON: {type(e).__name__}: {e}") from e
+            except Exception as exc:
+                raise OrgValidationError(f"invalid ORG JSON: {type(exc).__name__}: {exc}") from exc
 
         raise OrgValidationError("invalid ORG JSON: exceeded schema retries")
 
