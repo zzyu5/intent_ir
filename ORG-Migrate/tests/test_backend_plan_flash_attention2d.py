@@ -60,3 +60,4 @@ def test_backend_plan_flash_attention2d_chain() -> None:
     assert plan.param_space["ATTN_BLOCK_KV"][0] == 64
     assert plan.candidates
     assert plan.candidates[0].kernel_kind in {"attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"}
+    assert any(str(x).startswith("preserve:") for x in plan.notes)

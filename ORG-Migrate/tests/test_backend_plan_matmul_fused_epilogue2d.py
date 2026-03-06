@@ -62,3 +62,4 @@ def test_backend_plan_matmul_fused_epilogue_chain() -> None:
     assert any(module.id == "mma_core" for module in plan.selected_modules)
     assert plan.candidates
     assert any(candidate.kernel_kind == "matmul_mma_tf32_v1" for candidate in plan.candidates)
+    assert any(str(x).startswith("preserve:") for x in plan.notes)

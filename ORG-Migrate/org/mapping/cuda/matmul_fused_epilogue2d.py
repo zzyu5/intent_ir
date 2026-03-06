@@ -149,6 +149,7 @@ def plan_matmul_fused_epilogue2d(
         source_oracle=source_oracle,
         hardware_model=hardware_model,
     )
+    preserve_notes: list[str] = []
 
     if m_dim <= 0 or n_dim <= 0 or k_dim <= 0 or (k_dim % 8) != 0:
         substitutions.append(
@@ -205,12 +206,19 @@ def plan_matmul_fused_epilogue2d(
 
     exact_kind = str(source_oracle.get("kernel_kind") or "").strip()
     exact_bindings = dict(source_bindings)
+    want_async = any(m.id == "prefetch_pipeline" for m in selected_modules)
+    want_mma = any(m.id == "mma_core" for m in selected_modules)
+    if exact_kind:
+        preserve_notes.append(f"source_oracle_variant={exact_kind}")
+    if "mma_core" in mechanism_tags or "mma_acceleration" in goal_tags:
+        preserve_notes.append("preserve:mma_core")
+    if "epilogue_fused_writeback" in mechanism_tags or "fused_epilogue_avoid_writeback" in goal_tags:
+        preserve_notes.append("preserve:epilogue_fused_writeback")
+    if want_async:
+        preserve_notes.append("preserve:prefetch_pipeline")
     ordered: list[BackendCandidate] = []
     if exact_kind in {"matmul_mma_tf32_v1", "matmul_tile_v2", "matmul_tile_v1"}:
         ordered.append(BackendCandidate(kernel_kind=exact_kind, bindings=exact_bindings, note="source_exact"))
-
-    want_async = any(m.id == "prefetch_pipeline" for m in selected_modules)
-    want_mma = any(m.id == "mma_core" for m in selected_modules)
 
     if want_mma:
         async_ok = False
@@ -268,6 +276,7 @@ def plan_matmul_fused_epilogue2d(
                     "reason": "source async MMA path has no valid target realization",
                 }
             )
+            preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
 
     ordered.append(BackendCandidate(kernel_kind="matmul_tile_v2", bindings={}, note="tile_baseline"))
     ordered.append(BackendCandidate(kernel_kind="matmul_tile_v1", bindings={}, note="tile_fallback"))
@@ -297,6 +306,7 @@ def plan_matmul_fused_epilogue2d(
             f"goals={sorted(goal_tags)}",
             f"mechanisms={sorted(mechanism_tags)}",
             f"source_kernel_kind={exact_kind or 'none'}",
+            *preserve_notes,
         ],
     )
 

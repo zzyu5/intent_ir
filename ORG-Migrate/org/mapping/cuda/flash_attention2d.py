@@ -145,6 +145,7 @@ def plan_flash_attention2d(
         source_oracle=source_oracle,
         hardware_model=hardware_model,
     )
+    preserve_notes: list[str] = []
 
     if head_dim != 64 or q_ctx <= 0 or kv_ctx <= 0:
         substitutions.append(
@@ -197,6 +198,12 @@ def plan_flash_attention2d(
     exact_kind = str(source_oracle.get("kernel_kind") or "").strip()
     exact_bindings = {str(k): int(v) for k, v in source_bindings.items()}
     want_pipeline = "latency_hiding" in goal_tags or "prefetch_pipeline" in mechanism_tags
+    if exact_kind:
+        preserve_notes.append(f"source_oracle_variant={exact_kind}")
+    if "online_softmax_reduce" in mechanism_tags or "streaming_softmax_state" in goal_tags:
+        preserve_notes.append("preserve:online_softmax_reduce")
+    if want_pipeline:
+        preserve_notes.append("preserve:prefetch_pipeline")
 
     param_space = {
         "kernel_kind": ["attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"],
@@ -267,6 +274,7 @@ def plan_flash_attention2d(
                     "reason": "source async-copy candidate has no valid target realization",
                 }
             )
+            preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
 
     final: list[BackendCandidate] = []
     seen: set[tuple[str, tuple[tuple[str, int], ...]]] = set()
@@ -293,6 +301,7 @@ def plan_flash_attention2d(
             f"goals={sorted(goal_tags)}",
             f"mechanisms={sorted(mechanism_tags)}",
             f"source_kernel_kind={exact_kind or 'none'}",
+            *preserve_notes,
         ],
     )
 
