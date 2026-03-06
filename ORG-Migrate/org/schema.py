@@ -42,6 +42,9 @@ def _as_optional_str(x: Any, *, path: str) -> str:
 
 
 def _as_str_list(x: Any, *, path: str) -> list[str]:
+    if isinstance(x, str):
+        s = str(x).strip()
+        return ([s] if s else [])
     items = _as_list(x, path=path)
     out: list[str] = []
     for i, raw in enumerate(items):
@@ -215,8 +218,6 @@ class OrgDim:
         range_raw = obj.get("range") or {}
         range_v = dict(range_raw) if isinstance(range_raw, Mapping) else {}
         constraints = _as_str_list(obj.get("constraints") or [], path=f"{path}.constraints")
-        if not candidates and not range_v:
-            raise OrgValidationError("dim requires candidates or range", path=path)
         return cls(
             name=_as_str(obj.get("name"), path=f"{path}.name"),
             role=_as_str(obj.get("role"), path=f"{path}.role"),

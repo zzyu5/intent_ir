@@ -63,3 +63,43 @@ def test_org_schema_flash_attention2d_minimal_ok() -> None:
     assert doc.mechanisms[0].category == "staging"
     assert doc.dims[0].name == "tile_kv"
     assert doc.source_oracle.kernel_kind == "attn2d_causal_softmax_v6"
+
+
+def test_org_schema_flash_attention2d_allows_descriptive_dim_without_candidates() -> None:
+    doc = validate_org_doc(
+        {
+            "schema_version": "intentir_org_v1",
+            "kernel": "flash_attention2d",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+                "artifacts": {"ttgir_path": "flash.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep state resident", "scope": "kv_loop", "tensors": ["Q"], "evidence_refs": ["e0"]}
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "kv_tile_stage", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["tile_kv", "pipeline_stages"], "evidence_refs": ["e0"]}
+            ],
+            "dims": [
+                {"name": "tile_kv", "role": "kv_tile", "candidates": [32, 64], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "pipeline_stages", "role": "pipeline_depth", "constraints": ["stage count inferred later"], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "attn2d_causal_softmax_v6",
+                "bindings": {"ATTN_BLOCK_KV": 64},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "flash.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    )
+    assert doc.dims[1].name == "pipeline_stages"
+    assert doc.dims[1].candidates == []
+    assert doc.dims[1].range == {}

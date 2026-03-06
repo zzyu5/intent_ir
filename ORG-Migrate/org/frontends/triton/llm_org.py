@@ -7,7 +7,7 @@ for the reasoning-bearing sections only:
   - mechanisms
   - dims
   - evidence
-  - notes (optional)
+  - notes (optional list[string])
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ Hard rules:
   - mechanisms
   - dims
   - evidence
-  - notes (optional)
+  - notes (optional list[string])
 - Runtime will inject `source_context` and `source_oracle`; do NOT invent or emit hardware mapping decisions.
 
 Goal objects:
@@ -82,7 +82,7 @@ Kernel-specific expectations:
 
 SYSTEM_PROMPT_COMPACT = """Return ONE strict ORG JSON object.
 
-Required keys: schema_version, kernel, goals, mechanisms, dims, evidence (notes optional).
+Required keys: schema_version, kernel, goals, mechanisms, dims, evidence (notes optional list[string]).
 Runtime injects source_context/source_oracle; do not output hardware mapping or target numeric assignments.
 Each goal/mechanism/dim must be evidence-backed.
 """
