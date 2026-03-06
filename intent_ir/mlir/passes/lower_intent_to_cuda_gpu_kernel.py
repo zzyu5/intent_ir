@@ -13,6 +13,165 @@ from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.module import IntentMLIRModule
 
 
+def _rewrite_legacy_memref_assume_alignment(module_text: str) -> str:
+    text = str(module_text or "")
+    if "memref.assume_alignment" not in text:
+        return text
+    lines = text.splitlines()
+    mapping: dict[str, str] = {}
+    out_lines: list[str] = []
+    pat = re.compile(
+        r"^(\s*)(%[A-Za-z_.$][0-9A-Za-z_.$]*)\s*=\s*memref\.assume_alignment\s+"
+        r"(%[A-Za-z_.$][0-9A-Za-z_.$]*),\s*([0-9]+)\s*:\s*(.+?)\s*$"
+    )
+    for line in lines:
+        m = pat.match(line)
+        if m is None:
+            out_lines.append(line)
+            continue
+        indent, dst, src, align, memref_ty = m.groups()
+        mapping[str(dst)] = str(src)
+        out_lines.append(f"{indent}memref.assume_alignment {src}, {align} : {memref_ty}")
+    if not mapping:
+        return text
+    resolved: dict[str, str] = {}
+    for dst, src in mapping.items():
+        cur = str(src)
+        seen: set[str] = {str(dst)}
+        while cur in mapping and cur not in seen:
+            seen.add(cur)
+            cur = str(mapping[cur])
+        resolved[str(dst)] = str(cur)
+    out = "\n".join(out_lines)
+    if text.endswith("\n"):
+        out += "\n"
+    ident_tail = r"(?![0-9A-Za-z_.$])"
+    for dst, src in resolved.items():
+        if dst == src:
+            continue
+        out = re.sub(re.escape(dst) + ident_tail, src, out)
+    return out
+
+
+def _rewrite_legacy_vector_splat(module_text: str) -> str:
+    text = str(module_text or "")
+    if "vector.splat" not in text:
+        return text
+    lines = text.splitlines()
+    out_lines: list[str] = []
+    pat = re.compile(
+        r"^(\s*)(%[A-Za-z_.$][0-9A-Za-z_.$]*)\s*=\s*vector\.splat\s+([^\s]+)\s*:\s*(vector<[^>]+>)\s*$"
+    )
+    for line in lines:
+        m = pat.match(line)
+        if m is None:
+            out_lines.append(line)
+            continue
+        indent, dst, scalar, vec_ty = m.groups()
+        vec = str(vec_ty).strip()
+        elem_ty = "f32"
+        try:
+            x_pos = vec.rfind("x")
+            if x_pos > 0 and vec.endswith(">"):
+                elem_ty = vec[x_pos + 1 : -1].strip()
+        except Exception:
+            elem_ty = "f32"
+        out_lines.append(f"{indent}{dst} = vector.broadcast {scalar} : {elem_ty} to {vec}")
+    out = "\n".join(out_lines)
+    if text.endswith("\n"):
+        out += "\n"
+    return out
+
+
+def _rewrite_legacy_vector_extract_insert(module_text: str) -> str:
+    text = str(module_text or "")
+    if "vector.extract " not in text and "vector.insert " not in text:
+        return text
+    lines = text.splitlines()
+    out_lines: list[str] = []
+    extract_pat = re.compile(
+        r"^(\s*)(%[A-Za-z_.$][0-9A-Za-z_.$]*)\s*=\s*vector\.extract\s+"
+        r"([^\s]+)\[([0-9]+)\]\s*:\s*([^ ]+)\s+from\s+(vector<[^>]+>)\s*$"
+    )
+    insert_pat = re.compile(
+        r"^(\s*)(%[A-Za-z_.$][0-9A-Za-z_.$]*)\s*=\s*vector\.insert\s+"
+        r"([^\s]+),\s*([^\s]+)\[([0-9]+)\]\s*:\s*([^ ]+)\s+into\s+(vector<[^>]+>)\s*$"
+    )
+    for line in lines:
+        m = extract_pat.match(line)
+        if m is not None:
+            indent, dst, vec, lane, _elem_ty, vec_ty = m.groups()
+            out_lines.append(f"{indent}{dst} = vector.extractelement {vec}[%c{lane} : index] : {vec_ty}")
+            continue
+        m = insert_pat.match(line)
+        if m is not None:
+            indent, dst, elem, vec, lane, _elem_ty, vec_ty = m.groups()
+            out_lines.append(f"{indent}{dst} = vector.insertelement {elem}, {vec}[%c{lane} : index] : {vec_ty}")
+            continue
+        out_lines.append(line)
+    out = "\n".join(out_lines)
+    if text.endswith("\n"):
+        out += "\n"
+    return out
+
+
+def _rewrite_legacy_arith_select(module_text: str) -> str:
+    text = str(module_text or "")
+    if "arith.select" not in text:
+        return text
+    return text.replace("arith.select", "std.select")
+
+
+def _rewrite_legacy_arith_maxmin(module_text: str) -> str:
+    text = str(module_text or "")
+    if "arith.maximumf" in text:
+        text = text.replace("arith.maximumf", "arith.maxf")
+    if "arith.minimumf" in text:
+        text = text.replace("arith.minimumf", "arith.minf")
+    return text
+
+
+def _rewrite_legacy_llvm_intr_fma(module_text: str) -> str:
+    text = str(module_text or "")
+    if "llvm.intr.fma(" not in text:
+        return text
+    lines = text.splitlines()
+    out_lines: list[str] = []
+    pat = re.compile(
+        r"^(\s*)(%[A-Za-z_.$][0-9A-Za-z_.$]*)\s*=\s*llvm\.intr\.fma\(([^,]+),\s*([^,]+),\s*([^)]+)\)\s*:\s*\(([^)]+)\)\s*->\s*(\S+)\s*$"
+    )
+    for line in lines:
+        m = pat.match(line)
+        if m is None:
+            out_lines.append(line)
+            continue
+        indent, dst, a, b, c, _sig, out_ty = m.groups()
+        out_lines.append(f"{indent}{dst} = math.fma {a}, {b}, {c} : {out_ty}")
+    out = "\n".join(out_lines)
+    if text.endswith("\n"):
+        out += "\n"
+    return out
+
+
+def _ensure_legacy_index_constants(module_text: str) -> str:
+    text = str(module_text or "")
+    if "[%c3 : index]" not in text or "%c3 = arith.constant 3 : index" in text:
+        return text
+    lines = text.splitlines()
+    out_lines: list[str] = []
+    inserted = False
+    for line in lines:
+        out_lines.append(line)
+        if (not inserted) and "%c2 = arith.constant 2 : index" in line:
+            indent = re.match(r"^(\s*)", line).group(1) if re.match(r"^(\s*)", line) else ""
+            out_lines.append(f"{indent}%c3 = arith.constant 3 : index")
+            inserted = True
+    out = "\n".join(out_lines)
+    if text.endswith("\n"):
+        out += "\n"
+    return out
+
+
 def _env_flag(name: str, *, default: bool = False) -> bool:
     raw = os.getenv(str(name), "")
     if raw is None:
@@ -21701,8 +21860,17 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("  // intentir_json_end")
     lines.append("}")
 
+    module_text = "\n".join(lines) + "\n"
+    module_text = _rewrite_legacy_memref_assume_alignment(module_text)
+    module_text = _rewrite_legacy_vector_splat(module_text)
+    module_text = _rewrite_legacy_vector_extract_insert(module_text)
+    module_text = _rewrite_legacy_arith_select(module_text)
+    module_text = _rewrite_legacy_arith_maxmin(module_text)
+    module_text = _rewrite_legacy_llvm_intr_fma(module_text)
+    module_text = _ensure_legacy_index_constants(module_text)
+
     out = IntentMLIRModule(
-        module_text="\n".join(lines) + "\n",
+        module_text=module_text,
         dialect_version=str(module.dialect_version),
         provenance=dict(module.provenance or {}),
         symbols=list(module.symbols or []),
