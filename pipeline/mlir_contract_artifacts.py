@@ -196,7 +196,7 @@ def _retarget_llvm_ir_to_host_triple_for_link(llvm_ir_text: str) -> tuple[str, b
     return text, changed, host_triple
 
 
-def _cuda_llc_target() -> str:
+def _cuda_llc_target_info() -> dict[str, Any]:
     def _normalize_sm(raw: str) -> str:
         s = str(raw or "").strip().lower()
         if not s:
@@ -265,8 +265,17 @@ def _cuda_llc_target() -> str:
 
     raw = str(os.getenv("INTENTIR_CUDA_SM", "")).strip().lower()
     norm = _normalize_sm(raw)
+    requested = ""
     if norm:
-        return _choose_supported(norm)
+        requested = str(norm)
+        effective = _choose_supported(norm)
+        supported = list(_llc_supported_sms())
+        return {
+            "requested_sm": requested,
+            "effective_sm": str(effective),
+            "supported_sms": [str(x) for x in supported],
+            "downleveled": bool(requested and effective and requested != effective),
+        }
     # Best-effort auto-detect from torch when available so local dev runs (and
     # perf evidence) compile for the actual GPU arch without extra knobs.
     try:  # pragma: no cover - depends on CUDA env
@@ -275,10 +284,29 @@ def _cuda_llc_target() -> str:
         if torch.cuda.is_available():
             major, minor = torch.cuda.get_device_capability(0)
             if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
-                return _choose_supported(f"sm_{major}{minor}")
+                requested = f"sm_{major}{minor}"
+                effective = _choose_supported(requested)
+                supported = list(_llc_supported_sms())
+                return {
+                    "requested_sm": requested,
+                    "effective_sm": str(effective),
+                    "supported_sms": [str(x) for x in supported],
+                    "downleveled": bool(requested and effective and requested != effective),
+                }
     except Exception:
         pass
-    return _choose_supported("sm_80")
+    effective = _choose_supported("sm_80")
+    supported = list(_llc_supported_sms())
+    return {
+        "requested_sm": "sm_80",
+        "effective_sm": str(effective),
+        "supported_sms": [str(x) for x in supported],
+        "downleveled": bool(effective != "sm_80"),
+    }
+
+
+def _cuda_llc_target() -> str:
+    return str(_cuda_llc_target_info().get("effective_sm") or "sm_80")
 
 
 def _cuda_ptx_cache_enabled() -> bool:
@@ -1145,12 +1173,17 @@ def _materialize_executable(
                 "toolchain_fingerprint": str(fingerprint),
                 "invocation": {"shape_bindings": dict(shape_bindings), "ptx_compiler": "llc_nvptx"},
             }
+            llc_target_info = _cuda_llc_target_info()
             artifacts = {
                 "cuda_ptx_path": str(ptx_path),
                 "cuda_ptx_origin": "llvm_llc",
                 "cuda_llvm_target_triple": str(llvm_target_triple),
                 "cuda_llvm_origin": str(llvm_origin),
-                "cuda_sm": str(_cuda_llc_target()),
+                "cuda_sm": str(llc_target_info.get("effective_sm") or ""),
+                "cuda_requested_sm": str(llc_target_info.get("requested_sm") or ""),
+                "cuda_effective_sm": str(llc_target_info.get("effective_sm") or ""),
+                "cuda_target_downleveled": bool(llc_target_info.get("downleveled")),
+                "cuda_supported_sms": [str(x) for x in list(llc_target_info.get("supported_sms") or [])],
             }
             artifacts.update(dict(cache_meta or {}))
             artifacts["intentir_evidence_mode"] = str(evidence_mode())
