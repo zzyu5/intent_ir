@@ -19,6 +19,11 @@ from .convert_to_intent import to_intent
 
 ROOT = Path(__file__).resolve().parents[2]
 PIPELINES_DIR = Path(__file__).resolve().parent / "pipelines"
+_INTENTIR_PLUGIN_PASS_FALLBACKS = {
+    "intentir-apply-tuning-db-cuda-v1": "apply_tuning_db",
+    "intentir-lower-cuda-focus-v1": "lower_intent_to_cuda_gpu_kernel",
+    "intentir-extract-gpu-module-llvm-v1": "extract_gpu_module_llvm",
+}
 
 
 @dataclass
@@ -155,6 +160,9 @@ def _run_one_pass(
         return PassExecutionResult(module=fn(module, backend=backend), kind="python", detail="ok")
     if name.startswith("mlir-opt?:"):
         pass_arg = name.split(":", 1)[1].strip()
+        fallback = _maybe_intentir_mlir_opt_python_fallback(module, pass_arg=pass_arg, backend=backend)
+        if fallback is not None:
+            return fallback
         tool = _tool_path(toolchain, "mlir-opt")
         if not tool:
             return PassExecutionResult(
@@ -176,6 +184,9 @@ def _run_one_pass(
             )
     if name.startswith("mlir-opt:"):
         pass_arg = name.split(":", 1)[1].strip()
+        fallback = _maybe_intentir_mlir_opt_python_fallback(module, pass_arg=pass_arg, backend=backend)
+        if fallback is not None:
+            return fallback
         tool = _tool_path(toolchain, "mlir-opt")
         if not tool:
             raise RuntimeError("mlir-opt unavailable")
@@ -282,6 +293,53 @@ def _run_one_pass(
 
 def _tool_path(toolchain: dict[str, Any], name: str) -> str:
     return str((((toolchain.get("tools") or {}).get(name) or {}).get("path") or "")).strip()
+
+
+def _extract_intentir_plugin_passes(pass_arg: str) -> list[str]:
+    text = str(pass_arg or "").strip()
+    if not text:
+        return []
+    names = re.findall(r"(intentir-[a-z0-9-]+-v[0-9]+)", text)
+    return [str(x) for x in names if str(x).strip()]
+
+
+def _maybe_intentir_mlir_opt_python_fallback(
+    module: IntentMLIRModule,
+    *,
+    pass_arg: str,
+    backend: str | None,
+) -> PassExecutionResult | None:
+    plugin_env = str(os.getenv("INTENTIR_MLIR_PASS_PLUGIN", "")).strip()
+    if plugin_env:
+        return None
+    intentir_passes = _extract_intentir_plugin_passes(pass_arg)
+    if not intentir_passes:
+        return None
+    python_passes: list[str] = []
+    for plugin_pass in intentir_passes:
+        key = _INTENTIR_PLUGIN_PASS_FALLBACKS.get(str(plugin_pass))
+        if not key:
+            return None
+        python_passes.append(str(key))
+    current = module
+    applied: list[str] = []
+    for key in python_passes:
+        fn = PASS_REGISTRY.get(str(key))
+        if fn is None:
+            raise RuntimeError(f"missing python fallback for {key}")
+        current = fn(current, backend=backend)
+        current.meta = dict(current.meta or {})
+        current.meta.setdefault("intentir_mlir_opt_fallback_passes", [])
+        current.meta["intentir_mlir_opt_fallback_passes"] = [
+            *list(current.meta.get("intentir_mlir_opt_fallback_passes") or []),
+            str(key),
+        ]
+        applied.append(str(key))
+    return PassExecutionResult(
+        module=current,
+        kind="python",
+        detail=f"python_fallback:intentir_mlir_plugin_unavailable:{','.join(applied)}",
+    )
 
 
 def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) -> IntentMLIRModule:
