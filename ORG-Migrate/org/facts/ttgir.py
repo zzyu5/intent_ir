@@ -11,7 +11,11 @@ _PROGRAM_ID_RE = re.compile(r"\btt\.get_program_id\s+([xyz])\b")
 _MODULE_WARPS_RE = re.compile(r'"ttg\.num-warps"\s*=\s*([0-9]+)\s*:\s*i32')
 _THREADS_PER_WARP_RE = re.compile(r'"ttg\.threads-per-warp"\s*=\s*([0-9]+)\s*:\s*i32')
 _SCF_FOR_RE = re.compile(r"\bscf\.for\b")
-_TENSOR_2D_SHAPE_RE = re.compile(r"tensor<([0-9]+)x([0-9]+)")
+_TENSOR_SHAPE_RE = re.compile(r"tensor<((?:[0-9]+x)+)")
+_FUNC_ARG_RE = re.compile(r"(%[A-Za-z0-9_]+)\s*:")
+_SSA_LHS_RE = re.compile(r"^(%[A-Za-z0-9_:.]+)\s*=\s*(.*)$")
+_SSA_REF_RE = re.compile(r"(%[A-Za-z0-9_]+)")
+_LOAD_PTR_RE = re.compile(r"tt\.load\s+(%[A-Za-z0-9_]+)")
 
 
 def _split_ints(raw: str) -> list[int]:
@@ -38,11 +42,15 @@ def _evidence(*, item_id: str, kind: str, artifact_path: str | None, line_no: in
 
 
 def _tensor_2d_bytes(line: str) -> int | None:
-    m = _TENSOR_2D_SHAPE_RE.search(str(line or ""))
+    m = _TENSOR_SHAPE_RE.search(str(line or ""))
     if m is None:
         return None
     try:
-        return int(m.group(1)) * int(m.group(2)) * 4
+        dims = [int(part) for part in str(m.group(1) or "").split("x") if str(part).strip()]
+        total = 1
+        for dim in dims:
+            total *= int(dim)
+        return int(total * 4)
     except Exception:
         return None
 
@@ -70,11 +78,27 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     operand_tile_bytes_hint = 0
     convert_layout_sites = 0
     inside_loop = False
+    pointer_roots: dict[str, set[str]] = {}
 
     for idx, line in enumerate(lines, start=1):
         stripped = line.strip()
+        if "tt.func" in stripped:
+            for arg in _FUNC_ARG_RE.findall(stripped):
+                key = str(arg).strip()
+                if key:
+                    pointer_roots.setdefault(key, set()).add(key)
         if _SCF_FOR_RE.search(stripped):
             inside_loop = True
+        lhs_match = _SSA_LHS_RE.match(stripped)
+        if lhs_match is not None:
+            lhs = str(lhs_match.group(1)).split(":", 1)[0].strip()
+            rhs = str(lhs_match.group(2) or "")
+            if lhs and any(token in rhs for token in ("tt.addptr", "tt.splat", "tt.broadcast", "tt.expand_dims")):
+                roots: set[str] = set()
+                for ref in _SSA_REF_RE.findall(rhs):
+                    roots.update(pointer_roots.get(str(ref).strip(), {str(ref).strip()}))
+                if roots:
+                    pointer_roots[lhs] = roots
         m = _BLOCKED_RE.match(stripped)
         if m is not None:
             blocked_layouts.append(
@@ -93,17 +117,22 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         if "tt.load" in stripped and "tensor<" in stripped:
             has_tile_load = True
             evidence.append(_evidence(item_id=f"ttgir_load_{idx}", kind="ttgir_load", artifact_path=artifact_path, line_no=idx, summary="tile-shaped load"))
+            load_ptr_match = _LOAD_PTR_RE.search(stripped)
+            load_roots: set[str] = set()
+            if load_ptr_match is not None:
+                ptr_name = str(load_ptr_match.group(1)).strip()
+                load_roots = set(pointer_roots.get(ptr_name, {ptr_name}))
             if str(kernel_name) == "flash_attention2d":
-                if "%Q_ptr" in stripped and not inside_loop:
+                if ("%Q_ptr" in load_roots or "%Q_ptr" in stripped) and not inside_loop:
                     has_q_resident_state = True
                     q_resident_bytes_hint = max(q_resident_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_q_resident_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="Q load before streaming loop"))
-                if ("%K_ptr" in stripped or "%V_ptr" in stripped) and inside_loop:
+                if ({"%K_ptr", "%V_ptr"} & load_roots or "%K_ptr" in stripped or "%V_ptr" in stripped) and inside_loop:
                     has_kv_streamed_tiles = True
                     kv_streamed_bytes_hint = max(kv_streamed_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_kv_stream_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="KV load inside streaming loop"))
             if str(kernel_name) == "matmul_fused_epilogue2d":
-                if ("%A" in stripped or "%B" in stripped) and ("tt.load" in stripped):
+                if ({"%A", "%B"} & load_roots or "%A" in stripped or "%B" in stripped) and ("tt.load" in stripped):
                     has_operand_tile_stage = True
                     operand_tile_bytes_hint = max(operand_tile_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_operand_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="operand tile stage"))

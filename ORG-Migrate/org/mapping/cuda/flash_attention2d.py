@@ -183,24 +183,52 @@ def _score_flash_candidate(
     portability_note = "portable"
 
     if cluster == "cuda_tc_mid_smem":
-        score += (140.0 if kind == "attn2d_causal_softmax_v6" else 40.0)
+        if kind == "attn2d_causal_softmax_v6":
+            score += 140.0
+        elif kind == "attn2d_causal_softmax_v8":
+            score += 116.0
+        else:
+            score += 40.0
     elif cluster == "cuda_tc_large_smem":
-        score += (120.0 if kind == "attn2d_causal_softmax_v6" else (126.0 if v7_front_allowed else 90.0))
+        if kind == "attn2d_causal_softmax_v6":
+            score += 120.0
+        elif kind == "attn2d_causal_softmax_v8":
+            score += 104.0
+        else:
+            score += (126.0 if v7_front_allowed else 90.0)
     else:
-        score += (100.0 if kind == "attn2d_causal_softmax_v6" else 60.0)
+        score += (100.0 if kind == "attn2d_causal_softmax_v6" else (82.0 if kind == "attn2d_causal_softmax_v8" else 60.0))
 
     score += {64: 30.0, 32: 20.0, 16: 10.0}.get(int(block_kv), 0.0)
     reasons.append(f"block_kv={block_kv}")
     if kind == "attn2d_causal_softmax_v6":
         score += {6: 15.0, 4: 10.0, 2: 2.0}.get(int(score_warps), 0.0)
         reasons.append(f"score_warps={score_warps}")
-        if cluster == "cuda_tc_mid_smem" and not residency_complete:
-            if int(score_warps) == 6 and int(block_kv) == 32:
-                score += 16.0
-                reasons.append("mid_smem_streaming_fit")
-            elif int(score_warps) == 6 and int(block_kv) == 64:
-                score -= 4.0
-                reasons.append("mid_smem_large_tile_pressure")
+        if cluster == "cuda_tc_mid_smem":
+            if residency_complete:
+                if int(block_kv) == 64 and int(score_warps) == 4:
+                    score += 18.0
+                    reasons.append("mid_smem_balanced_resident_tile")
+                elif int(block_kv) == 64 and int(score_warps) == 6:
+                    score -= 10.0
+                    reasons.append("mid_smem_overparallel_resident_tile")
+                elif int(block_kv) == 32 and int(score_warps) == 6:
+                    score -= 6.0
+                    reasons.append("mid_smem_small_tile_overparallel")
+            else:
+                if int(score_warps) == 6 and int(block_kv) == 32:
+                    score += 16.0
+                    reasons.append("mid_smem_streaming_fit")
+                elif int(score_warps) == 6 and int(block_kv) == 64:
+                    score -= 4.0
+                    reasons.append("mid_smem_large_tile_pressure")
+    if kind == "attn2d_causal_softmax_v8":
+        if cluster == "cuda_tc_mid_smem" and int(block_kv) == 32:
+            score += 18.0
+            reasons.append("mid_smem_v8_tile32")
+        elif cluster == "cuda_tc_mid_smem" and int(block_kv) == 64:
+            score += 4.0
+            reasons.append("mid_smem_v8_tile64")
     if kind == "attn2d_causal_softmax_v7" and not v7_front_allowed:
         score -= 60.0
         portability_note = "cluster_prefers_v6"
@@ -271,7 +299,7 @@ def plan_flash_attention2d(
             hardware_model=hardware_model.to_json_dict(),
             selected_modules=selected_modules,
             module_edges=selected_edges,
-            param_space={"kernel_kind": ["attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"]},
+            param_space={"kernel_kind": ["attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7", "attn2d_causal_softmax_v8"]},
             constraints=["HEAD_DIM == 64"],
             substitutions=substitutions,
             candidates=[],
@@ -335,7 +363,7 @@ def plan_flash_attention2d(
         preserve_notes.append("replace:prefetch_pipeline->sync_prefetch")
 
     param_space = {
-        "kernel_kind": ["attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7"],
+        "kernel_kind": ["attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7", "attn2d_causal_softmax_v8"],
         "ATTN_BLOCK_KV": list(block_candidates),
         "ATTN_SCORE_WARPS": list(score_candidates),
         "FLASH_ATTN_ASYNC_COPY": ([1] if want_pipeline and hardware_model.supports_async_copy and async_evidence_ok else []),
@@ -400,6 +428,30 @@ def plan_flash_attention2d(
 
     for bk in block_candidates:
         candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v7", bindings={"ATTN_BLOCK_KV": int(bk)})
+        score, score_reason, portability_note = _score_flash_candidate(
+            candidate=candidate,
+            goal_tags=goal_tags,
+            cluster=cluster,
+            source_oracle=source_oracle,
+            kv_ctx=kv_ctx,
+            head_dim=head_dim,
+            ttgir_facts=ttgir_facts,
+            async_evidence_ok=async_evidence_ok,
+        )
+        scored.append(
+            BackendCandidate(
+                kernel_kind=candidate.kernel_kind,
+                bindings=dict(candidate.bindings),
+                note="cluster_rank",
+                score=score,
+                score_reason=score_reason,
+                cluster=cluster,
+                portability_note=portability_note,
+            )
+        )
+
+    for bk in block_candidates:
+        candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v8", bindings={"ATTN_BLOCK_KV": int(bk)})
         score, score_reason, portability_note = _score_flash_candidate(
             candidate=candidate,
             goal_tags=goal_tags,
@@ -487,6 +539,14 @@ def plan_flash_attention2d(
         final.append(candidate)
         if len(final) >= b:
             break
+
+    if cluster == "cuda_tc_mid_smem" and not any(c.kernel_kind == "attn2d_causal_softmax_v8" for c in final):
+        best_v8 = next((c for c in ordered if c.kernel_kind == "attn2d_causal_softmax_v8"), None)
+        if best_v8 is not None:
+            if len(final) >= b and final:
+                final[-1] = best_v8
+            else:
+                final.append(best_v8)
 
     return BackendPlan(
         kernel="flash_attention2d",
