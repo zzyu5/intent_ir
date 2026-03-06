@@ -109,10 +109,13 @@ def _run_tune(
         "--cuda-runtime-backend",
         str(cuda_runtime_backend),
     ]
-    if candidate_file is not None:
-        cmd.extend(["--candidate-file", str(candidate_file)])
-    if candidate is not None:
-        cmd.extend(["--candidate", str(candidate)])
+    effective_candidate_file = candidate_file
+    if effective_candidate_file is None and candidate is not None:
+        effective_candidate_file = out_root / "single_candidate.txt"
+        effective_candidate_file.parent.mkdir(parents=True, exist_ok=True)
+        effective_candidate_file.write_text(str(candidate).strip() + "\n", encoding="utf-8")
+    if effective_candidate_file is not None:
+        cmd.extend(["--candidate-file", str(effective_candidate_file)])
     proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
     result: dict[str, Any] = {
         "command": cmd,
@@ -224,10 +227,26 @@ def main() -> int:
     def _best_ratio(result: dict[str, Any]) -> float | None:
         summary = result.get("summary")
         if not isinstance(summary, dict):
-            return None
+            summary = {}
         candidates = list(summary.get("candidates") or [])
         ratios = [float(c.get("ratio")) for c in candidates if c.get("ratio") is not None]
-        return (max(ratios) if ratios else None)
+        if ratios:
+            return max(ratios)
+        run_summaries = []
+        out_root_local = Path(str(result.get("out_root") or ""))
+        if out_root_local.is_dir():
+            run_summaries = list(out_root_local.rglob("run_summary.json"))
+        fallback = []
+        for path in run_summaries:
+            try:
+                obj = _load_json(path)
+            except Exception:
+                continue
+            for key in ("gpu_perf_min_ratio", "gpu_perf_p50_ratio"):
+                val = obj.get(key)
+                if val is not None:
+                    fallback.append(float(val))
+        return (max(fallback) if fallback else None)
 
     payload = {
         "kernel": kernel,
