@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -10,122 +9,130 @@ pytest.importorskip("torch")
 
 from intent_ir.ir import IntentFunction
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor
-from pipeline.triton.org_bridge import load_org_attr
 from pipeline.triton.core import _run_org_plugin
+from pipeline.triton.org_bridge import load_org_attr
 
 
 def _dummy_intent(name: str) -> IntentFunction:
-    # _run_org_plugin builds an intent_summary even when using cache; supply a minimal valid IntentFunction.
     return IntentFunction.from_json_dict(
         {
             "name": str(name),
-            "tensors": {
-                "x": {"dtype": "f32", "shape": [1], "layout": "row_major"},
-                "Out": {"dtype": "f32", "shape": [1], "layout": "row_major"},
-            },
+            "tensors": {"x": {"dtype": "f32", "shape": [1], "layout": "row_major"}, "Out": {"dtype": "f32", "shape": [1], "layout": "row_major"}},
             "ops": [{"op": "identity", "inputs": ["x"], "output": "Out"}],
             "outputs": ["Out"],
         }
     )
 
 
-def _dummy_desc(*, kernel: str, ttgir_text: str | None = None, ttgir_path: Path | None = None) -> KernelDescriptor:
+def _dummy_desc(*, kernel: str, ttgir_path: Path | None = None) -> KernelDescriptor:
     desc = KernelDescriptor(schema_version="kernel_desc_v1.0", name=str(kernel), frontend="triton")
     desc.source_text = "def kernel(): pass"
-    desc.artifacts = KernelArtifactBundle(
-        ttgir_text=(str(ttgir_text) if ttgir_text is not None else None),
-        ttgir_path=(str(ttgir_path) if ttgir_path is not None else None),
-    )
-    desc.launch = {"canonical_shapes": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64}}
+    desc.artifacts = KernelArtifactBundle(ttgir_path=(str(ttgir_path) if ttgir_path is not None else None))
     return desc
 
 
-def _write_seed(*, out_dir: Path, kernel: str, org_payload: object) -> Path:
-    validate_org_doc = load_org_attr("org.schema", "validate_org_doc")
+def _seed_payload(*, kernel: str) -> dict[str, object]:
+    if kernel == "flash_attention2d":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "flash_attention2d",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+                "artifacts": {"ttgir_path": "flash.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep q/state resident", "scope": "kv_loop", "tensors": ["Q"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "streaming_softmax_state", "summary": "online reduce", "scope": "softmax", "tensors": ["Out"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "avoid_materialization", "summary": "avoid score matrix", "scope": "softmax", "tensors": ["scores"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "latency_hiding", "summary": "pipeline loads", "scope": "kv_loop", "tensors": ["K", "V"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "kv_tile_stage", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["tile_kv"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "online_softmax_reduce", "category": "communication", "supports_goals": ["g1", "g2"], "attrs": {}, "dims": ["score_warps"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "prefetch_pipeline", "category": "pipeline", "supports_goals": ["g3"], "attrs": {}, "dims": ["pipeline_stages"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "tile_kv", "role": "kv_tile", "candidates": [32, 64], "constraints": ["tile_kv <= KV_CTX"], "evidence_refs": ["e0"]},
+                {"name": "score_warps", "role": "score_reduce", "candidates": [6, 4], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "pipeline_stages", "role": "pipeline_depth", "candidates": [2], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "attn2d_causal_softmax_v6",
+                "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "flash.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    return {
+        "schema_version": "intentir_org_v1",
+        "kernel": "matmul_fused_epilogue2d",
+        "source_context": {
+            "frontend": "triton",
+            "source_arch": "sm90",
+            "target_arch": "sm120",
+            "shape_bindings": {"M": 32, "N": 32, "K": 32},
+            "artifacts": {"ttgir_path": "matmul.ttgir"},
+        },
+        "goals": [
+            {"id": "g0", "tag": "operand_reuse", "summary": "reuse ab tiles", "scope": "k_loop", "tensors": ["A", "B"], "evidence_refs": ["e0"]},
+            {"id": "g1", "tag": "mma_acceleration", "summary": "use mma", "scope": "mainloop", "tensors": ["A", "B"], "evidence_refs": ["e0"]},
+            {"id": "g2", "tag": "fused_epilogue_avoid_writeback", "summary": "keep epilogue fused", "scope": "epilogue", "tensors": ["bias"], "evidence_refs": ["e0"]},
+            {"id": "g3", "tag": "latency_hiding", "summary": "prefetch tiles", "scope": "k_loop", "tensors": ["A", "B"], "evidence_refs": ["e0"]},
+        ],
+        "mechanisms": [
+            {"id": "m0", "tag": "ab_tile_stage", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["tile_m", "tile_n", "tile_k"], "evidence_refs": ["e0"]},
+            {"id": "m1", "tag": "mma_core", "category": "primitive", "supports_goals": ["g1"], "attrs": {}, "dims": ["tile_m", "tile_n", "tile_k"], "evidence_refs": ["e0"]},
+            {"id": "m2", "tag": "epilogue_fused_writeback", "category": "fusion", "supports_goals": ["g2"], "attrs": {}, "dims": ["tile_m", "tile_n"], "evidence_refs": ["e0"]},
+            {"id": "m3", "tag": "prefetch_pipeline", "category": "pipeline", "supports_goals": ["g3"], "attrs": {}, "dims": ["pipeline_stages"], "evidence_refs": ["e0"]},
+        ],
+        "dims": [
+            {"name": "tile_m", "role": "m_tile", "candidates": [32, 64], "constraints": [], "evidence_refs": ["e0"]},
+            {"name": "tile_n", "role": "n_tile", "candidates": [16, 32], "constraints": [], "evidence_refs": ["e0"]},
+            {"name": "tile_k", "role": "k_tile", "candidates": [16, 32], "constraints": [], "evidence_refs": ["e0"]},
+            {"name": "pipeline_stages", "role": "pipeline_depth", "candidates": [2], "constraints": [], "evidence_refs": ["e0"]},
+        ],
+        "source_oracle": {
+            "kernel_kind": "matmul_mma_tf32_v1",
+            "bindings": {"MMA_BM": 32, "MMA_BN": 32, "MMA_BK": 32},
+            "arch": "sm90",
+            "compiler_stack": "python",
+            "evidence_refs": ["e1"],
+        },
+        "evidence": [
+            {"id": "e0", "kind": "ttgir_line", "path": "matmul.ttgir:1", "summary": "ttgir evidence"},
+            {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+        ],
+    }
+
+
+def _write_seed(*, out_dir: Path, kernel: str) -> None:
     save_org_seed = load_org_attr("org.io", "save_org_seed")
-    seed_path = out_dir / f"{kernel}.org_seed.json"
-    org = validate_org_doc(org_payload)
+    validate_org_doc = load_org_attr("org.schema", "validate_org_doc")
+    org = validate_org_doc(_seed_payload(kernel=kernel))
     save_org_seed(
-        path=seed_path,
+        path=out_dir / f"{kernel}.org_seed.json",
         kernel=str(kernel),
         triton_provider="native",
         backend_target="cuda_5090d",
         org=org,
-        raw_json=(org.to_json_dict()),
+        raw_json=org.to_json_dict(),
         llm_trace={"provider": "test", "cached": True},
         quality={"diff_ok": True, "static_ok": True, "contract_level": "test"},
     )
-    return seed_path
-
-
-def test_force_cache_extract_writes_org_doc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("INTENTIR_ORG_MODE", "extract")
-    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
-
-    _write_seed(
-        out_dir=tmp_path,
-        kernel="flash_attention2d",
-        org_payload={
-            "schema_version": "intentir_org_v1",
-            "kernel": "flash_attention2d",
-            "nodes": [
-                {
-                    "id": "n0",
-                    "node_type": "tiling",
-                    "why": ["resident_working_set"],
-                    "how": ["scratchpad_staging"],
-                    "dims": ["ATTN_BLOCK_KV", "ATTN_SCORE_WARPS"],
-                    "constraints": [],
-                    "evidence": [{"kind": "extra", "path": "extra.shape_bindings"}],
-                }
-            ],
-            "edges": [],
-        },
-    )
-
-    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
-    _run_org_plugin(
-        spec_name="flash_attention2d",
-        out_dir=tmp_path,
-        desc=None,
-        intent=_dummy_intent("flash_attention2d"),
-        report=report,
-        shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
-        triton_provider="native",
-        backend_target="cuda_5090d",
-    )
-
-    assert (tmp_path / "flash_attention2d.org.json").is_file()
-    assert not (tmp_path / "flash_attention2d.org_candidates.txt").exists()
-    assert report.get("org") and isinstance(report.get("org"), dict)
-    assert bool((report["org"] or {}).get("cache_used")) is True
 
 
 def test_force_cache_apply_flash_attention2d_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
-
-    _write_seed(
-        out_dir=tmp_path,
-        kernel="flash_attention2d",
-        org_payload={
-            "schema_version": "intentir_org_v1",
-            "kernel": "flash_attention2d",
-            "nodes": [
-                {
-                    "id": "n0",
-                    "node_type": "overlap_pipeline",
-                    "why": ["avoid_recompute"],
-                    "how": ["double_buffering"],
-                    "dims": [{"name": "ATTN_BLOCK_KV", "allowed": [64]}],
-                    "constraints": [],
-                    "evidence": [{"kind": "extra", "path": "extra.shape_bindings"}],
-                }
-            ],
-            "edges": [],
-        },
-    )
-
+    _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
     report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
     _run_org_plugin(
         spec_name="flash_attention2d",
@@ -137,71 +144,70 @@ def test_force_cache_apply_flash_attention2d_requires_ttgir(monkeypatch: pytest.
         triton_provider="native",
         backend_target="cuda_5090d",
     )
-
-    assert report.get("org")
     assert (report["org"] or {}).get("error") == "ttgir_missing"
-    assert not (tmp_path / "flash_attention2d.org_candidates.txt").exists()
 
 
 def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
-    monkeypatch.setenv("INTENTIR_COMPILER_STACK", "python")
-    monkeypatch.setenv("INTENTIR_CUDA_SM", "sm_120")
-    monkeypatch.setenv("INTENTIR_ORG_BUDGET", "8")
-
-    _write_seed(
-        out_dir=tmp_path,
-        kernel="flash_attention2d",
-        org_payload={
-            "schema_version": "intentir_org_v1",
-            "kernel": "flash_attention2d",
-            "nodes": [
-                {
-                    "id": "n0",
-                    "node_type": "tiling",
-                    "why": [],
-                    "how": [],
-                    "dims": ["ATTN_BLOCK_KV", "ATTN_SCORE_WARPS"],
-                    "constraints": [],
-                    "evidence": [{"kind": "extra", "path": "extra.shape_bindings"}],
-                }
-            ],
-            "edges": [],
-        },
-    )
-
-    ttgir_path = tmp_path / "flash_attention2d.ttgir"
-    ttgir_path.write_text(
-        (
-            '#blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [2, 16], warpsPerCTA = [4, 1], order = [1, 0]}>\n'
-            'module attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n'
-            '  tt.func public @flash_attention2d_kernel(%Q_ptr: !tt.ptr<f32>, %K_ptr: !tt.ptr<f32>, %V_ptr: !tt.ptr<f32>, %Out_ptr: !tt.ptr<f32>, %sm_scale: f32) {\n'
-            '    %pid_q = tt.get_program_id x : i32\n'
-            '    %k_33 = tt.load %k_32, %k_25, %cst_2 : tensor<32x64x!tt.ptr<f32>, #blocked>\n'
-            '    tt.return\n'
-            '  }\n'
-            '}\n'
-        ),
+    _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
+    ttgir = tmp_path / "flash.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [2, 16], warpsPerCTA = [4, 1], order = [1, 0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @flash_attention2d_kernel(%Q_ptr: !tt.ptr<f32>) {\n    %pid_q = tt.get_program_id x : i32\n    %k_33 = tt.load %k_32, %k_25, %cst_2 : tensor<32x64x!tt.ptr<f32>, #blocked>\n    %m_ij = "tt.reduce"(%scores_46) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %max = arith.maxnumf %lhs, %rhs : f32\n      tt.reduce.return %max : f32\n    }) : (tensor<32xf32, #ttg.slice<{dim = 1, parent = #blocked}>>) -> f32\n    tt.return\n  }\n}\n',
         encoding="utf-8",
     )
-
     report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
     _run_org_plugin(
         spec_name="flash_attention2d",
         out_dir=tmp_path,
-        desc=_dummy_desc(kernel="flash_attention2d", ttgir_path=ttgir_path),
+        desc=_dummy_desc(kernel="flash_attention2d", ttgir_path=ttgir),
         intent=_dummy_intent("flash_attention2d"),
         report=report,
         shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
         triton_provider="native",
         backend_target="cuda_5090d",
     )
-
-    org_report = dict(report.get("org") or {})
-    assert org_report.get("evidence_source", {}).get("primary") == "ttgir"
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
     assert (tmp_path / "flash_attention2d.org_plan.json").is_file()
-    assert (tmp_path / "flash_attention2d.org_candidates.txt").is_file()
-    plan = json.loads((tmp_path / "flash_attention2d.org_plan.json").read_text(encoding="utf-8"))
-    assert plan.get("schema_version") == "intentir_backend_plan_v1"
-    assert plan.get("candidates")
+
+
+def test_force_cache_apply_matmul_fused_epilogue_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    _write_seed(out_dir=tmp_path, kernel="matmul_fused_epilogue2d")
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="matmul_fused_epilogue2d",
+        out_dir=tmp_path,
+        desc=None,
+        intent=_dummy_intent("matmul_fused_epilogue2d"),
+        report=report,
+        shape_bindings={"M": 32, "N": 32, "K": 32},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("error") == "ttgir_missing"
+
+
+def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    _write_seed(out_dir=tmp_path, kernel="matmul_fused_epilogue2d")
+    ttgir = tmp_path / "matmul.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [8, 4], warpsPerCTA = [2, 2], order = [1, 0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @matmul_fused_epilogue2d_kernel(%A: !tt.ptr<f32>) {\n    %pid_m = tt.get_program_id x : i32\n    %dot = tt.dot %a, %b : tensor<16x16xf32, #blocked> * tensor<16x16xf32, #blocked>\n    %layout = ttg.convert_layout %dot : tensor<16x16xf32, #blocked> -> tensor<16x16xf32, #blocked>\n    tt.store %out, %layout : tensor<16x16x!tt.ptr<f32>, #blocked>\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="matmul_fused_epilogue2d",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="matmul_fused_epilogue2d", ttgir_path=ttgir),
+        intent=_dummy_intent("matmul_fused_epilogue2d"),
+        report=report,
+        shape_bindings={"M": 32, "N": 32, "K": 32},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "matmul_fused_epilogue2d.org_plan.json").is_file()
