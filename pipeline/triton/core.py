@@ -14,7 +14,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 import torch
@@ -95,6 +95,167 @@ def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent
     Backward-compatible helper: lift a KernelDescriptor into a CandidateIntent.
     """
     return _LLM_HUB.lift(desc, feedback=list(feedback or []))
+
+
+def _detect_cuda_arch() -> str:
+    def _normalize_cuda_arch(raw: str) -> str:
+        s = str(raw or "").strip().lower()
+        if not s:
+            return ""
+        if s.isdigit():
+            return f"sm{s}"
+        if s.startswith("sm_"):
+            s = s[3:]
+        elif s.startswith("sm"):
+            s = s[2:]
+        digits = "".join(ch for ch in s if ch.isdigit())
+        return f"sm{digits}" if digits else ""
+
+    env = _normalize_cuda_arch(os.getenv("INTENTIR_CUDA_SM", ""))
+    if env:
+        return env
+    try:  # pragma: no cover - depends on CUDA env
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
+                return f"sm{int(major)}{int(minor)}"
+    except Exception:
+        pass
+    return ""
+
+
+def _candidate_line(kernel_kind: str, bindings: Mapping[str, int] | None) -> str:
+    kk = str(kernel_kind).strip()
+    flat = ",".join(f"{k}={int(v)}" for k, v in sorted((dict(bindings or {})).items()))
+    return f"{kk}:{flat}" if flat else kk
+
+
+def _normalize_cuda_arch_key(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return ""
+    if s.isdigit():
+        return f"sm{str(s)}"
+    if s.startswith("sm_"):
+        s = s[3:]
+    elif s.startswith("sm"):
+        s = s[2:]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return f"sm{digits}" if digits else ""
+
+
+def _score_candidate_against_oracle(
+    cand_kind: str,
+    cand_bindings: Mapping[str, int] | None,
+    *,
+    oracle_kind: str,
+    oracle_bindings: Mapping[str, int],
+    consider_keys: set[str],
+) -> tuple[int, int, int]:
+    """
+    Return a lexicographic score tuple (mismatch, kind_mismatch, -match_count).
+    Smaller is better.
+    """
+
+    kind = str(cand_kind or "").strip()
+    bindings = dict(cand_bindings or {})
+    ok_kind = bool(oracle_kind and kind == oracle_kind)
+
+    match_count = 0
+    mismatch = False
+    for k in consider_keys:
+        if k not in bindings:
+            continue
+        v = int(bindings[k])
+        if int(oracle_bindings.get(k)) == v:
+            match_count += 1
+        else:
+            mismatch = True
+
+    return (1 if mismatch else 0, 0 if ok_kind else 1, -int(match_count))
+
+
+def _apply_source_oracle_ordering(plan, *, oracle: Mapping[str, object], budget: int) -> None:
+    try:
+        oracle_kind = str(oracle.get("kernel_kind") or "").strip()
+        oracle_bindings_raw = oracle.get("bindings")
+        oracle_bindings: dict[str, int] = {}
+        if isinstance(oracle_bindings_raw, Mapping):
+            for k, v in dict(oracle_bindings_raw).items():
+                key = str(k).strip()
+                if not key:
+                    continue
+                try:
+                    oracle_bindings[key] = int(v)
+                except Exception:
+                    continue
+
+        candidates = list(getattr(plan, "candidates", []) or [])
+        if not candidates or (not oracle_kind and not oracle_bindings):
+            return
+
+        # Only consider keys that exist in the candidate space, to avoid spurious mismatches.
+        consider_keys: set[str] = set()
+        for c in candidates:
+            for k in dict(getattr(c, "bindings", {}) or {}).keys():
+                kk = str(k).strip()
+                if kk:
+                    consider_keys.add(kk)
+        consider_keys = {k for k in oracle_bindings.keys() if k in consider_keys}
+
+        decorated: list[tuple[tuple[int, int, int], int, object]] = []
+        for idx, c in enumerate(candidates):
+            score = _score_candidate_against_oracle(
+                str(getattr(c, "kernel_kind", "") or ""),
+                getattr(c, "bindings", None),
+                oracle_kind=oracle_kind,
+                oracle_bindings=oracle_bindings,
+                consider_keys=set(consider_keys),
+            )
+            decorated.append((score, int(idx), c))
+        decorated.sort(key=lambda x: (x[0], x[1]))
+        reordered = [c for _, _, c in decorated]
+        if int(budget) > 0:
+            reordered = reordered[: int(budget)]
+        plan.candidates = reordered
+
+        meta = dict(getattr(plan, "meta", {}) or {})
+        meta["source_oracle"] = {
+            "arch": str(oracle.get("arch") or ""),
+            "compiler_stack": str(oracle.get("compiler_stack") or ""),
+            "kernel_kind": str(oracle_kind),
+            "bindings": dict(oracle_bindings),
+        }
+        plan.meta = meta
+    except Exception:
+        return
+
+
+def _run_org_plugin(
+    *,
+    spec_name: str,
+    out_dir: Path,
+    desc,
+    intent: IntentFunction,
+    report: Dict[str, object],
+    shape_bindings: Dict[str, int],
+    triton_provider: str,
+    backend_target: str | None,
+) -> None:
+    from pipeline.triton.org_bridge import run_org_sidecar  # noqa: PLC0415
+
+    run_org_sidecar(
+        spec_name=spec_name,
+        out_dir=out_dir,
+        desc=desc,
+        intent=intent,
+        report=report,
+        shape_bindings=shape_bindings,
+        triton_provider=triton_provider,
+        backend_target=backend_target,
+    )
 
 
 def _materialize_missing_tensors_for_report(intent: IntentFunction, report: Dict[str, object], *, phase: str) -> None:
@@ -212,6 +373,26 @@ def _load_intent_seed(seed_path: Path) -> tuple[CandidateIntent, CandidateIntent
     return cand, cand_expanded
 
 
+def _org_seed_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_seed.json"
+
+
+def _org_doc_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org.json"
+
+
+def _org_plan_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_plan.json"
+
+
+def _org_candidates_jsonl_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_candidates.jsonl"
+
+
+def _org_candidates_txt_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_candidates.txt"
+
+
 def _mlir_shadow_mode_enabled() -> bool:
     # Evidence mode is a stronger switch than the legacy "shadow" toggle:
     # INTENTIR_EVIDENCE_MODE=off must suppress large intermediate dumps.
@@ -234,6 +415,39 @@ def _execution_ir_mode() -> str:
 
 def _real_mlir_enabled() -> bool:
     return str(os.getenv("INTENTIR_REAL_MLIR", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _org_mode() -> str:
+    """
+    ORG plugin mode switch.
+
+    Values:
+      - off: do not run ORG LLM / mapping
+      - extract: extract ORG only (sidecar artifact)
+      - apply: extract ORG + backend mapper -> candidates
+      - strict: like apply, but failures are fatal
+    """
+    v = str(os.getenv("INTENTIR_ORG_MODE", "off") or "off").strip().lower()
+    return v or "off"
+
+
+def _org_seed_policy() -> str:
+    v = str(os.getenv("INTENTIR_ORG_SEED_POLICY", "auto") or "auto").strip().lower()
+    return v or "auto"
+
+
+def _org_model() -> str:
+    return str(os.getenv("INTENTIR_ORG_MODEL", "") or "").strip()
+
+
+def _org_budget() -> int:
+    raw = str(os.getenv("INTENTIR_ORG_BUDGET", "") or "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except Exception:
+            return 32
+    return 32
 
 
 _CUDA_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
@@ -4312,6 +4526,17 @@ def run_pipeline_for_spec(
         intent=cand.intent,
         baseline_io_raw=baseline_io_raw,
         shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
+    )
+
+    _run_org_plugin(
+        spec_name=spec.name,
+        out_dir=out_dir,
+        desc=desc,
+        intent=cand_for_run.intent,
+        report=report,
+        shape_bindings=dict(shape_bindings),
+        triton_provider=str(triton_provider),
+        backend_target=backend_target,
     )
 
     _emit_mlir_shadow_artifacts(
