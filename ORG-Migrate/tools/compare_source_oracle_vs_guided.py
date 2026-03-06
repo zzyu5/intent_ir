@@ -134,6 +134,45 @@ def _run_tune(
     return result
 
 
+def _first_candidate_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary = result.get("summary")
+    if not isinstance(summary, dict):
+        return {}
+    candidates = list(summary.get("candidates") or [])
+    if not candidates:
+        return {}
+    first = dict(candidates[0] or {})
+    return {
+        "kernel_kind": str(first.get("kernel_kind") or ""),
+        "bindings": dict(first.get("bindings") or {}),
+        "ratio": first.get("ratio"),
+        "coverage_rc": first.get("coverage_rc"),
+        "perf_rc": first.get("perf_rc"),
+    }
+
+
+def _first_failure_detail(result: dict[str, Any]) -> dict[str, Any]:
+    out_root_local = Path(str(result.get("out_root") or ""))
+    graph_files = list(out_root_local.rglob("gpu_perf_graph.json")) if out_root_local.is_dir() else []
+    for path in graph_files:
+        try:
+            obj = _load_json(path)
+        except Exception:
+            continue
+        entries = list(obj.get("entries") or [])
+        if not entries:
+            continue
+        first = dict(entries[0] or {})
+        return {
+            "ok": bool(first.get("ok")),
+            "reason_code": str(first.get("reason_code") or ""),
+            "reason_detail": str(first.get("reason_detail") or ""),
+            "skip_reason": str(first.get("skip_reason") or ""),
+            "count_in_denominator": bool(first.get("count_in_denominator")),
+        }
+    return {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare source-oracle replay vs ORG-guided candidates on target GPU.")
     parser.add_argument("--report", required=True, help="Path to <kernel>.json report emitted by full_pipeline_verify.")
@@ -263,6 +302,12 @@ def main() -> int:
             "guided_best_ratio": _best_ratio(guided_res),
             "source_replay_best_ratio": _best_ratio(source_res),
             "target_oracle_best_ratio": _best_ratio(target_res),
+            "guided_first_candidate": _first_candidate_summary(guided_res),
+            "source_replay_first_candidate": _first_candidate_summary(source_res),
+            "target_oracle_first_candidate": _first_candidate_summary(target_res),
+            "guided_failure": _first_failure_detail(guided_res),
+            "source_replay_failure": _first_failure_detail(source_res),
+            "target_oracle_failure": _first_failure_detail(target_res),
         },
     }
     gp = payload["comparisons"]["guided_best_ratio"]
@@ -273,6 +318,42 @@ def main() -> int:
 
     out_file = out_root / "comparison.json"
     out_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    lines = [
+        f"kernel: {kernel}",
+        f"backend_target: {args.backend_target}",
+        f"source_arch: {args.source_arch}",
+        f"target_arch: {target_arch}",
+        f"guided_best_ratio: {payload['comparisons']['guided_best_ratio']}",
+        f"source_replay_best_ratio: {payload['comparisons']['source_replay_best_ratio']}",
+        f"target_oracle_best_ratio: {payload['comparisons']['target_oracle_best_ratio']}",
+        f"guided_vs_source_replay: {payload['comparisons']['guided_vs_source_replay']}",
+        f"guided_vs_target_oracle: {payload['comparisons']['guided_vs_target_oracle']}",
+    ]
+    fail = payload["comparisons"].get("source_replay_failure") or {}
+    if fail:
+        lines.append(
+            "source_replay_failure: "
+            + ", ".join(
+                [
+                    f"ok={fail.get('ok')}",
+                    f"reason_code={fail.get('reason_code')}",
+                    f"skip_reason={fail.get('skip_reason')}",
+                ]
+            )
+        )
+    fail = payload["comparisons"].get("target_oracle_failure") or {}
+    if fail:
+        lines.append(
+            "target_oracle_failure: "
+            + ", ".join(
+                [
+                    f"ok={fail.get('ok')}",
+                    f"reason_code={fail.get('reason_code')}",
+                    f"skip_reason={fail.get('skip_reason')}",
+                ]
+            )
+        )
+    (out_root / "comparison.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"comparison: {out_file}")
     return 0
 
