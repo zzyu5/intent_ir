@@ -19,7 +19,7 @@ from pipeline.interfaces import KernelDescriptor
 
 from frontends.triton.certificate import build_certificate
 from frontends.triton.contract import evaluate_contract
-from frontends.triton.dump import find_latest_ttir, prepare_dump_and_cache_dirs
+from frontends.triton.dump import find_latest_ttgir, find_latest_ttir, prepare_dump_and_cache_dirs
 from frontends.triton.facts import TTIRConstraints, TTIRFacts, extract_constraints, extract_facts
 
 
@@ -149,9 +149,11 @@ class TritonAdapter:
             desc.meta["triton_cache_dir"] = str(cache_dir)
 
         ttir_path = find_latest_ttir(dump_dir, desc.name)
+        ttgir_path = find_latest_ttgir(dump_dir, desc.name)
         if ttir_path is None:
-            # Some Triton builds only persist TTIR into the cache directory.
             ttir_path = find_latest_ttir(cache_dir, desc.name)
+        if ttgir_path is None:
+            ttgir_path = find_latest_ttgir(cache_dir, desc.name)
         # If missing, try a single compile-triggering run (best-effort) for KernelSpec-like inputs.
         if ttir_path is None and hasattr(kernel, "runner") and hasattr(kernel, "canonical_shapes"):
             try:
@@ -165,8 +167,11 @@ class TritonAdapter:
             except Exception:
                 pass
             ttir_path = find_latest_ttir(dump_dir, desc.name)
+            ttgir_path = find_latest_ttgir(dump_dir, desc.name)
             if ttir_path is None:
                 ttir_path = find_latest_ttir(cache_dir, desc.name)
+            if ttgir_path is None:
+                ttgir_path = find_latest_ttgir(cache_dir, desc.name)
 
         if ttir_path and ttir_path.exists():
             ttir_copy = artifact_dir / f"{desc.name}.ttir"
@@ -178,6 +183,16 @@ class TritonAdapter:
             except Exception:
                 # Keep whatever we have; pipeline can still continue without a stable copy.
                 desc.meta.setdefault("ttir_original_path", str(ttir_path))
+
+        if ttgir_path and ttgir_path.exists():
+            ttgir_copy = artifact_dir / f"{desc.name}.ttgir"
+            try:
+                ttgir_copy.write_text(ttgir_path.read_text(), encoding="utf-8")
+                desc.artifacts.ttgir_path = str(ttgir_copy)
+                desc.artifacts.ttgir_text = None
+                desc.meta.setdefault("ttgir_original_path", str(ttgir_path))
+            except Exception:
+                desc.meta.setdefault("ttgir_original_path", str(ttgir_path))
 
         # Persist descriptor for traceability (MVP).
         try:
