@@ -120,6 +120,28 @@ def _build_source_oracle(extra_evidence: Mapping[str, Any] | None) -> dict[str, 
     }
 
 
+def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]:
+    obj = dict(raw_json or {})
+    dims = [dict(x) for x in list(obj.get("dims") or []) if isinstance(x, Mapping)]
+    dim_names = {str(item.get("name") or "").strip() for item in dims if str(item.get("name") or "").strip()}
+    mechanisms_out: list[dict[str, Any]] = []
+    for raw_mech in list(obj.get("mechanisms") or []):
+        if not isinstance(raw_mech, Mapping):
+            continue
+        mech = dict(raw_mech)
+        dims_list = []
+        for raw_dim in list(mech.get("dims") or []):
+            name = str(raw_dim or "").strip()
+            if not name or name not in dim_names:
+                continue
+            dims_list.append(name)
+        mech["dims"] = dims_list
+        mechanisms_out.append(mech)
+    if mechanisms_out:
+        obj["mechanisms"] = mechanisms_out
+    return obj
+
+
 @dataclass(frozen=True)
 class CandidateOrg:
     org: OrgDoc
@@ -194,8 +216,9 @@ class LLMOrgHub:
                 raise LLMClientError(f"ORG LLM failed: {exc}") from exc
 
             try:
-                org = validate_org_doc(raw_json, source_context=source_context, source_oracle=source_oracle)
-                return CandidateOrg(org=org, raw_json=dict(raw_json), llm_trace=dict(trace), prompt_hash=str(cur_prompt_hash))
+                sanitized = _sanitize_raw_org_json(raw_json)
+                org = validate_org_doc(sanitized, source_context=source_context, source_oracle=source_oracle)
+                return CandidateOrg(org=org, raw_json=dict(sanitized), llm_trace=dict(trace), prompt_hash=str(cur_prompt_hash))
             except OrgValidationError as exc:
                 if attempt >= int(self.max_schema_retries):
                     raise OrgValidationError(f"invalid ORG JSON: {exc}", path=getattr(exc, "path", "")) from exc

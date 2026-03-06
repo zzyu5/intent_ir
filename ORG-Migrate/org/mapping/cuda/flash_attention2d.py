@@ -53,6 +53,15 @@ def _ordered_param_values(defaults: list[int], preferred: int | None, allowed: l
     return _ordered_unique(vals)
 
 
+def _merged_param_values(defaults: list[int], preferred: int | None, allowed: list[int]) -> list[int]:
+    vals: list[int] = []
+    if preferred is not None:
+        vals.append(int(preferred))
+    vals.extend(int(x) for x in defaults)
+    vals.extend(int(x) for x in list(allowed or []))
+    return _ordered_unique(vals)
+
+
 def _async_copy_guardrails(*, kv_ctx: int, head_dim: int, block_kv: int, score_warps: int) -> tuple[bool, str]:
     if kv_ctx != block_kv:
         return False, "KV_CTX != ATTN_BLOCK_KV"
@@ -162,6 +171,7 @@ def _score_flash_candidate(
     source_kind = str(source_oracle.get("kernel_kind") or "").strip()
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
     resident_bytes = _flash_resident_bytes_hint(block_kv=block_kv, head_dim=head_dim, ttgir_facts=ttgir_facts)
+    residency_complete = bool(_fact_present(ttgir_facts, "staging.q_resident_state") and _fact_present(ttgir_facts, "staging.kv_streamed_tiles"))
     v7_front_allowed = bool(
         "avoid_materialization" in goal_tags
         and "streaming_softmax_state" in goal_tags
@@ -184,6 +194,13 @@ def _score_flash_candidate(
     if kind == "attn2d_causal_softmax_v6":
         score += {6: 15.0, 4: 10.0, 2: 2.0}.get(int(score_warps), 0.0)
         reasons.append(f"score_warps={score_warps}")
+        if cluster == "cuda_tc_mid_smem" and not residency_complete:
+            if int(score_warps) == 6 and int(block_kv) == 32:
+                score += 16.0
+                reasons.append("mid_smem_streaming_fit")
+            elif int(score_warps) == 6 and int(block_kv) == 64:
+                score -= 4.0
+                reasons.append("mid_smem_large_tile_pressure")
     if kind == "attn2d_causal_softmax_v7" and not v7_front_allowed:
         score -= 60.0
         portability_note = "cluster_prefers_v6"
@@ -263,15 +280,26 @@ def plan_flash_attention2d(
 
     dim_candidates_norm = collect_dim_candidate_ints_normalized(org)
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
+    if exact_kind := str(source_oracle.get("kernel_kind") or "").strip():
+        if exact_kind == "attn2d_causal_softmax_v6":
+            source_bindings.setdefault("ATTN_SCORE_WARPS", 6)
     block_candidates = _ordered_param_values(
-        defaults=[64, 32, 16],
+        defaults=_merged_param_values(
+            defaults=[64, 32, 16],
+            preferred=_coerce_int(source_bindings.get("ATTN_BLOCK_KV")),
+            allowed=union_dim_candidate_ints(dim_candidates_norm, "tile_kv", "ATTN_BLOCK_KV", "BLOCK_KV"),
+        ),
         preferred=_coerce_int(source_bindings.get("ATTN_BLOCK_KV")),
-        allowed=union_dim_candidate_ints(dim_candidates_norm, "tile_kv", "ATTN_BLOCK_KV", "BLOCK_KV"),
+        allowed=[],
     )
     score_candidates = _ordered_param_values(
-        defaults=[6, 4, 2],
+        defaults=_merged_param_values(
+            defaults=[6, 4, 2],
+            preferred=_coerce_int(source_bindings.get("ATTN_SCORE_WARPS")),
+            allowed=union_dim_candidate_ints(dim_candidates_norm, "score_warps", "ATTN_SCORE_WARPS", "SCORE_WARPS"),
+        ),
         preferred=_coerce_int(source_bindings.get("ATTN_SCORE_WARPS")),
-        allowed=union_dim_candidate_ints(dim_candidates_norm, "score_warps", "ATTN_SCORE_WARPS", "SCORE_WARPS"),
+        allowed=[],
     )
     block_candidates = [int(x) for x in block_candidates if int(x) <= int(kv_ctx)]
     if not block_candidates:

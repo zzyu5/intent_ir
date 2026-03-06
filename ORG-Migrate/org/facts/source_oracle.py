@@ -6,6 +6,19 @@ from typing import Any, Mapping
 from pipeline.common.tuning_db import load_tuning_db_jsonl, resolve_tuning_db_path, resolve_tuning_entries
 
 
+def _normalize_oracle_bindings(*, kernel: str, kernel_kind: str, bindings: Mapping[str, int]) -> dict[str, int]:
+    out = {str(k): int(v) for k, v in dict(bindings or {}).items() if str(k).strip()}
+    kernel_s = str(kernel or "").strip()
+    kind_s = str(kernel_kind or "").strip()
+    if kernel_s == "flash_attention2d" and kind_s == "attn2d_causal_softmax_v6":
+        out.setdefault("ATTN_SCORE_WARPS", 6)
+    if kernel_s == "matmul_fused_epilogue2d" and kind_s == "matmul_mma_tf32_v1":
+        out.setdefault("MMA_BM", 32)
+        out.setdefault("MMA_BN", 32)
+        out.setdefault("MMA_BK", 32)
+    return out
+
+
 def extract_source_oracle_facts(
     *,
     kernel: str,
@@ -47,7 +60,11 @@ def extract_source_oracle_facts(
         shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
         compiler_stack=str(compiler_stack_s),
     )
-    merged_bindings = {str(k): int(v) for k, v in dict(merged or {}).items() if str(k).strip()}
+    merged_bindings = _normalize_oracle_bindings(
+        kernel=str(kernel),
+        kernel_kind=str(kernel_kind or ""),
+        bindings={str(k): int(v) for k, v in dict(merged or {}).items() if str(k).strip()},
+    )
     kernel_kind_s = str(kernel_kind or "").strip()
     if kernel_kind_s or merged_bindings:
         evidence.append(
