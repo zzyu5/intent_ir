@@ -106,6 +106,14 @@ def _selected_modules(
 
     selected_modules = [m for m in modules if m.id in selected_ids]
     selected_edges = [e for e in module_edges if e.src in selected_ids and e.dst in selected_ids]
+    if source_kind == "attn2d_causal_softmax_v7" and "backend_v7" not in selected_ids:
+        substitutions.append(
+            {
+                "from": "source.variant.v7",
+                "to": "backend_v6",
+                "reason": "source variant v7 not preserved in selected modules",
+            }
+        )
     return selected_modules, selected_edges, substitutions
 
 
@@ -228,10 +236,12 @@ def plan_flash_attention2d(
 
     if want_pipeline and hardware_model.supports_async_copy:
         async_candidates: list[BackendCandidate] = []
+        async_ok = False
         for bk in block_candidates:
             sw = preferred_score if preferred_score is not None else score_candidates[0]
             ok, reason = _async_copy_guardrails(kv_ctx=kv_ctx, head_dim=head_dim, block_kv=int(bk), score_warps=int(sw))
             if ok:
+                async_ok = True
                 async_candidates.append(
                     BackendCandidate(
                         kernel_kind="attn2d_causal_softmax_v7",
@@ -249,6 +259,14 @@ def plan_flash_attention2d(
                     }
                 )
         ordered = async_candidates + ordered
+        if (source_bindings.get("FLASH_ATTN_ASYNC_COPY") or 0) == 1 and not async_ok:
+            substitutions.append(
+                {
+                    "from": "source.prefetch_pipeline",
+                    "to": "flash.sync_prefetch",
+                    "reason": "source async-copy candidate has no valid target realization",
+                }
+            )
 
     final: list[BackendCandidate] = []
     seen: set[tuple[str, tuple[tuple[str, int], ...]]] = set()
@@ -271,7 +289,11 @@ def plan_flash_attention2d(
         constraints=constraints,
         substitutions=substitutions,
         candidates=final,
-        notes=[f"goals={sorted(goal_tags)}", f"mechanisms={sorted(mechanism_tags)}"],
+        notes=[
+            f"goals={sorted(goal_tags)}",
+            f"mechanisms={sorted(mechanism_tags)}",
+            f"source_kernel_kind={exact_kind or 'none'}",
+        ],
     )
 
 

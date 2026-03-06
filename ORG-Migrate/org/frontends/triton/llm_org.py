@@ -75,8 +75,12 @@ Important:
 Kernel-specific expectations:
 - For flash_attention2d, capture:
   resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  q_resident_state, kv_streamed_tiles, online_softmax_reduce, output_layout_convert
 - For matmul_fused_epilogue2d, capture:
   operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
+  and prefer mechanism tags such as:
+  operand_tile_stage, dot_op, mma_core, bias_fused_epilogue, output_layout_convert
 """
 
 

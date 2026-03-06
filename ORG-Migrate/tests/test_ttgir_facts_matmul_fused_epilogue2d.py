@@ -24,3 +24,5 @@ def test_ttgir_facts_matmul_fused_epilogue2d() -> None:
     assert mechanisms["mapping.program_axes"]["attrs"]["axes"] == ["x"]
     assert mechanisms["primitive.mma"]["present"] is True
     assert mechanisms["fusion.epilogue_fused_writeback"]["present"] is True
+    assert mechanisms["primitive.dot_op"]["present"] is True
+    assert mechanisms["layout.output_convert"]["present"] is True

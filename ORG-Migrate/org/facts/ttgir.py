@@ -10,6 +10,7 @@ _BLOCKED_RE = re.compile(
 _PROGRAM_ID_RE = re.compile(r"\btt\.get_program_id\s+([xyz])\b")
 _MODULE_WARPS_RE = re.compile(r'"ttg\.num-warps"\s*=\s*([0-9]+)\s*:\s*i32')
 _THREADS_PER_WARP_RE = re.compile(r'"ttg\.threads-per-warp"\s*=\s*([0-9]+)\s*:\s*i32')
+_SCF_FOR_RE = re.compile(r"\bscf\.for\b")
 
 
 def _split_ints(raw: str) -> list[int]:
@@ -48,9 +49,17 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     has_convert_layout = False
     has_dot = False
     has_shared_like = False
+    has_q_resident_state = False
+    has_kv_streamed_tiles = False
+    has_streaming_softmax = False
+    has_operand_tile_stage = False
+    has_bias_epilogue = False
+    inside_loop = False
 
     for idx, line in enumerate(lines, start=1):
         stripped = line.strip()
+        if _SCF_FOR_RE.search(stripped):
+            inside_loop = True
         m = _BLOCKED_RE.match(stripped)
         if m is not None:
             blocked_layouts.append(
@@ -69,15 +78,32 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         if "tt.load" in stripped and "tensor<" in stripped:
             has_tile_load = True
             evidence.append(_evidence(item_id=f"ttgir_load_{idx}", kind="ttgir_load", artifact_path=artifact_path, line_no=idx, summary="tile-shaped load"))
+            if str(kernel_name) == "flash_attention2d":
+                if "%Q_ptr" in stripped and not inside_loop:
+                    has_q_resident_state = True
+                    evidence.append(_evidence(item_id=f"ttgir_q_resident_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="Q load before streaming loop"))
+                if ("%K_ptr" in stripped or "%V_ptr" in stripped) and inside_loop:
+                    has_kv_streamed_tiles = True
+                    evidence.append(_evidence(item_id=f"ttgir_kv_stream_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="KV load inside streaming loop"))
+            if str(kernel_name) == "matmul_fused_epilogue2d":
+                if ("%A" in stripped or "%B" in stripped) and ("tt.load" in stripped):
+                    has_operand_tile_stage = True
+                    evidence.append(_evidence(item_id=f"ttgir_operand_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="operand tile stage"))
         if "\"tt.reduce\"" in stripped or "tt.reduce" in stripped:
             has_reduce = True
             evidence.append(_evidence(item_id=f"ttgir_reduce_{idx}", kind="ttgir_reduce", artifact_path=artifact_path, line_no=idx, summary="reduction op"))
+            if str(kernel_name) == "flash_attention2d" and inside_loop:
+                has_streaming_softmax = True
+                evidence.append(_evidence(item_id=f"ttgir_stream_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="loop-carried streaming reduction"))
         if "ttg.convert_layout" in stripped:
             has_convert_layout = True
             evidence.append(_evidence(item_id=f"ttgir_convert_layout_{idx}", kind="ttgir_layout", artifact_path=artifact_path, line_no=idx, summary="layout conversion"))
         if "tt.dot" in stripped or "dot " in stripped:
             has_dot = True
             evidence.append(_evidence(item_id=f"ttgir_dot_{idx}", kind="ttgir_dot", artifact_path=artifact_path, line_no=idx, summary="matrix primitive"))
+        if str(kernel_name) == "matmul_fused_epilogue2d" and "bias" in stripped.lower():
+            has_bias_epilogue = True
+            evidence.append(_evidence(item_id=f"ttgir_bias_epilogue_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="bias fused into epilogue"))
         for axis in _PROGRAM_ID_RE.findall(stripped):
             ax = str(axis).strip()
             if ax and ax not in program_axes:
@@ -100,6 +126,11 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     reduce_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_reduce_")]
     layout_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_convert_layout_")]
     dot_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_dot_")]
+    q_resident_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_q_resident_")]
+    kv_stream_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_kv_stream_")]
+    stream_reduce_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_stream_reduce_")]
+    operand_stage_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_operand_stage_")]
+    bias_epilogue_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_bias_epilogue_")]
 
     mechanisms = {
         "tiling.blocked_layout": {
@@ -145,6 +176,47 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "evidence_refs": dot_refs,
         }
         mechanisms["fusion.epilogue_fused_writeback"] = {
+            "present": bool(has_convert_layout),
+            "attrs": {"convert_layout": bool(has_convert_layout)},
+            "evidence_refs": layout_refs,
+        }
+        mechanisms["staging.operand_tile_stage"] = {
+            "present": bool(has_operand_tile_stage or has_tile_load),
+            "attrs": {"tile_load": bool(has_tile_load)},
+            "evidence_refs": operand_stage_refs or staging_refs,
+        }
+        mechanisms["primitive.dot_op"] = {
+            "present": bool(has_dot),
+            "attrs": {"dot_like": bool(has_dot)},
+            "evidence_refs": dot_refs,
+        }
+        mechanisms["fusion.bias_fused_epilogue"] = {
+            "present": bool(has_bias_epilogue),
+            "attrs": {"bias_seen": bool(has_bias_epilogue)},
+            "evidence_refs": bias_epilogue_refs,
+        }
+        mechanisms["layout.output_convert"] = {
+            "present": bool(has_convert_layout),
+            "attrs": {"convert_layout": bool(has_convert_layout)},
+            "evidence_refs": layout_refs,
+        }
+    if str(kernel_name) == "flash_attention2d":
+        mechanisms["staging.q_resident_state"] = {
+            "present": bool(has_q_resident_state),
+            "attrs": {"outside_loop": bool(has_q_resident_state)},
+            "evidence_refs": q_resident_refs,
+        }
+        mechanisms["staging.kv_streamed_tiles"] = {
+            "present": bool(has_kv_streamed_tiles),
+            "attrs": {"inside_loop": bool(has_kv_streamed_tiles)},
+            "evidence_refs": kv_stream_refs,
+        }
+        mechanisms["communication.streaming_softmax"] = {
+            "present": bool(has_streaming_softmax),
+            "attrs": {"loop_carried_reduce": bool(has_streaming_softmax)},
+            "evidence_refs": stream_reduce_refs,
+        }
+        mechanisms["layout.output_convert"] = {
             "present": bool(has_convert_layout),
             "attrs": {"convert_layout": bool(has_convert_layout)},
             "evidence_refs": layout_refs,

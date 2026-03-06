@@ -110,6 +110,14 @@ def _selected_modules(
             )
     selected_modules = [m for m in modules if m.id in selected_ids]
     selected_edges = [e for e in module_edges if e.src in selected_ids and e.dst in selected_ids]
+    if str(source_oracle.get("kernel_kind") or "").startswith("matmul_mma") and "mma_core" not in {m.id for m in selected_modules}:
+        substitutions.append(
+            {
+                "from": "source.mma_core",
+                "to": "matmul.tile_core",
+                "reason": "source MMA path not preserved by selected modules",
+            }
+        )
     return selected_modules, selected_edges, substitutions
 
 
@@ -205,6 +213,7 @@ def plan_matmul_fused_epilogue2d(
     want_mma = any(m.id == "mma_core" for m in selected_modules)
 
     if want_mma:
+        async_ok = False
         for bm in bm_values:
             if (m_dim % int(bm)) != 0:
                 continue
@@ -228,6 +237,7 @@ def plan_matmul_fused_epilogue2d(
                     if want_async:
                         ok, reason = _mma_async_guardrails(bm=int(bm), bn=int(bn), bk=int(bk), threads=int(threads))
                         if ok:
+                            async_ok = True
                             ordered.insert(
                                 0,
                                 BackendCandidate(
@@ -250,6 +260,14 @@ def plan_matmul_fused_epilogue2d(
                                     "detail": {"MMA_BM": int(bm), "MMA_BN": int(bn), "MMA_BK": int(bk)},
                                 }
                             )
+        if (source_bindings.get("MMA_ASYNC_COPY") or 0) == 1 and want_async and not async_ok:
+            substitutions.append(
+                {
+                    "from": "source.prefetch_pipeline",
+                    "to": "matmul.sync_prefetch",
+                    "reason": "source async MMA path has no valid target realization",
+                }
+            )
 
     ordered.append(BackendCandidate(kernel_kind="matmul_tile_v2", bindings={}, note="tile_baseline"))
     ordered.append(BackendCandidate(kernel_kind="matmul_tile_v1", bindings={}, note="tile_fallback"))
@@ -275,7 +293,11 @@ def plan_matmul_fused_epilogue2d(
         constraints=constraints,
         substitutions=substitutions,
         candidates=final,
-        notes=[f"goals={sorted(goal_tags)}", f"mechanisms={sorted(mechanism_tags)}"],
+        notes=[
+            f"goals={sorted(goal_tags)}",
+            f"mechanisms={sorted(mechanism_tags)}",
+            f"source_kernel_kind={exact_kind or 'none'}",
+        ],
     )
 
 
