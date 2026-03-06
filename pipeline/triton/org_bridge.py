@@ -12,6 +12,7 @@ from intent_ir.ir import IntentFunction
 from pipeline.triton.core import (
     _candidate_line,
     _compiler_stack_name,
+    _compiler_cpp_wave_name,
     _detect_cuda_arch,
     _normalize_cuda_arch_key,
     _org_budget,
@@ -119,6 +120,8 @@ def run_org_sidecar(
         "seed_policy": str(_org_seed_policy()),
         "model": (str(_org_model()) if _org_model() else None),
         "budget": int(_org_budget()),
+        "compiler_stack": str(_compiler_stack_name()),
+        "compiler_cpp_wave": (str(_compiler_cpp_wave_name()) if str(_compiler_stack_name()) in {"cpp", "cpp_plugin", "c++"} else ""),
         "runtime_root": str(ORG_RUNTIME_ROOT),
     }
     report["org"] = org_report

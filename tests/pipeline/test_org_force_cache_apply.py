@@ -173,6 +173,8 @@ def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pyt
     )
     evidence_source = (report["org"] or {}).get("evidence_source", {})
     assert evidence_source.get("primary") == "ttgir"
+    assert (report["org"] or {}).get("compiler_stack") == "python"
+    assert (report["org"] or {}).get("compiler_cpp_wave") in {"", "wave2"}
     assert evidence_source.get("ptx_available") is True
     assert str(evidence_source.get("ptx_path") or "").endswith("flash.ptx")
     assert isinstance((report["org"] or {}).get("hardware_model"), dict)
@@ -223,6 +225,8 @@ def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch:
         backend_target="cuda_5090d",
     )
     assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (report["org"] or {}).get("compiler_stack") == "python"
+    assert (report["org"] or {}).get("compiler_cpp_wave") in {"", "wave2"}
     assert ((report["org"] or {}).get("hardware_model") or {}).get("arch_cluster") == "cuda_tc_mid_smem"
     assert Path(str((report["org"] or {}).get("ttgir_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()

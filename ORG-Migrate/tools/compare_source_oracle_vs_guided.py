@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +55,19 @@ def _parse_candidate_line(candidate: str) -> tuple[str, dict[str, int]]:
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _infer_compiler_stack_from_candidate_file(path: Path) -> str:
+    try:
+        first = str(path.read_text(encoding="utf-8").splitlines()[0] if path.is_file() else "")
+    except Exception:
+        return ""
+    line = str(first or "").strip()
+    if "compiler_stack=" not in line:
+        return ""
+    suffix = line.split("compiler_stack=", 1)[1]
+    token = str(suffix.split()[0] if suffix.split() else "").strip()
+    return token
 
 
 def _resolve_source_candidate(
@@ -117,6 +131,8 @@ def _run_tune(
     perf_iters: int,
     perf_repeats: int,
     cuda_runtime_backend: str,
+    compiler_stack: str,
+    compiler_cpp_wave: str = "",
 ) -> dict[str, Any]:
     cmd = [
         sys.executable,
@@ -146,9 +162,15 @@ def _run_tune(
         effective_candidate_file.write_text(str(candidate).strip() + "\n", encoding="utf-8")
     if effective_candidate_file is not None:
         cmd.extend(["--candidate-file", str(effective_candidate_file)])
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+    env = dict(os.environ)
+    env["INTENTIR_COMPILER_STACK"] = str(compiler_stack or "python")
+    if str(compiler_cpp_wave or "").strip():
+        env["INTENTIR_COMPILER_CPP_WAVE"] = str(compiler_cpp_wave)
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, env=env)
     result: dict[str, Any] = {
         "command": cmd,
+        "compiler_stack": str(compiler_stack or "python"),
+        "compiler_cpp_wave": str(compiler_cpp_wave or ""),
         "returncode": int(proc.returncode),
         "stdout_tail": "\n".join(proc.stdout.splitlines()[-10:]),
         "stderr_tail": "\n".join(proc.stderr.splitlines()[-10:]),
@@ -564,15 +586,22 @@ def main() -> int:
     shape_bindings = {str(k): int(v) for k, v in dict((org.get("shape_bindings") or source_context.get("shape_bindings") or {})).items() if str(k).strip()}
     if not shape_bindings:
         shape_bindings = {str(k): int(v) for k, v in dict((report.get("baseline") or {}).get("shapes") or {}).items() if str(k).strip()}
-    compiler_stack = str((report.get("org") or {}).get("compiler_stack") or "python")
+    compiler_stack = str((report.get("org") or {}).get("compiler_stack") or "").strip().lower()
+    if not compiler_stack:
+        compiler_stack = _infer_compiler_stack_from_candidate_file(candidates_txt_path)
+    if not compiler_stack:
+        compiler_stack = "python"
     target_arch = str((org.get("arch") or "")).strip()
     db_path = (Path(args.tuning_db).resolve() if str(args.tuning_db).strip() else None)
     source_oracle_kind = str(dict(plan.get("source_oracle") or {}).get("kernel_kind") or "").strip()
+    source_compiler_stack = str(dict(plan.get("source_oracle") or {}).get("compiler_stack") or compiler_stack or "python").strip().lower() or "python"
+    target_compiler_stack = str(compiler_stack or "python").strip().lower() or "python"
+    compiler_cpp_wave = str((report.get("org") or {}).get("compiler_cpp_wave") or os.getenv("INTENTIR_COMPILER_CPP_WAVE", "") or "").strip().lower()
 
     source_candidate = _resolve_source_candidate(
         kernel=kernel,
         shape_bindings=shape_bindings,
-        compiler_stack=compiler_stack,
+        compiler_stack=source_compiler_stack,
         source_arch=str(args.source_arch),
         db_path=db_path,
         plan=plan,
@@ -580,7 +609,7 @@ def main() -> int:
     target_candidate = _resolve_target_oracle_candidate(
         kernel=kernel,
         shape_bindings=shape_bindings,
-        compiler_stack=compiler_stack,
+        compiler_stack=target_compiler_stack,
         target_arch=target_arch,
         db_path=db_path,
     )
@@ -609,6 +638,8 @@ def main() -> int:
         perf_iters=args.perf_iters,
         perf_repeats=args.perf_repeats,
         cuda_runtime_backend=args.cuda_runtime_backend,
+        compiler_stack=target_compiler_stack,
+        compiler_cpp_wave=compiler_cpp_wave,
     )
     source_res = {}
     if source_candidate:
@@ -622,6 +653,8 @@ def main() -> int:
             perf_iters=args.perf_iters,
             perf_repeats=args.perf_repeats,
             cuda_runtime_backend=args.cuda_runtime_backend,
+            compiler_stack=source_compiler_stack,
+            compiler_cpp_wave=compiler_cpp_wave,
         )
     target_res = {}
     if target_candidate:
@@ -635,6 +668,8 @@ def main() -> int:
             perf_iters=args.perf_iters,
             perf_repeats=args.perf_repeats,
             cuda_runtime_backend=args.cuda_runtime_backend,
+            compiler_stack=target_compiler_stack,
+            compiler_cpp_wave=compiler_cpp_wave,
         )
 
     guided_outcome = _make_outcome(guided_res)
@@ -666,6 +701,10 @@ def main() -> int:
         "target_arch": target_arch,
         "shape_bindings": shape_bindings,
         "compiler_stack": compiler_stack,
+        "compiler_cpp_wave": compiler_cpp_wave,
+        "guided_compiler_stack": target_compiler_stack,
+        "source_compiler_stack": source_compiler_stack,
+        "target_compiler_stack": target_compiler_stack,
         "evidence_source": dict(org.get("evidence_source") or {}),
         "hardware_model": hardware_model,
         "guided_candidate_file": str(candidates_txt_path),
@@ -719,6 +758,10 @@ def main() -> int:
         f"source_arch: {args.source_arch}",
         f"target_arch: {target_arch}",
         f"compiler_stack: {compiler_stack}",
+        f"compiler_cpp_wave: {compiler_cpp_wave}",
+        f"guided_compiler_stack: {target_compiler_stack}",
+        f"source_compiler_stack: {source_compiler_stack}",
+        f"target_compiler_stack: {target_compiler_stack}",
         f"shape_bindings: {json.dumps(shape_bindings, ensure_ascii=False, sort_keys=True)}",
         f"evidence_primary: {str((payload.get('evidence_source') or {}).get('primary') or '')}",
         f"hardware_cluster: {str(hardware_model.get('arch_cluster') or '')}",

@@ -20,6 +20,10 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                 "source_arch": "sm90",
                 "target_arch": "sm120",
                 "compiler_stack": "python",
+                "compiler_cpp_wave": "",
+                "guided_compiler_stack": "python",
+                "source_compiler_stack": "cpp_plugin",
+                "target_compiler_stack": "python",
                 "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
                 "evidence_source": {"primary": "ttgir"},
                 "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
@@ -93,6 +97,8 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
     assert row["kernel"] == "flash_attention2d"
     assert row["guided_best_ratio"] == 0.8
     assert row["compiler_stack"] == "python"
+    assert row["compiler_cpp_wave"] == ""
+    assert row["source_compiler_stack"] == "cpp_plugin"
     assert row["evidence_primary"] == "ttgir"
     assert row["hardware_cluster"] == "cuda_tc_mid_smem"
     assert row["guided_outcome"] == "ok"

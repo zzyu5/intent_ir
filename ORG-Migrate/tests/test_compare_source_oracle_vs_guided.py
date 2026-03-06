@@ -49,6 +49,7 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
             "arch": "sm120",
             "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
             "compiler_stack": "python",
+            "compiler_cpp_wave": "",
             "evidence_source": {"primary": "ttgir", "ptx_available": True},
             "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
         },
@@ -68,6 +69,8 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
 
     def fake_run_tune(**kwargs):
         out_dir = Path(kwargs["out_root"])
+        assert kwargs["compiler_stack"] == "python"
+        assert kwargs["compiler_cpp_wave"] == ""
         if out_dir.name == "guided":
             return {
                 "returncode": 0,
@@ -131,6 +134,9 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     payload = json.loads((out_root / "comparison.json").read_text(encoding="utf-8"))
     assert payload["shape_bindings"] == {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64}
     assert payload["compiler_stack"] == "python"
+    assert payload["compiler_cpp_wave"] == ""
+    assert payload["guided_compiler_stack"] == "python"
+    assert payload["source_compiler_stack"] == "python"
     assert payload["evidence_source"]["primary"] == "ttgir"
     assert payload["hardware_model"]["arch_cluster"] == "cuda_tc_mid_smem"
     assert payload["comparisons"]["guided_outcome"]["status"] == "ok"
@@ -163,6 +169,7 @@ def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monk
             "arch": "sm120",
             "shape_bindings": {"M": 32, "N": 32, "K": 32},
             "compiler_stack": "python",
+            "compiler_cpp_wave": "",
             "evidence_source": {"primary": "ttgir"},
             "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
         }
@@ -178,6 +185,9 @@ def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monk
 
     def fake_run_tune(**kwargs):
         out_dir = Path(kwargs["out_root"])
+        if out_dir.name == "guided":
+            assert kwargs["compiler_stack"] == "python"
+            assert kwargs["compiler_cpp_wave"] == ""
         if out_dir.name == "guided":
             return {
                 "returncode": 0,
@@ -202,12 +212,16 @@ def test_compare_tool_detects_async_repair_from_guided_candidates(tmp_path, monk
                 },
             }
         if out_dir.name == "source_replay":
+            assert kwargs["compiler_stack"] == "python"
+            assert kwargs["compiler_cpp_wave"] == ""
             return {
                 "returncode": 0,
                 "out_root": str(source_root),
                 "summary": {"candidates": [{"kernel_kind": "matmul_mma_tf32_v1", "bindings": {"MMA_ASYNC_COPY": 1, "MMA_BK": 32, "MMA_BM": 32, "MMA_BN": 32}, "ratio": None}]},
             }
         if out_dir.name == "target_oracle":
+            assert kwargs["compiler_stack"] == "python"
+            assert kwargs["compiler_cpp_wave"] == ""
             return {
                 "returncode": 0,
                 "out_root": str(target_root),
@@ -267,6 +281,7 @@ def test_compare_tool_detects_flash_cluster_variant_repair(tmp_path, monkeypatch
             "arch": "sm120",
             "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
             "compiler_stack": "python",
+            "compiler_cpp_wave": "",
             "evidence_source": {"primary": "ttgir"},
             "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
         }
@@ -277,6 +292,9 @@ def test_compare_tool_detects_flash_cluster_variant_repair(tmp_path, monkeypatch
 
     def fake_run_tune(**kwargs):
         out_dir = Path(kwargs["out_root"])
+        if out_dir.name == "guided":
+            assert kwargs["compiler_stack"] == "python"
+            assert kwargs["compiler_cpp_wave"] == ""
         if out_dir.name == "guided":
             return {
                 "returncode": 0,
@@ -289,6 +307,8 @@ def test_compare_tool_detects_flash_cluster_variant_repair(tmp_path, monkeypatch
                 },
             }
         if out_dir.name in {"source_replay", "target_oracle"}:
+            assert kwargs["compiler_stack"] == "python"
+            assert kwargs["compiler_cpp_wave"] == ""
             return {
                 "returncode": 0,
                 "out_root": str(out_dir),
@@ -334,3 +354,166 @@ def test_make_outcome_reports_process_error_without_graph(tmp_path) -> None:
     outcome = module._make_outcome(result)
     assert outcome["status"] == "process_error"
     assert outcome["failure"]["reason_code"] == "tune_returncode_nonzero"
+
+
+def test_compare_tool_uses_source_compiler_stack_from_plan(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "flash_attention2d.json"
+    plan_path = tmp_path / "flash_attention2d.org_plan.json"
+    candidates_path = tmp_path / "flash_attention2d.org_candidates.txt"
+    out_root = tmp_path / "compare"
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+            "compiler_stack": "python",
+            "compiler_cpp_wave": "",
+            "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(
+        json.dumps({"source_oracle": {"kernel_kind": "attn2d_causal_softmax_v7", "bindings": {"ATTN_BLOCK_KV": 64, "FLASH_ATTN_ASYNC_COPY": 1}, "compiler_stack": "cpp_plugin"}}),
+        encoding="utf-8",
+    )
+    candidates_path.write_text("attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6\n", encoding="utf-8")
+
+    seen: list[tuple[str, str, str]] = []
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        seen.append((out_dir.name, str(kwargs["compiler_stack"]), str(kwargs["compiler_cpp_wave"])))
+        return {
+            "returncode": 0,
+            "out_root": str(out_dir),
+            "summary": {"candidates": [{"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}, "ratio": 0.67}]},
+        }
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "attn2d_causal_softmax_v7:ATTN_BLOCK_KV=64,FLASH_ATTN_ASYNC_COPY=1")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+    assert module.main() == 0
+    assert ("guided", "python", "") in seen
+    assert ("source_replay", "cpp_plugin", "") in seen
+    assert ("target_oracle", "python", "") in seen
+
+
+def test_compare_tool_infers_guided_compiler_stack_from_candidate_header(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "flash_attention2d.json"
+    plan_path = tmp_path / "flash_attention2d.org_plan.json"
+    candidates_path = tmp_path / "flash_attention2d.org_candidates.txt"
+    out_root = tmp_path / "compare"
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+            "compiler_cpp_wave": "",
+            "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(json.dumps({"source_oracle": {"kernel_kind": "", "bindings": {}, "compiler_stack": "cpp_plugin"}}), encoding="utf-8")
+    candidates_path.write_text("# kernel=flash_attention2d target=cuda_5090d budget=8 compiler_stack=cpp_plugin arch=sm120\nattn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6\n", encoding="utf-8")
+
+    seen: list[tuple[str, str, str]] = []
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        seen.append((out_dir.name, str(kwargs["compiler_stack"]), str(kwargs["compiler_cpp_wave"])))
+        return {
+            "returncode": 0,
+            "out_root": str(out_dir),
+            "summary": {"candidates": [{"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}, "ratio": 0.67}]},
+        }
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+    assert module.main() == 0
+    assert ("guided", "cpp_plugin", "") in seen
+
+
+def test_compare_tool_propagates_cpp_wave(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "flash_attention2d.json"
+    plan_path = tmp_path / "flash_attention2d.org_plan.json"
+    candidates_path = tmp_path / "flash_attention2d.org_candidates.txt"
+    out_root = tmp_path / "compare"
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+            "compiler_stack": "cpp_plugin",
+            "compiler_cpp_wave": "wave3",
+            "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(json.dumps({"source_oracle": {"kernel_kind": "", "bindings": {}, "compiler_stack": "cpp_plugin"}}), encoding="utf-8")
+    candidates_path.write_text("# kernel=flash_attention2d target=cuda_5090d budget=8 compiler_stack=cpp_plugin arch=sm120\nattn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6\n", encoding="utf-8")
+
+    seen: list[tuple[str, str, str]] = []
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        seen.append((out_dir.name, str(kwargs["compiler_stack"]), str(kwargs["compiler_cpp_wave"])))
+        return {
+            "returncode": 0,
+            "out_root": str(out_dir),
+            "summary": {"candidates": [{"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}, "ratio": 0.67}]},
+        }
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+    assert module.main() == 0
+    assert ("guided", "cpp_plugin", "wave3") in seen
