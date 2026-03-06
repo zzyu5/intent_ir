@@ -176,6 +176,10 @@ def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pyt
     assert evidence_source.get("ptx_available") is True
     assert str(evidence_source.get("ptx_path") or "").endswith("flash.ptx")
     assert isinstance((report["org"] or {}).get("hardware_model"), dict)
+    assert Path(str((report["org"] or {}).get("ttgir_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("source_oracle_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("hardware_model_path"))).is_file()
     assert (tmp_path / "flash_attention2d.org_plan.json").is_file()
 
 
@@ -218,4 +222,8 @@ def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch:
         backend_target="cuda_5090d",
     )
     assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert Path(str((report["org"] or {}).get("ttgir_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("source_oracle_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("hardware_model_path"))).is_file()
     assert (tmp_path / "matmul_fused_epilogue2d.org_plan.json").is_file()

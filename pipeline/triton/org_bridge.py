@@ -144,6 +144,10 @@ def run_org_sidecar(
     plan_path = _org_plan_path(out_dir, spec_name)
     cand_jsonl_path = _org_candidates_jsonl_path(out_dir, spec_name)
     cand_txt_path = _org_candidates_txt_path(out_dir, spec_name)
+    ttgir_facts_path = Path(out_dir) / f"{str(spec_name)}.org_ttgir_facts.json"
+    ptx_facts_path = Path(out_dir) / f"{str(spec_name)}.org_ptx_facts.json"
+    source_oracle_facts_path = Path(out_dir) / f"{str(spec_name)}.org_source_oracle_facts.json"
+    hardware_model_path = Path(out_dir) / f"{str(spec_name)}.org_hardware_model.json"
     org_report["seed_path"] = str(seed_path)
     org_report["org_path"] = str(org_path)
 
@@ -151,6 +155,8 @@ def run_org_sidecar(
     target_arch = _detect_cuda_arch() or _normalize_cuda_arch_key(str(backend_target or "")) or ""
     source_oracle_facts = _resolve_source_oracle_facts(spec_name=spec_name, shape_bindings=shape_bindings)
     source_oracle = dict(source_oracle_facts.get("oracle") or {})
+    source_oracle_facts_path.write_text(json.dumps(source_oracle_facts, indent=2, ensure_ascii=False), encoding="utf-8")
+    org_report["source_oracle_facts_path"] = str(source_oracle_facts_path)
 
     extra_evidence = {
         "shape_bindings": {str(k): int(v) for k, v in dict(shape_bindings or {}).items() if str(k).strip()},
@@ -199,8 +205,12 @@ def run_org_sidecar(
         if ttgir_text.strip():
             ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=str(spec_name), artifact_path=(ttgir_path or None))
             extra_evidence["ttgir_facts"] = dict(ttgir_facts)
+            ttgir_facts_path.write_text(json.dumps(ttgir_facts, indent=2, ensure_ascii=False), encoding="utf-8")
+            org_report["ttgir_facts_path"] = str(ttgir_facts_path)
         ptx_facts = extract_ptx_mechanism_facts(ptx_text, kernel_name=str(spec_name), artifact_path=(ptx_path or None))
         extra_evidence["ptx_facts"] = dict(ptx_facts)
+        ptx_facts_path.write_text(json.dumps(ptx_facts, indent=2, ensure_ascii=False), encoding="utf-8")
+        org_report["ptx_facts_path"] = str(ptx_facts_path)
         extra_evidence["ttir_summary"] = dict(ttir_summary)
         org_report["evidence_source"] = {
             "primary": ("ttgir" if ttgir_facts is not None else "ttir"),
@@ -312,6 +322,8 @@ def run_org_sidecar(
     hardware_model = build_hardware_model(target=str(backend_target or ""), arch=str(target_arch))
     org_report["hardware_model"] = hardware_model.to_json_dict()
     org_report["source_oracle_available"] = bool(source_oracle_facts.get("available"))
+    hardware_model_path.write_text(json.dumps(hardware_model.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    org_report["hardware_model_path"] = str(hardware_model_path)
 
     try:
         budget = int(_org_budget())
