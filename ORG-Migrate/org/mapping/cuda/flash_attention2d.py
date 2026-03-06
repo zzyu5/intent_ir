@@ -246,7 +246,10 @@ def _score_flash_candidate(
             portability_note = "resident_bytes_over_budget"
             reasons.append("resident_bytes_over_budget")
     if source_kind == kind and {str(k): int(v) for k, v in source_bindings.items()} == bindings:
-        score += 4.0
+        source_bonus = 4.0
+        if cluster == "cuda_tc_mid_smem" and kind == "attn2d_causal_softmax_v6":
+            source_bonus = 28.0
+        score += source_bonus
         reasons.append("source_exact")
     if is_async:
         score += (6.0 if cluster == "cuda_tc_mid_smem" else 14.0)

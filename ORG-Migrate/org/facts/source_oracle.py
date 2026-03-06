@@ -25,7 +25,17 @@ def _infer_source_arch(
     kernel: str,
     compiler_stack: str,
     target_arch: str,
+    shape_bindings: Mapping[str, int],
 ) -> str:
+    def _arch_rank(value: str) -> tuple[int, str]:
+        arch_s = str(value or "").strip().lower()
+        if arch_s.startswith("sm"):
+            try:
+                return (int(arch_s[2:]), arch_s)
+            except Exception:
+                return (-1, arch_s)
+        return (-1, arch_s)
+
     kernel_s = str(kernel or "").strip()
     compiler_stack_s = str(compiler_stack or "").strip().lower()
     target_arch_s = str(target_arch or "").strip()
@@ -35,7 +45,7 @@ def _infer_source_arch(
             continue
         resolved, kernel_kind = resolve_tuning_entries(
             list(entries or []),
-            shape_bindings={},
+            shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
             compiler_stack=str(compiler_stack_s),
         )
         if not str(kernel_kind or "").strip() and not dict(resolved or {}):
@@ -48,6 +58,8 @@ def _infer_source_arch(
         non_target = [arch for arch in uniq if arch != target_arch_s]
         if len(non_target) == 1:
             return str(non_target[0])
+        if non_target:
+            return str(sorted(non_target, key=_arch_rank, reverse=True)[0])
     if len(uniq) == 1:
         return str(uniq[0])
     return ""
@@ -96,6 +108,7 @@ def extract_source_oracle_facts(
             kernel=str(kernel),
             compiler_stack=str(compiler_stack_s),
             target_arch=str(target_arch_s),
+            shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
         )
     if not source_arch_s:
         return {

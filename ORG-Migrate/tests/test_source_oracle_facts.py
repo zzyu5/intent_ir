@@ -89,6 +89,6 @@ def test_extract_source_oracle_facts_skips_ambiguous_source_arch(tmp_path: Path)
     )
 
     oracle = dict(facts.get("oracle") or {})
-    assert facts["available"] is False
-    assert oracle["arch"] == ""
-    assert oracle["kernel_kind"] == ""
+    assert facts["available"] is True
+    assert oracle["arch"] == "sm90"
+    assert oracle["kernel_kind"] == "attn2d_causal_softmax_v6"

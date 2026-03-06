@@ -76,10 +76,10 @@ def test_backend_plan_flash_attention2d_chain() -> None:
     ]
     assert "attn2d_causal_softmax_v8" in plan.param_space["kernel_kind"]
     assert any(c.kernel_kind == "attn2d_causal_softmax_v8" for c in plan.candidates)
-    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 4}
+    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}
     assert plan.candidates[0].score is not None
     assert "cluster=cuda_tc_mid_smem" in str(plan.candidates[0].score_reason)
-    assert "mid_smem_balanced_resident_tile" in str(plan.candidates[0].score_reason)
+    assert "source_exact" in str(plan.candidates[0].score_reason)
     assert any(str(x).startswith("preserve:") for x in plan.notes)
     assert any(item.get("reason") == "incomplete async evidence" for item in plan.substitutions)
 

@@ -153,6 +153,7 @@ def test_force_cache_apply_flash_attention2d_requires_ttgir(monkeypatch: pytest.
 def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.delenv("INTENTIR_ORG_SOURCE_ARCH", raising=False)
     _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
     ttgir = tmp_path / "flash.ttgir"
     ptx = tmp_path / "flash.ptx"
@@ -180,6 +181,11 @@ def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pyt
     assert str(evidence_source.get("ptx_path") or "").endswith("flash.ptx")
     assert isinstance((report["org"] or {}).get("hardware_model"), dict)
     assert ((report["org"] or {}).get("hardware_model") or {}).get("arch_cluster") == "cuda_tc_mid_smem"
+    source_oracle_facts = json.loads(Path(str((report["org"] or {}).get("source_oracle_facts_path"))).read_text(encoding="utf-8"))
+    assert source_oracle_facts["available"] is True
+    assert source_oracle_facts["oracle"]["arch"] == "sm90"
+    assert source_oracle_facts["oracle"]["kernel_kind"] == "attn2d_causal_softmax_v6"
+    assert source_oracle_facts["oracle"]["bindings"]["ATTN_SCORE_WARPS"] == 6
     assert Path(str((report["org"] or {}).get("ttgir_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("source_oracle_facts_path"))).is_file()
