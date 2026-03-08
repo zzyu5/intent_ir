@@ -457,6 +457,24 @@ def run_org_sidecar(
     org_report["source_oracle_available"] = bool(source_oracle_facts.get("available"))
     hardware_model_path.write_text(json.dumps(hardware_model.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     org_report["hardware_model_path"] = str(hardware_model_path)
+    mlir_report = dict(report.get("mlir") or {}) if isinstance(report.get("mlir"), dict) else {}
+    toolchain_model = build_toolchain_model(
+        toolchain_report=(
+            dict(mlir_report.get("toolchain") or {})
+            if isinstance(mlir_report.get("toolchain"), Mapping)
+            else detect_mlir_toolchain()
+        ),
+        contract_exec_meta=(
+            dict(mlir_report.get("downstream_cuda_std_llvm_contract_exec_meta") or mlir_report.get("downstream_cuda_contract_exec_meta") or {})
+            if (
+                isinstance(mlir_report.get("downstream_cuda_std_llvm_contract_exec_meta"), Mapping)
+                or isinstance(mlir_report.get("downstream_cuda_contract_exec_meta"), Mapping)
+            )
+            else {}
+        ),
+        compiler_stack=str(_compiler_stack_name()),
+        requested_sm=str(target_arch),
+    )
 
     try:
         budget = int(_org_budget())
@@ -469,6 +487,7 @@ def run_org_sidecar(
                 hardware_model=hardware_model,
                 ttgir_facts=dict(ttgir_facts or {}),
                 ptx_facts=dict(ptx_facts or {}),
+                toolchain_model=toolchain_model.to_json_dict(),
                 budget=int(budget),
             )
         elif str(spec_name) == "_attn_fwd":
@@ -522,23 +541,6 @@ def run_org_sidecar(
             org_report["apply_reason"] = "org_kernel_deferred"
             return
 
-        mlir_report = dict(report.get("mlir") or {}) if isinstance(report.get("mlir"), dict) else {}
-        toolchain_model = build_toolchain_model(
-            toolchain_report=(
-                dict(mlir_report.get("toolchain") or {})
-                if isinstance(mlir_report.get("toolchain"), Mapping)
-                else detect_mlir_toolchain()
-            ),
-            contract_exec_meta=(
-                dict(mlir_report.get("downstream_cuda_std_llvm_contract_exec_meta") or mlir_report.get("downstream_cuda_contract_exec_meta") or {})
-                if (
-                    isinstance(mlir_report.get("downstream_cuda_std_llvm_contract_exec_meta"), Mapping)
-                    or isinstance(mlir_report.get("downstream_cuda_contract_exec_meta"), Mapping)
-                )
-                else {}
-            ),
-            compiler_stack=str(_compiler_stack_name()),
-        )
         plan.toolchain_model = dict(toolchain_model.to_json_dict())
         plan.effective_target = {
             "backend_target": str(backend_target or ""),

@@ -62,7 +62,7 @@ def test_backend_plan_flash_attention2d_chain() -> None:
             }
         },
         ptx_facts={"mechanisms": {"pipeline.async_copy": {"present": True, "attrs": {"complete_async_pipeline": False}}}},
-        budget=8,
+        budget=12,
     )
     assert plan.selected_modules
     assert plan.hardware_model["arch_cluster"] == "cuda_tc_mid_smem"
@@ -98,8 +98,32 @@ def test_backend_plan_flash_attention2d_large_smem_allows_v7_front() -> None:
             }
         },
         ptx_facts={"mechanisms": {"pipeline.async_copy": {"present": True, "attrs": {"complete_async_pipeline": True}}}},
-        budget=8,
+        budget=12,
     )
     assert plan.hardware_model["arch_cluster"] == "cuda_tc_large_smem"
     assert plan.candidates[0].kernel_kind == "attn2d_causal_softmax_v7"
     assert plan.candidates[0].bindings.get("ATTN_BLOCK_KV") == 64
+
+
+def test_backend_plan_flash_attention2d_sm120_exposes_frontier_variants() -> None:
+    plan = plan_flash_attention2d(
+        _org_flash(),
+        shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+        source_oracle={"kernel_kind": "attn2d_causal_softmax_v6", "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}},
+        hardware_model=build_hardware_model(target="cuda_5090d", arch="sm120"),
+        ttgir_facts={
+            "mechanisms": {
+                "staging.q_resident_state": {"present": True, "attrs": {"resident_bytes_hint": 256}},
+                "staging.kv_streamed_tiles": {"present": True, "attrs": {"resident_bytes_hint": 32768}},
+                "pipeline.stage_hint": {"present": False, "attrs": {"pipeline_depth_hint": None}},
+            }
+        },
+        ptx_facts={"mechanisms": {"pipeline.async_copy": {"present": False, "attrs": {"complete_async_pipeline": False}}}},
+        toolchain_model={"effective_sm": "sm_120", "downleveled": False},
+        budget=12,
+    )
+    kinds = [c.kernel_kind for c in plan.candidates]
+    assert "attn2d_causal_softmax_v9" in plan.param_space["kernel_kind"]
+    assert "attn2d_causal_softmax_v9" in kinds
+    assert kinds.index("attn2d_causal_softmax_v8") < kinds.index("attn2d_causal_softmax_v9")
+    assert any("toolchain_effective_sm=sm_120" in note for note in plan.notes)
