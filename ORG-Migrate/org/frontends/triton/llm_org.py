@@ -87,6 +87,18 @@ Kernel-specific expectations:
   qkv_stage, online_softmax_reduce, mask_causal_apply, prefetch_pipeline, output_accumulator
   and prefer dims/attrs such as:
   block_m, block_kv, pipeline_depth, communication_scope
+- For masked_softmax2d, capture:
+  resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  mask_apply, row_reduction, vector_row_path, row_tile_resident
+  and prefer dims/attrs such as:
+  row_width, block_threads, communication_scope
+- For softmax_inner, capture:
+  resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  row_reduction, vector_row_path, row_tile_resident
+  and prefer dims/attrs such as:
+  row_width, block_threads, communication_scope
 - For matmul_fused_epilogue2d, capture:
   operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
   and prefer mechanism tags such as:

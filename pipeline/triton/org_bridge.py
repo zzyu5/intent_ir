@@ -228,7 +228,7 @@ def run_org_sidecar(
             "ttir_available": bool((ttir_summary or {}).get("available")),
         }
 
-    if mode in {"apply", "strict"} and str(spec_name) in {"flash_attention2d", "matmul_fused_epilogue2d", "_attn_fwd"} and ttgir_facts is None:
+    if mode in {"apply", "strict"} and str(spec_name) in {"flash_attention2d", "matmul_fused_epilogue2d", "_attn_fwd", "masked_softmax2d", "softmax_inner"} and ttgir_facts is None:
         org_report["ok"] = False
         org_report["error"] = "ttgir_missing"
         if mode == "strict":
@@ -347,6 +347,28 @@ def run_org_sidecar(
         elif str(spec_name) == "_attn_fwd":
             plan_attn_fwd = load_org_attr("org.mapping.cuda.attn_fwd", "plan_attn_fwd")
             plan = plan_attn_fwd(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "masked_softmax2d":
+            plan_masked_softmax2d = load_org_attr("org.mapping.cuda.row_softmax", "plan_masked_softmax2d")
+            plan = plan_masked_softmax2d(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "softmax_inner":
+            plan_softmax_inner = load_org_attr("org.mapping.cuda.row_softmax", "plan_softmax_inner")
+            plan = plan_softmax_inner(
                 org_doc,
                 shape_bindings=dict(shape_bindings),
                 source_oracle=dict(source_oracle),

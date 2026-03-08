@@ -158,6 +158,66 @@ def attn_fwd_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule]
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    prefix = "masked_softmax" if masked else "softmax_inner"
+    modules = [
+        BackendModule(
+            id=f"{prefix}_row_tile_resident",
+            kind="staging",
+            provides=[f"{prefix}.row_tile_resident"],
+            params=["SOFTMAX_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_row_reduction",
+            kind="communication",
+            provides=[f"{prefix}.row_reduction"],
+            params=["SOFTMAX_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_vector_row_path",
+            kind="mapping",
+            provides=[f"{prefix}.vector_row_path"],
+            params=["SOFTMAX_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_mask_apply",
+            kind="communication",
+            provides=[f"{prefix}.mask_apply"],
+            params=[],
+            constraints=[],
+        ) if masked else BackendModule(id=f"{prefix}_noop", kind="primitive", provides=[f"{prefix}.noop"], params=[], constraints=[]),
+        BackendModule(
+            id=f"{prefix}_backend_triton_v1",
+            kind="template",
+            provides=["backend.kernel_kind.row_softmax_axis1_triton_v1"],
+            requires=[f"{prefix}.row_tile_resident", f"{prefix}.row_reduction", f"{prefix}.vector_row_path"],
+            params=["SOFTMAX_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.row_softmax_axis1_v1" if not masked else "backend.kernel_kind.row_masked_softmax_axis1_v1"],
+            requires=[f"{prefix}.row_reduction"],
+            params=[],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_vector_row_path", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
+    ]
+    if masked:
+        edges.append(BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_mask_apply", edge_type="uses"))
+        edges.append(BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_mask_apply", edge_type="uses"))
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
     modules = [
         BackendModule(
@@ -226,4 +286,4 @@ def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list
     return modules, edges, list(PASS_SEQUENCE)
 
 
-__all__ = ["PASS_SEQUENCE", "flash_attention2d_catalog", "attn_fwd_catalog", "matmul_fused_epilogue2d_catalog"]
+__all__ = ["PASS_SEQUENCE", "flash_attention2d_catalog", "attn_fwd_catalog", "row_softmax_catalog", "matmul_fused_epilogue2d_catalog"]

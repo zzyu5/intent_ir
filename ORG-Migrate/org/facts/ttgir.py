@@ -74,9 +74,14 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     has_operand_tile_stage = False
     has_bias_epilogue = False
     has_mask_causal = False
+    has_row_reduction = False
+    has_mask_apply = False
+    has_row_tile_resident = False
+    has_vector_row_path = False
     q_resident_bytes_hint = 0
     kv_streamed_bytes_hint = 0
     operand_tile_bytes_hint = 0
+    row_tile_bytes_hint = 0
     convert_layout_sites = 0
     inside_loop = False
     pointer_roots: dict[str, set[str]] = {}
@@ -146,22 +151,35 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
                     has_operand_tile_stage = True
                     operand_tile_bytes_hint = max(operand_tile_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_operand_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="operand tile stage"))
+            if str(kernel_name) in {"softmax_inner", "masked_softmax2d"} and ("%input_ptr" in load_roots or "%inp_ptr" in load_roots or "%input_ptr" in stripped or "%inp_ptr" in stripped):
+                has_row_tile_resident = True
+                row_tile_bytes_hint = max(row_tile_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
+                evidence.append(_evidence(item_id=f"ttgir_row_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="row tile resident load"))
         if "\"tt.reduce\"" in stripped or "tt.reduce" in stripped:
             has_reduce = True
             evidence.append(_evidence(item_id=f"ttgir_reduce_{idx}", kind="ttgir_reduce", artifact_path=artifact_path, line_no=idx, summary="reduction op"))
             if str(kernel_name) in {"flash_attention2d", "_attn_fwd"} and inside_loop:
                 has_streaming_softmax = True
                 evidence.append(_evidence(item_id=f"ttgir_stream_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="loop-carried streaming reduction"))
+            if str(kernel_name) in {"softmax_inner", "masked_softmax2d"}:
+                has_row_reduction = True
+                evidence.append(_evidence(item_id=f"ttgir_row_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="row reduction"))
         if "ttg.convert_layout" in stripped:
             has_convert_layout = True
             convert_layout_sites += 1
             evidence.append(_evidence(item_id=f"ttgir_convert_layout_{idx}", kind="ttgir_layout", artifact_path=artifact_path, line_no=idx, summary="layout conversion"))
+        if str(kernel_name) in {"softmax_inner", "masked_softmax2d"} and ("vector<" in stripped or "sizePerThread = [2]" in stripped or "sizePerThread = [4]" in stripped):
+            has_vector_row_path = True
+            evidence.append(_evidence(item_id=f"ttgir_vector_row_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="vector row path"))
         if "tt.dot" in stripped or "dot " in stripped:
             has_dot = True
             evidence.append(_evidence(item_id=f"ttgir_dot_{idx}", kind="ttgir_dot", artifact_path=artifact_path, line_no=idx, summary="matrix primitive"))
         if str(kernel_name) == "_attn_fwd" and ("attn_mask" in stripped or "pred_attend" in stripped or "pred_causal" in stripped):
             has_mask_causal = True
             evidence.append(_evidence(item_id=f"ttgir_mask_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="mask/causal handling"))
+        if str(kernel_name) == "masked_softmax2d" and ("mask_ptr" in stripped or "arith.select %m_16" in stripped or "arith.select %m" in stripped):
+            has_mask_apply = True
+            evidence.append(_evidence(item_id=f"ttgir_mask_apply_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="mask apply"))
         if str(kernel_name) == "matmul_fused_epilogue2d" and "bias" in stripped.lower():
             has_bias_epilogue = True
             evidence.append(_evidence(item_id=f"ttgir_bias_epilogue_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="bias fused into epilogue"))
@@ -193,6 +211,10 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     operand_stage_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_operand_stage_")]
     bias_epilogue_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_bias_epilogue_")]
     mask_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_mask_")]
+    row_reduce_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_row_reduce_")]
+    row_stage_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_row_stage_")]
+    row_vec_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_vector_row_")]
+    mask_apply_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_mask_apply_")]
 
     mechanisms = {
         "tiling.blocked_layout": {
@@ -343,6 +365,33 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "present": bool(has_dot),
             "attrs": {"dot_like": bool(has_dot)},
             "evidence_refs": dot_refs,
+        }
+    if str(kernel_name) in {"softmax_inner", "masked_softmax2d"}:
+        mechanisms["staging.row_tile_resident"] = {
+            "present": bool(has_row_tile_resident),
+            "attrs": {
+                "resident_bytes_hint": int(row_tile_bytes_hint),
+                "row_width_hint": int(row_tile_bytes_hint // 4) if row_tile_bytes_hint else 0,
+            },
+            "evidence_refs": row_stage_refs,
+        }
+        mechanisms["communication.row_reduction"] = {
+            "present": bool(has_row_reduction),
+            "attrs": {
+                "reduction_scope": ("warp" if (num_warps is not None and int(num_warps) <= 4) else "cta"),
+            },
+            "evidence_refs": row_reduce_refs or reduce_refs,
+        }
+        mechanisms["layout.vector_row_path"] = {
+            "present": bool(has_vector_row_path),
+            "attrs": {"vector_row_path": bool(has_vector_row_path)},
+            "evidence_refs": row_vec_refs or blocked_refs,
+        }
+    if str(kernel_name) == "masked_softmax2d":
+        mechanisms["communication.mask_apply"] = {
+            "present": bool(has_mask_apply),
+            "attrs": {"mask_apply": bool(has_mask_apply)},
+            "evidence_refs": mask_apply_refs,
         }
 
     return {

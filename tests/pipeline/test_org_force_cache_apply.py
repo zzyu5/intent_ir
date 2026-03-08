@@ -114,6 +114,65 @@ def _seed_payload(*, kernel: str) -> dict[str, object]:
                 {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
             ],
         }
+    if kernel == "masked_softmax2d":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "masked_softmax2d",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 64},
+                "artifacts": {"ttgir_path": "masked_softmax2d.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep row resident", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "streaming_softmax_state", "summary": "row reduction", "scope": "softmax", "tensors": ["output"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "avoid_materialization", "summary": "mask inline", "scope": "mask", "tensors": ["mask"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "latency_hiding", "summary": "vector row path", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "row_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "row_reduction", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "mask_apply", "category": "communication", "supports_goals": ["g2"], "attrs": {}, "dims": [], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "vector_row_path", "category": "mapping", "supports_goals": ["g3"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [{"name": "block_threads", "role": "thread_block", "candidates": [64, 128], "constraints": [], "evidence_refs": ["e0"]}],
+            "source_oracle": {"kernel_kind": "row_masked_softmax_axis1_v1", "bindings": {}, "arch": "sm90", "compiler_stack": "python", "evidence_refs": ["e1"]},
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "masked_softmax2d.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    if kernel == "softmax_inner":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "softmax_inner",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 64},
+                "artifacts": {"ttgir_path": "softmax_inner.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep row resident", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "streaming_softmax_state", "summary": "row reduction", "scope": "softmax", "tensors": ["output"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "avoid_materialization", "summary": "avoid extra buffer", "scope": "softmax", "tensors": ["scores"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "latency_hiding", "summary": "vector row path", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "row_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "row_reduction", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "vector_row_path", "category": "mapping", "supports_goals": ["g3"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [{"name": "block_threads", "role": "thread_block", "candidates": [64, 128], "constraints": [], "evidence_refs": ["e0"]}],
+            "source_oracle": {"kernel_kind": "row_softmax_axis1_triton_v1", "bindings": {"SOFTMAX_BLOCK_THREADS": 64}, "arch": "sm90", "compiler_stack": "python", "evidence_refs": ["e1"]},
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "softmax_inner.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
     return {
         "schema_version": "intentir_org_v1",
         "kernel": "matmul_fused_epilogue2d",
@@ -282,6 +341,56 @@ def test_force_cache_apply_attn_fwd_uses_ttgir_primary(monkeypatch: pytest.Monke
     assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()
     assert (tmp_path / "_attn_fwd.org_plan.json").is_file()
     assert (tmp_path / "_attn_fwd.org_candidates.txt").is_file()
+
+
+def test_force_cache_apply_masked_softmax2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    _write_seed(out_dir=tmp_path, kernel="masked_softmax2d")
+    ttgir = tmp_path / "masked_softmax2d.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [2], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @masked_softmax2d_kernel(%inp_ptr: !tt.ptr<f32>, %mask_ptr: !tt.ptr<i1>, %out_ptr: !tt.ptr<f32>, %M: i32, %N: i32) {\n    %x_12 = tt.load %x_11, %in_bounds_8, %cst : tensor<256x!tt.ptr<f32>, #blocked>\n    %m_15 = tt.load %m_14, %in_bounds_6, %cst_1 : tensor<256x!tt.ptr<i8>, #blocked>\n    %x_17 = arith.select %m_16, %x_12, %cst_0 : tensor<256xi1, #blocked>, tensor<256xf32, #blocked>\n    %mx = "tt.reduce"(%x_17) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %max = arith.maxnumf %lhs, %rhs : f32\n      tt.reduce.return %max : f32\n    }) : (tensor<256xf32, #blocked>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="masked_softmax2d",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="masked_softmax2d", ttgir_path=ttgir),
+        intent=_dummy_intent("masked_softmax2d"),
+        report=report,
+        shape_bindings={"M": 4, "N": 64},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "masked_softmax2d.org_plan.json").is_file()
+    assert (tmp_path / "masked_softmax2d.org_candidates.txt").is_file()
+
+
+def test_force_cache_apply_softmax_inner_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    _write_seed(out_dir=tmp_path, kernel="softmax_inner")
+    ttgir = tmp_path / "softmax_inner.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @softmax_kernel_inner(%output_ptr: !tt.ptr<f32>, %input_ptr: !tt.ptr<f32>, %M: i32, %N: i32) {\n    %inp = tt.load %input_ptrs, %mask_3, %cst : tensor<64x!tt.ptr<f32>, #blocked>\n    %m = "tt.reduce"(%inp) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %max = arith.maxnumf %lhs, %rhs : f32\n      tt.reduce.return %max : f32\n    }) : (tensor<64xf32, #blocked>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="softmax_inner",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="softmax_inner", ttgir_path=ttgir),
+        intent=_dummy_intent("softmax_inner"),
+        report=report,
+        shape_bindings={"M": 4, "N": 64},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "softmax_inner.org_plan.json").is_file()
+    assert (tmp_path / "softmax_inner.org_candidates.txt").is_file()
 
 
 def test_force_cache_apply_matmul_fused_epilogue_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
