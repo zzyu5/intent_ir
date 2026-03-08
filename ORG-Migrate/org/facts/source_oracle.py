@@ -12,6 +12,9 @@ def _normalize_oracle_bindings(*, kernel: str, kernel_kind: str, bindings: Mappi
     kind_s = str(kernel_kind or "").strip()
     if kernel_s == "flash_attention2d" and kind_s == "attn2d_causal_softmax_v6":
         out.setdefault("ATTN_SCORE_WARPS", 6)
+    if kernel_s == "_attn_fwd" and kind_s == "attn_fwd_tiled_v3":
+        out.setdefault("ATTN_FWD_BLOCK_M", 8)
+        out.setdefault("ATTN_FWD_BLOCK_KV", 32)
     if kernel_s == "matmul_fused_epilogue2d" and kind_s == "matmul_mma_tf32_v1":
         out.setdefault("MMA_BM", 32)
         out.setdefault("MMA_BN", 32)

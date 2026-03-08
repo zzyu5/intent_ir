@@ -74,6 +74,46 @@ def _seed_payload(*, kernel: str) -> dict[str, object]:
                 {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
             ],
         }
+    if kernel == "_attn_fwd":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "_attn_fwd",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"Z": 1, "q_numhead": 1, "kv_numhead": 1, "Q_CTX": 128, "KV_CTX": 128, "HEAD_DIM": 64},
+                "artifacts": {"ttgir_path": "attn_fwd.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep q/state resident", "scope": "q_state", "tensors": ["Q"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "streaming_softmax_state", "summary": "online reduce", "scope": "softmax", "tensors": ["Out"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "avoid_materialization", "summary": "avoid score matrix", "scope": "scores", "tensors": ["scores"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "latency_hiding", "summary": "pipeline loads", "scope": "kv_loop", "tensors": ["K", "V"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "qkv_stage", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_m", "block_kv"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "online_softmax_reduce", "category": "communication", "supports_goals": ["g1", "g2"], "attrs": {}, "dims": ["block_kv"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "mask_causal_apply", "category": "communication", "supports_goals": ["g2"], "attrs": {}, "dims": [], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "prefetch_pipeline", "category": "pipeline", "supports_goals": ["g3"], "attrs": {}, "dims": ["pipeline_stages"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_m", "role": "query_tile", "candidates": [8, 4], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "block_kv", "role": "kv_tile", "candidates": [32, 16], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "pipeline_stages", "role": "pipeline_depth", "candidates": [2], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "attn_fwd_tiled_v3",
+                "bindings": {"ATTN_FWD_BLOCK_M": 8, "ATTN_FWD_BLOCK_KV": 32},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "attn_fwd.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
     return {
         "schema_version": "intentir_org_v1",
         "kernel": "matmul_fused_epilogue2d",
@@ -191,6 +231,57 @@ def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pyt
     assert Path(str((report["org"] or {}).get("source_oracle_facts_path"))).is_file()
     assert Path(str((report["org"] or {}).get("hardware_model_path"))).is_file()
     assert (tmp_path / "flash_attention2d.org_plan.json").is_file()
+
+
+def test_force_cache_apply_attn_fwd_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    _write_seed(out_dir=tmp_path, kernel="_attn_fwd")
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="_attn_fwd",
+        out_dir=tmp_path,
+        desc=None,
+        intent=_dummy_intent("_attn_fwd"),
+        report=report,
+        shape_bindings={"Z": 1, "q_numhead": 1, "kv_numhead": 1, "Q_CTX": 128, "KV_CTX": 128, "HEAD_DIM": 64},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("error") == "ttgir_missing"
+
+
+def test_force_cache_apply_attn_fwd_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.delenv("INTENTIR_ORG_SOURCE_ARCH", raising=False)
+    _write_seed(out_dir=tmp_path, kernel="_attn_fwd")
+    ttgir = tmp_path / "attn_fwd.ttgir"
+    ptx = tmp_path / "attn_fwd.ptx"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [4, 1], threadsPerWarp = [16, 2], warpsPerCTA = [1, 4], order = [0, 1]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @_attn_fwd(%Q: !tt.ptr<f32>, %K: !tt.ptr<f32>, %V: !tt.ptr<f32>, %attn_mask: !tt.ptr<f32>) {\n    %q_0 = tt.load %Qv, %mask_q, %cst : tensor<16x64x!tt.ptr<f32>, #blocked>\n    %acc = scf.for %tile = %c0_i32 to %KV_CTX step %c16_i32 iter_args(%m = %neg_inf) -> (f32) {\n      %k_0 = tt.load %Kv, %mask_k, %cst : tensor<64x16x!tt.ptr<f32>, #blocked>\n      %v_0 = tt.load %Vv, %mask_v, %cst : tensor<16x64x!tt.ptr<f32>, #blocked>\n      %pred_causal = arith.cmpi sle, %kv, %q : i1\n      %m_ij = "tt.reduce"(%scores) <{axis = 1 : i32}> ({\n      ^bb0(%lhs: f32, %rhs: f32):\n        %max = arith.maxnumf %lhs, %rhs : f32\n        tt.reduce.return %max : f32\n      }) : (tensor<16x16xf32, #blocked>) -> tensor<16xf32, #blocked>\n      scf.yield %m\n    }\n    %dot = tt.dot %a, %b : tensor<16x64xf32, #blocked> * tensor<64x16xf32, #blocked>\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    ptx.write_text("cp.async.cg.shared.global;\nshfl.sync.bfly;\nbar.sync 0;\n", encoding="utf-8")
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="_attn_fwd",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="_attn_fwd", ttgir_path=ttgir, ptx_path=ptx),
+        intent=_dummy_intent("_attn_fwd"),
+        report=report,
+        shape_bindings={"Z": 1, "q_numhead": 1, "kv_numhead": 1, "Q_CTX": 128, "KV_CTX": 128, "HEAD_DIM": 64},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    source_oracle_facts = json.loads(Path(str((report["org"] or {}).get("source_oracle_facts_path"))).read_text(encoding="utf-8"))
+    assert source_oracle_facts["available"] is True
+    assert source_oracle_facts["oracle"]["kernel_kind"] == "attn_fwd_tiled_v3"
+    assert Path(str((report["org"] or {}).get("ttgir_facts_path"))).is_file()
+    assert Path(str((report["org"] or {}).get("ptx_facts_path"))).is_file()
+    assert (tmp_path / "_attn_fwd.org_plan.json").is_file()
+    assert (tmp_path / "_attn_fwd.org_candidates.txt").is_file()
 
 
 def test_force_cache_apply_matmul_fused_epilogue_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

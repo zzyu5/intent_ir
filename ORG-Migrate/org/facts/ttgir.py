@@ -73,6 +73,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     has_streaming_softmax = False
     has_operand_tile_stage = False
     has_bias_epilogue = False
+    has_mask_causal = False
     q_resident_bytes_hint = 0
     kv_streamed_bytes_hint = 0
     operand_tile_bytes_hint = 0
@@ -131,6 +132,15 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
                     has_kv_streamed_tiles = True
                     kv_streamed_bytes_hint = max(kv_streamed_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_kv_stream_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="KV load inside streaming loop"))
+            if str(kernel_name) == "_attn_fwd":
+                if ("%Q" in load_roots or "%Q" in stripped) and not inside_loop:
+                    has_q_resident_state = True
+                    q_resident_bytes_hint = max(q_resident_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
+                    evidence.append(_evidence(item_id=f"ttgir_q_resident_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="Q load before streaming loop"))
+                if ({"%K", "%V"} & load_roots or "%K" in stripped or "%V" in stripped) and inside_loop:
+                    has_kv_streamed_tiles = True
+                    kv_streamed_bytes_hint = max(kv_streamed_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
+                    evidence.append(_evidence(item_id=f"ttgir_kv_stream_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="KV load inside streaming loop"))
             if str(kernel_name) == "matmul_fused_epilogue2d":
                 if ({"%A", "%B"} & load_roots or "%A" in stripped or "%B" in stripped) and ("tt.load" in stripped):
                     has_operand_tile_stage = True
@@ -139,7 +149,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         if "\"tt.reduce\"" in stripped or "tt.reduce" in stripped:
             has_reduce = True
             evidence.append(_evidence(item_id=f"ttgir_reduce_{idx}", kind="ttgir_reduce", artifact_path=artifact_path, line_no=idx, summary="reduction op"))
-            if str(kernel_name) == "flash_attention2d" and inside_loop:
+            if str(kernel_name) in {"flash_attention2d", "_attn_fwd"} and inside_loop:
                 has_streaming_softmax = True
                 evidence.append(_evidence(item_id=f"ttgir_stream_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="loop-carried streaming reduction"))
         if "ttg.convert_layout" in stripped:
@@ -149,6 +159,9 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
         if "tt.dot" in stripped or "dot " in stripped:
             has_dot = True
             evidence.append(_evidence(item_id=f"ttgir_dot_{idx}", kind="ttgir_dot", artifact_path=artifact_path, line_no=idx, summary="matrix primitive"))
+        if str(kernel_name) == "_attn_fwd" and ("attn_mask" in stripped or "pred_attend" in stripped or "pred_causal" in stripped):
+            has_mask_causal = True
+            evidence.append(_evidence(item_id=f"ttgir_mask_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="mask/causal handling"))
         if str(kernel_name) == "matmul_fused_epilogue2d" and "bias" in stripped.lower():
             has_bias_epilogue = True
             evidence.append(_evidence(item_id=f"ttgir_bias_epilogue_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="bias fused into epilogue"))
@@ -179,6 +192,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     stream_reduce_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_stream_reduce_")]
     operand_stage_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_operand_stage_")]
     bias_epilogue_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_bias_epilogue_")]
+    mask_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_mask_")]
 
     mechanisms = {
         "tiling.blocked_layout": {
@@ -292,6 +306,43 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "present": bool(has_convert_layout),
             "attrs": {"convert_layout": bool(has_convert_layout), "layout_convert_sites": int(convert_layout_sites)},
             "evidence_refs": layout_refs,
+        }
+    if str(kernel_name) == "_attn_fwd":
+        mechanisms["staging.q_resident_state"] = {
+            "present": bool(has_q_resident_state),
+            "attrs": {
+                "outside_loop": bool(has_q_resident_state),
+                "reuse_window": ("outer_loop" if has_q_resident_state else ""),
+                "resident_bytes_hint": int(q_resident_bytes_hint),
+            },
+            "evidence_refs": q_resident_refs,
+        }
+        mechanisms["staging.kv_streamed_tiles"] = {
+            "present": bool(has_kv_streamed_tiles),
+            "attrs": {
+                "inside_loop": bool(has_kv_streamed_tiles),
+                "reuse_window": ("kv_loop" if has_kv_streamed_tiles else ""),
+                "resident_bytes_hint": int(kv_streamed_bytes_hint),
+            },
+            "evidence_refs": kv_stream_refs,
+        }
+        mechanisms["communication.streaming_softmax"] = {
+            "present": bool(has_streaming_softmax),
+            "attrs": {
+                "loop_carried_reduce": bool(has_streaming_softmax),
+                "reduction_scope": ("warp" if (num_warps is not None and int(num_warps) <= 4) else "cta"),
+            },
+            "evidence_refs": stream_reduce_refs,
+        }
+        mechanisms["communication.mask_causal"] = {
+            "present": bool(has_mask_causal),
+            "attrs": {"mask_or_causal": bool(has_mask_causal)},
+            "evidence_refs": mask_refs,
+        }
+        mechanisms["primitive.dot_op"] = {
+            "present": bool(has_dot),
+            "attrs": {"dot_like": bool(has_dot)},
+            "evidence_refs": dot_refs,
         }
 
     return {

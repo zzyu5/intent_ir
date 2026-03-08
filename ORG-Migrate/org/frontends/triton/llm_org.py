@@ -81,6 +81,12 @@ Kernel-specific expectations:
   q_resident_state, kv_streamed_tiles, online_softmax_reduce, output_layout_convert
   and prefer dims/attrs such as:
   resident_bytes, pipeline_depth, communication_scope
+- For _attn_fwd, capture:
+  resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  qkv_stage, online_softmax_reduce, mask_causal_apply, prefetch_pipeline, output_accumulator
+  and prefer dims/attrs such as:
+  block_m, block_kv, pipeline_depth, communication_scope
 - For matmul_fused_epilogue2d, capture:
   operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
   and prefer mechanism tags such as:

@@ -20,6 +20,12 @@ ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
         "avoid_materialization",
         "latency_hiding",
     ),
+    "_attn_fwd": (
+        "resident_working_set",
+        "streaming_softmax_state",
+        "avoid_materialization",
+        "latency_hiding",
+    ),
     "matmul_fused_epilogue2d": (
         "operand_reuse",
         "mma_acceleration",

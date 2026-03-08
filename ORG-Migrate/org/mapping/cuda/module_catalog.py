@@ -81,6 +81,83 @@ def flash_attention2d_catalog(hardware_model: HardwareModel) -> tuple[list[Backe
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def attn_fwd_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    modules = [
+        BackendModule(
+            id="qkv_stage",
+            kind="staging",
+            provides=["attn_fwd.qkv_stage"],
+            params=["ATTN_FWD_BLOCK_M", "ATTN_FWD_BLOCK_KV"],
+            constraints=["HEAD_DIM == 64"],
+        ),
+        BackendModule(
+            id="online_softmax_reduce",
+            kind="communication",
+            provides=["attn_fwd.online_softmax_reduce"],
+            params=["ATTN_FWD_BLOCK_KV"],
+            constraints=["ATTN_FWD_BLOCK_KV <= KV_CTX"],
+        ),
+        BackendModule(
+            id="mask_causal_apply",
+            kind="communication",
+            provides=["attn_fwd.mask_causal_apply"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="prefetch_pipeline",
+            kind="pipeline",
+            provides=["attn_fwd.prefetch_pipeline"],
+            params=[],
+            constraints=(["supports_async_copy"] if hardware_model.supports_async_copy else []),
+        ),
+        BackendModule(
+            id="output_accumulator",
+            kind="primitive",
+            provides=["attn_fwd.output_accumulator"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="backend_attn_fwd_tiled_v3",
+            kind="template",
+            provides=["backend.kernel_kind.attn_fwd_tiled_v3"],
+            requires=["attn_fwd.qkv_stage", "attn_fwd.online_softmax_reduce", "attn_fwd.mask_causal_apply", "attn_fwd.output_accumulator"],
+            params=["ATTN_FWD_BLOCK_M", "ATTN_FWD_BLOCK_KV"],
+            constraints=["HEAD_DIM == 64"],
+        ),
+        BackendModule(
+            id="backend_attn_fwd_softmax_v2",
+            kind="template",
+            provides=["backend.kernel_kind.attn_fwd_softmax_v2"],
+            requires=["attn_fwd.online_softmax_reduce", "attn_fwd.mask_causal_apply", "attn_fwd.output_accumulator"],
+            params=[],
+            constraints=["HEAD_DIM == 64"],
+        ),
+        BackendModule(
+            id="backend_attn_fwd_softmax_v1",
+            kind="template",
+            provides=["backend.kernel_kind.attn_fwd_softmax_v1"],
+            requires=["attn_fwd.mask_causal_apply", "attn_fwd.output_accumulator"],
+            params=[],
+            constraints=["HEAD_DIM == 64"],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="backend_attn_fwd_tiled_v3", dst="qkv_stage", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_tiled_v3", dst="online_softmax_reduce", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_tiled_v3", dst="mask_causal_apply", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_tiled_v3", dst="output_accumulator", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_tiled_v3", dst="prefetch_pipeline", edge_type="optional"),
+        BackendModuleEdge(src="backend_attn_fwd_softmax_v2", dst="online_softmax_reduce", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_softmax_v2", dst="mask_causal_apply", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_softmax_v2", dst="output_accumulator", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_softmax_v1", dst="mask_causal_apply", edge_type="uses"),
+        BackendModuleEdge(src="backend_attn_fwd_softmax_v1", dst="output_accumulator", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
     modules = [
         BackendModule(
@@ -149,4 +226,4 @@ def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list
     return modules, edges, list(PASS_SEQUENCE)
 
 
-__all__ = ["PASS_SEQUENCE", "flash_attention2d_catalog", "matmul_fused_epilogue2d_catalog"]
+__all__ = ["PASS_SEQUENCE", "flash_attention2d_catalog", "attn_fwd_catalog", "matmul_fused_epilogue2d_catalog"]

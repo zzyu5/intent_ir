@@ -228,7 +228,7 @@ def run_org_sidecar(
             "ttir_available": bool((ttir_summary or {}).get("available")),
         }
 
-    if mode in {"apply", "strict"} and str(spec_name) in {"flash_attention2d", "matmul_fused_epilogue2d"} and ttgir_facts is None:
+    if mode in {"apply", "strict"} and str(spec_name) in {"flash_attention2d", "matmul_fused_epilogue2d", "_attn_fwd"} and ttgir_facts is None:
         org_report["ok"] = False
         org_report["error"] = "ttgir_missing"
         if mode == "strict":
@@ -336,6 +336,17 @@ def run_org_sidecar(
         if str(spec_name) == "flash_attention2d":
             plan_flash_attention2d = load_org_attr("org.mapping.cuda.flash_attention2d", "plan_flash_attention2d")
             plan = plan_flash_attention2d(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "_attn_fwd":
+            plan_attn_fwd = load_org_attr("org.mapping.cuda.attn_fwd", "plan_attn_fwd")
+            plan = plan_attn_fwd(
                 org_doc,
                 shape_bindings=dict(shape_bindings),
                 source_oracle=dict(source_oracle),
