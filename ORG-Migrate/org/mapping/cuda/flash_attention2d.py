@@ -225,6 +225,16 @@ def _score_flash_candidate(
         score += {6: 15.0, 4: 10.0, 2: 2.0}.get(int(score_warps), 0.0)
         reasons.append(f"score_warps={score_warps}")
         if cluster == "cuda_tc_mid_smem":
+            if effective_sm >= 120 and not downleveled:
+                if int(block_kv) == 32 and int(score_warps) == 6:
+                    score += 86.0
+                    reasons.append("sm120_frontier_v6_tile32_w6")
+                elif int(block_kv) == 32 and int(score_warps) == 4:
+                    score += 30.0
+                    reasons.append("sm120_v6_tile32_w4")
+                elif int(block_kv) == 16 and int(score_warps) == 6:
+                    score += 18.0
+                    reasons.append("sm120_v6_tile16_w6")
             if residency_complete:
                 if int(block_kv) == 64 and int(score_warps) == 4:
                     score += 18.0
@@ -245,8 +255,8 @@ def _score_flash_candidate(
     if kind == "attn2d_causal_softmax_v8":
         if cluster == "cuda_tc_mid_smem" and int(block_kv) == 32:
             if effective_sm >= 120 and not downleveled:
-                score += 74.0
-                reasons.append("sm120_frontier_v8_tile32")
+                score += 22.0
+                reasons.append("sm120_v8_tile32")
             else:
                 score += 18.0
                 reasons.append("mid_smem_v8_tile32")
@@ -256,8 +266,8 @@ def _score_flash_candidate(
     if kind == "attn2d_causal_softmax_v9":
         if effective_sm >= 120 and not downleveled:
             if int(block_kv) == 32:
-                score += 16.0
-                reasons.append("sm120_v9_tile32")
+                score += 56.0
+                reasons.append("sm120_frontier_v9_tile32")
             elif int(block_kv) == 64:
                 score += 8.0
                 reasons.append("sm120_v9_tile64")
