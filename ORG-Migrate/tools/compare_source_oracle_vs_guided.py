@@ -435,29 +435,53 @@ def _find_flash_cluster_repair(
     guided_res: dict[str, Any],
     candidate: str,
     hardware_cluster: str,
+    raw_ratio: float | None = None,
 ) -> dict[str, Any]:
     kind, bindings = _parse_candidate_line(candidate)
-    if kind != "attn2d_causal_softmax_v7" or str(hardware_cluster) != "cuda_tc_mid_smem":
+    if str(hardware_cluster) != "cuda_tc_mid_smem":
         return {}
+    if kind not in {
+        "attn2d_causal_softmax_v6",
+        "attn2d_causal_softmax_v7",
+        "attn2d_causal_softmax_v8",
+        "attn2d_causal_softmax_v9",
+    }:
+        return {}
+    raw_candidate = _candidate_line(kind, bindings)
     block_kv = _coerce_int(bindings.get("ATTN_BLOCK_KV"))
     best: dict[str, Any] | None = None
     for guided in _candidate_summaries(guided_res):
-        if str(guided.get("kernel_kind") or "") != "attn2d_causal_softmax_v6":
+        guided_kind = str(guided.get("kernel_kind") or "")
+        if guided_kind not in {
+            "attn2d_causal_softmax_v6",
+            "attn2d_causal_softmax_v8",
+            "attn2d_causal_softmax_v9",
+        }:
             continue
         gb = {str(k): int(v) for k, v in dict(guided.get("bindings") or {}).items()}
-        if block_kv is not None and int(gb.get("ATTN_BLOCK_KV", -1)) != int(block_kv):
-            continue
         if guided.get("ratio") is None:
             continue
+        cand_line = _candidate_line(guided_kind, gb)
+        if cand_line == raw_candidate:
+            continue
+        if kind == "attn2d_causal_softmax_v7" and block_kv is not None:
+            if int(gb.get("ATTN_BLOCK_KV", -1)) != int(block_kv):
+                continue
         if best is None or float(guided["ratio"]) > float(best["ratio"]):
             best = guided
     if best is None:
         return {}
+    repair_ratio = float(best["ratio"])
+    if raw_ratio is not None and repair_ratio <= float(raw_ratio) + 0.01:
+        return {}
+    repair_kind = str(best.get("kernel_kind") or "")
+    repair_bindings = dict(best.get("bindings") or {})
+    reason = "cluster_variant_shift" if repair_kind != kind else "cluster_param_shift"
     return {
         "status": "requires_substitution",
-        "reason": "cluster_variant_shift",
-        "repair_candidate": _candidate_line(str(best.get("kernel_kind") or ""), dict(best.get("bindings") or {})),
-        "repair_ratio": float(best["ratio"]),
+        "reason": reason,
+        "repair_candidate": _candidate_line(repair_kind, repair_bindings),
+        "repair_ratio": repair_ratio,
     }
 
 
@@ -664,6 +688,7 @@ def _analyze_replay_candidate(
             guided_res=guided_res,
             candidate=candidate,
             hardware_cluster=hardware_cluster,
+            raw_ratio=outcome.get("best_ratio"),
         )
         matmul_cluster_repair = _find_matmul_cluster_repair(
             guided_res=guided_res,
@@ -698,6 +723,7 @@ def _analyze_replay_candidate(
                 guided_res=guided_res,
                 candidate=candidate,
                 hardware_cluster=hardware_cluster,
+                raw_ratio=outcome.get("best_ratio"),
             )
             if label in {"source_replay", "target_oracle"}
             else {}
