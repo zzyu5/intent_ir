@@ -227,7 +227,7 @@ def _score_flash_candidate(
         if cluster == "cuda_tc_mid_smem":
             if effective_sm >= 120 and not downleveled:
                 if int(block_kv) == 32 and int(score_warps) == 6:
-                    score += 86.0
+                    score += 46.0
                     reasons.append("sm120_frontier_v6_tile32_w6")
                 elif int(block_kv) == 32 and int(score_warps) == 4:
                     score += 30.0
@@ -266,7 +266,7 @@ def _score_flash_candidate(
     if kind == "attn2d_causal_softmax_v9":
         if effective_sm >= 120 and not downleveled:
             if int(block_kv) == 32:
-                score += 56.0
+                score += 116.0
                 reasons.append("sm120_frontier_v9_tile32")
             elif int(block_kv) == 64:
                 score += 8.0
