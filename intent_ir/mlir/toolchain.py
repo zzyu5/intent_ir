@@ -47,6 +47,7 @@ def _intentir_local_bindirs() -> list[Path]:
     if env_root:
         roots.append(Path(env_root))
     roots.append(_DEFAULT_TOOLCHAIN_ROOT / "mlir-current")
+    roots.extend(sorted(_DEFAULT_TOOLCHAIN_ROOT.glob("LLVM-*"), reverse=True))
     roots.extend(sorted(_DEFAULT_TOOLCHAIN_ROOT.glob("mlir-*")))
 
     out: list[Path] = []
@@ -91,7 +92,12 @@ def _candidate_names(base: str, env_var: str) -> list[str]:
 def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
     candidates = _candidate_names(base, env_var)
     # Prefer repo-local toolchains (artifacts/toolchains/mlir-current) over system PATH.
-    extra_bindirs = _intentir_local_bindirs() + _llvm_bindirs()
+    extra_bindirs = _intentir_local_bindirs()
+    if str(base) == "llc":
+        llvm_like = [p for p in extra_bindirs if "LLVM-" in str(p)]
+        other = [p for p in extra_bindirs if "LLVM-" not in str(p)]
+        extra_bindirs = llvm_like + other
+    extra_bindirs = extra_bindirs + _llvm_bindirs()
     checked: list[str] = []
     chosen_path = ""
     chosen_name = ""

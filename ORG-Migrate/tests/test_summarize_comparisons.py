@@ -35,18 +35,33 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
                     "guided_best_ratio": 0.8,
                     "guided_best_qps_intentir": 162.0,
                     "guided_best_qps_native": 200.0,
+                    "guided_requested_sm": "sm_120",
+                    "guided_effective_sm": "sm_86",
+                    "guided_downleveled": True,
                     "source_replay_raw_ratio": None,
                     "source_replay_raw_qps_intentir": None,
                     "source_replay_raw_qps_native": None,
+                    "source_replay_requested_sm": None,
+                    "source_replay_effective_sm": None,
+                    "source_replay_downleveled": None,
                     "source_replay_portable_ratio": 0.75,
                     "source_replay_portable_qps_intentir": 150.0,
                     "source_replay_portable_qps_native": 200.0,
+                    "source_replay_portable_requested_sm": "sm_120",
+                    "source_replay_portable_effective_sm": "sm_86",
+                    "source_replay_portable_downleveled": True,
                     "target_oracle_raw_ratio": 0.9,
                     "target_oracle_raw_qps_intentir": 180.0,
                     "target_oracle_raw_qps_native": 200.0,
+                    "target_oracle_requested_sm": "sm_120",
+                    "target_oracle_effective_sm": "sm_86",
+                    "target_oracle_downleveled": True,
                     "target_oracle_portable_ratio": 0.9,
                     "target_oracle_portable_qps_intentir": 180.0,
                     "target_oracle_portable_qps_native": 200.0,
+                    "target_oracle_portable_requested_sm": "sm_120",
+                    "target_oracle_portable_effective_sm": "sm_86",
+                    "target_oracle_portable_downleveled": True,
                     "shared_native_qps": 200.0,
                     "native_qps_spread_ratio": 1.0,
                     "guided_shared_native_ratio": 0.8,
@@ -112,6 +127,7 @@ def test_summarize_comparisons_writes_jsonl_and_csv(tmp_path: Path) -> None:
     assert row["kernel"] == "flash_attention2d"
     assert row["guided_best_ratio"] == 0.8
     assert row["guided_best_qps_intentir"] == 162.0
+    assert row["guided_effective_sm"] == "sm_86"
     assert row["shared_native_qps"] == 200.0
     assert row["compiler_stack"] == "python"
     assert row["compiler_cpp_wave"] == ""

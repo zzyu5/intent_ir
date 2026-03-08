@@ -65,6 +65,22 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
 
     guided_root = out_root / "guided"
     source_root = out_root / "source_replay"
+    guided_cov = guided_root / "cand0" / "coverage"
+    guided_cov.mkdir(parents=True, exist_ok=True)
+    (guided_cov / "flash_attention2d.json").write_text(
+        json.dumps(
+            {
+                "mlir": {
+                    "downstream_cuda_std_llvm_contract_exec_meta": {
+                        "cuda_requested_sm": "sm_120",
+                        "cuda_effective_sm": "sm_86",
+                        "cuda_target_downleveled": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     _write_graph(source_root, ok=False, reason_code="intentir_unavailable", reason_detail="coverage failed", skip_reason="intentir_unavailable")
 
     def fake_run_tune(**kwargs):
@@ -83,6 +99,7 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
                             "ratio": 0.81,
                             "qps_native": 200.0,
                             "qps_intentir": 162.0,
+                            "coverage_dir": str(guided_cov),
                             "coverage_rc": 0,
                             "perf_rc": 0,
                         },
@@ -152,6 +169,9 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["comparisons"]["source_replay_portable_ratio"] is None
     assert payload["comparisons"]["guided_best_qps_intentir"] == 162.0
     assert payload["comparisons"]["guided_best_qps_native"] == 200.0
+    assert payload["comparisons"]["guided_requested_sm"] == "sm_120"
+    assert payload["comparisons"]["guided_effective_sm"] == "sm_86"
+    assert payload["comparisons"]["guided_downleveled"] is True
     assert payload["comparisons"]["shared_native_qps"] == 200.0
     assert payload["comparisons"]["guided_shared_native_ratio"] == 0.81
     txt = (out_root / "comparison.txt").read_text(encoding="utf-8")

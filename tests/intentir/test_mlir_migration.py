@@ -101,6 +101,27 @@ def test_mlir_toolchain_probe_schema() -> None:
     assert "opt" in payload["tools"]
 
 
+def test_mlir_toolchain_prefers_local_llvm_llc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from intent_ir.mlir import toolchain as tc  # noqa: PLC0415
+
+    tool_root = tmp_path / "toolchains"
+    (tool_root / "mlir-14" / "bin").mkdir(parents=True, exist_ok=True)
+    (tool_root / "LLVM-20.1.8-Linux-X64" / "bin").mkdir(parents=True, exist_ok=True)
+    llc = tool_root / "LLVM-20.1.8-Linux-X64" / "bin" / "llc"
+    mlir_opt = tool_root / "mlir-14" / "bin" / "mlir-opt"
+    for path in (llc, mlir_opt):
+        path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    monkeypatch.setattr(tc, "_DEFAULT_TOOLCHAIN_ROOT", tool_root)
+    monkeypatch.setattr(tc, "_llvm_bindirs", lambda: [])
+    monkeypatch.delenv("INTENTIR_LLC", raising=False)
+    monkeypatch.delenv("INTENTIR_MLIR_OPT", raising=False)
+
+    llc_probe = tc._probe_tool("llc", env_var="INTENTIR_LLC")
+    assert "LLVM-20.1.8-Linux-X64/bin/llc" in str(llc_probe["path"])
+
+
 def test_mlir_required_external_passes_fail_fast_without_toolchain(tmp_path: Path) -> None:
     intent = _sample_intent()
     module = to_mlir(intent)

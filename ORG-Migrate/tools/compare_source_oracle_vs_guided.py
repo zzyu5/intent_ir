@@ -229,6 +229,7 @@ def _candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
                 "ratio": row.get("ratio"),
                 "coverage_rc": row.get("coverage_rc"),
                 "perf_rc": row.get("perf_rc"),
+                "coverage_dir": str(row.get("coverage_dir") or ""),
                 "perf_dir": str(row.get("perf_dir") or ""),
                 "qps_native": row.get("qps_native"),
                 "qps_intentir": row.get("qps_intentir"),
@@ -258,11 +259,37 @@ def _candidate_with_metrics(item: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _candidate_with_contract_meta(item: dict[str, Any]) -> dict[str, Any]:
+    row = dict(_candidate_with_metrics(item))
+    coverage_dir = Path(str(row.get("coverage_dir") or ""))
+    if not coverage_dir.is_dir():
+        return row
+    report_files = list(coverage_dir.glob("*.json"))
+    report_path = next((p for p in report_files if p.suffix == ".json" and p.name.count(".") == 1), None)
+    if report_path is None:
+        return row
+    try:
+        obj = _load_json(report_path)
+    except Exception:
+        return row
+    exec_meta = dict(((obj.get("mlir") or {}).get("downstream_cuda_std_llvm_contract_exec_meta") or {}))
+    if not exec_meta:
+        return row
+    for src, dst in (
+        ("cuda_requested_sm", "requested_sm"),
+        ("cuda_effective_sm", "effective_sm"),
+        ("cuda_target_downleveled", "downleveled"),
+    ):
+        if row.get(dst) is None and exec_meta.get(src) is not None:
+            row[dst] = exec_meta.get(src)
+    return row
+
+
 def _best_candidate(result: dict[str, Any], *, metric: str) -> dict[str, Any]:
     best: dict[str, Any] = {}
     best_value = float("-inf")
     for item in _candidate_summaries(result):
-        row = _candidate_with_metrics(item)
+        row = _candidate_with_contract_meta(item)
         value = row.get(metric)
         if value is None:
             continue
@@ -281,7 +308,7 @@ def _find_candidate_summary(result: dict[str, Any], candidate: str) -> dict[str,
     if not kind:
         return {}
     for item in _candidate_summaries(result):
-        row = _candidate_with_metrics(item)
+        row = _candidate_with_contract_meta(item)
         if str(row.get("kernel_kind") or "") != kind:
             continue
         if {str(k): int(v) for k, v in dict(row.get("bindings") or {}).items()} != dict(bindings):
@@ -518,6 +545,9 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
             "best_qps_native": best_ratio_row.get("qps_native"),
             "best_latency_intentir_ms": best_ratio_row.get("latency_intentir_ms"),
             "best_latency_native_ms": best_ratio_row.get("latency_native_ms"),
+            "requested_sm": best_ratio_row.get("requested_sm"),
+            "effective_sm": best_ratio_row.get("effective_sm"),
+            "downleveled": best_ratio_row.get("downleveled"),
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": failure,
@@ -532,6 +562,9 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
             "best_qps_native": None,
             "best_latency_intentir_ms": None,
             "best_latency_native_ms": None,
+            "requested_sm": None,
+            "effective_sm": None,
+            "downleveled": None,
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": failure,
@@ -546,6 +579,9 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
             "best_qps_native": None,
             "best_latency_intentir_ms": None,
             "best_latency_native_ms": None,
+            "requested_sm": None,
+            "effective_sm": None,
+            "downleveled": None,
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": {
@@ -566,6 +602,9 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
         "best_qps_native": None,
         "best_latency_intentir_ms": None,
         "best_latency_native_ms": None,
+        "requested_sm": None,
+        "effective_sm": None,
+        "downleveled": None,
         "candidate_count": len(candidates),
         "returncode": returncode,
         "failure": {},
@@ -674,6 +713,9 @@ def _portable_outcome(
             "best_qps_native": raw_outcome.get("best_qps_native"),
             "best_latency_intentir_ms": raw_outcome.get("best_latency_intentir_ms"),
             "best_latency_native_ms": raw_outcome.get("best_latency_native_ms"),
+            "requested_sm": raw_outcome.get("requested_sm"),
+            "effective_sm": raw_outcome.get("effective_sm"),
+            "downleveled": raw_outcome.get("downleveled"),
             "candidate": candidate,
             "candidate_origin": candidate_origin,
             "reason": "raw_replayable",
@@ -692,6 +734,9 @@ def _portable_outcome(
             "best_qps_native": repair_row.get("qps_native"),
             "best_latency_intentir_ms": repair_row.get("latency_intentir_ms"),
             "best_latency_native_ms": repair_row.get("latency_native_ms"),
+            "requested_sm": repair_row.get("requested_sm"),
+            "effective_sm": repair_row.get("effective_sm"),
+            "downleveled": repair_row.get("downleveled"),
             "candidate": repair_candidate,
             "candidate_origin": "guided_repair",
             "reason": str(repair.get("reason") or "repair"),
@@ -706,6 +751,9 @@ def _portable_outcome(
         "best_qps_native": None,
         "best_latency_intentir_ms": None,
         "best_latency_native_ms": None,
+        "requested_sm": None,
+        "effective_sm": None,
+        "downleveled": None,
         "candidate": repair_candidate,
         "candidate_origin": ("guided_repair" if repair_candidate else candidate_origin),
         "reason": (str(repair.get("reason") or "") or str((raw_outcome.get("failure") or {}).get("reason_code") or "") or "portable_missing"),
@@ -904,18 +952,33 @@ def main() -> int:
             "guided_best_ratio": _best_ratio(guided_res),
             "guided_best_qps_intentir": _make_outcome(guided_res).get("best_qps_intentir"),
             "guided_best_qps_native": _make_outcome(guided_res).get("best_qps_native"),
+            "guided_requested_sm": guided_outcome.get("requested_sm"),
+            "guided_effective_sm": guided_outcome.get("effective_sm"),
+            "guided_downleveled": guided_outcome.get("downleveled"),
             "source_replay_raw_ratio": _best_ratio(source_res),
             "source_replay_raw_qps_intentir": _make_outcome(source_res).get("best_qps_intentir"),
             "source_replay_raw_qps_native": _make_outcome(source_res).get("best_qps_native"),
+            "source_replay_requested_sm": source_outcome.get("requested_sm"),
+            "source_replay_effective_sm": source_outcome.get("effective_sm"),
+            "source_replay_downleveled": source_outcome.get("downleveled"),
             "source_replay_portable_ratio": source_portable.get("best_ratio"),
             "source_replay_portable_qps_intentir": source_portable.get("best_qps_intentir"),
             "source_replay_portable_qps_native": source_portable.get("best_qps_native"),
+            "source_replay_portable_requested_sm": source_portable.get("requested_sm"),
+            "source_replay_portable_effective_sm": source_portable.get("effective_sm"),
+            "source_replay_portable_downleveled": source_portable.get("downleveled"),
             "target_oracle_raw_ratio": _best_ratio(target_res),
             "target_oracle_raw_qps_intentir": _make_outcome(target_res).get("best_qps_intentir"),
             "target_oracle_raw_qps_native": _make_outcome(target_res).get("best_qps_native"),
+            "target_oracle_requested_sm": target_outcome.get("requested_sm"),
+            "target_oracle_effective_sm": target_outcome.get("effective_sm"),
+            "target_oracle_downleveled": target_outcome.get("downleveled"),
             "target_oracle_portable_ratio": target_portable.get("best_ratio"),
             "target_oracle_portable_qps_intentir": target_portable.get("best_qps_intentir"),
             "target_oracle_portable_qps_native": target_portable.get("best_qps_native"),
+            "target_oracle_portable_requested_sm": target_portable.get("requested_sm"),
+            "target_oracle_portable_effective_sm": target_portable.get("effective_sm"),
+            "target_oracle_portable_downleveled": target_portable.get("downleveled"),
             "source_replay_best_ratio": _best_ratio(source_res),
             "target_oracle_best_ratio": _best_ratio(target_res),
             "guided_first_candidate": _first_candidate_summary(guided_res),
@@ -978,18 +1041,33 @@ def main() -> int:
         f"guided_best_ratio: {payload['comparisons']['guided_best_ratio']}",
         f"guided_best_qps_intentir: {payload['comparisons']['guided_best_qps_intentir']}",
         f"guided_best_qps_native: {payload['comparisons']['guided_best_qps_native']}",
+        f"guided_requested_sm: {payload['comparisons']['guided_requested_sm']}",
+        f"guided_effective_sm: {payload['comparisons']['guided_effective_sm']}",
+        f"guided_downleveled: {payload['comparisons']['guided_downleveled']}",
         f"source_replay_raw_ratio: {payload['comparisons']['source_replay_raw_ratio']}",
         f"source_replay_raw_qps_intentir: {payload['comparisons']['source_replay_raw_qps_intentir']}",
         f"source_replay_raw_qps_native: {payload['comparisons']['source_replay_raw_qps_native']}",
+        f"source_replay_requested_sm: {payload['comparisons']['source_replay_requested_sm']}",
+        f"source_replay_effective_sm: {payload['comparisons']['source_replay_effective_sm']}",
+        f"source_replay_downleveled: {payload['comparisons']['source_replay_downleveled']}",
         f"source_replay_portable_ratio: {payload['comparisons']['source_replay_portable_ratio']}",
         f"source_replay_portable_qps_intentir: {payload['comparisons']['source_replay_portable_qps_intentir']}",
         f"source_replay_portable_qps_native: {payload['comparisons']['source_replay_portable_qps_native']}",
+        f"source_replay_portable_requested_sm: {payload['comparisons']['source_replay_portable_requested_sm']}",
+        f"source_replay_portable_effective_sm: {payload['comparisons']['source_replay_portable_effective_sm']}",
+        f"source_replay_portable_downleveled: {payload['comparisons']['source_replay_portable_downleveled']}",
         f"target_oracle_raw_ratio: {payload['comparisons']['target_oracle_raw_ratio']}",
         f"target_oracle_raw_qps_intentir: {payload['comparisons']['target_oracle_raw_qps_intentir']}",
         f"target_oracle_raw_qps_native: {payload['comparisons']['target_oracle_raw_qps_native']}",
+        f"target_oracle_requested_sm: {payload['comparisons']['target_oracle_requested_sm']}",
+        f"target_oracle_effective_sm: {payload['comparisons']['target_oracle_effective_sm']}",
+        f"target_oracle_downleveled: {payload['comparisons']['target_oracle_downleveled']}",
         f"target_oracle_portable_ratio: {payload['comparisons']['target_oracle_portable_ratio']}",
         f"target_oracle_portable_qps_intentir: {payload['comparisons']['target_oracle_portable_qps_intentir']}",
         f"target_oracle_portable_qps_native: {payload['comparisons']['target_oracle_portable_qps_native']}",
+        f"target_oracle_portable_requested_sm: {payload['comparisons']['target_oracle_portable_requested_sm']}",
+        f"target_oracle_portable_effective_sm: {payload['comparisons']['target_oracle_portable_effective_sm']}",
+        f"target_oracle_portable_downleveled: {payload['comparisons']['target_oracle_portable_downleveled']}",
         f"shared_native_qps: {payload['comparisons']['shared_native_qps']}",
         f"native_qps_spread_ratio: {payload['comparisons']['native_qps_spread_ratio']}",
         f"guided_shared_native_ratio: {payload['comparisons']['guided_shared_native_ratio']}",
