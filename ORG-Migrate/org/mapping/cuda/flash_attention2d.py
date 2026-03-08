@@ -244,8 +244,12 @@ def _score_flash_candidate(
                     reasons.append("mid_smem_large_tile_pressure")
     if kind == "attn2d_causal_softmax_v8":
         if cluster == "cuda_tc_mid_smem" and int(block_kv) == 32:
-            score += (30.0 if effective_sm >= 120 and not downleveled else 18.0)
-            reasons.append("mid_smem_v8_tile32")
+            if effective_sm >= 120 and not downleveled:
+                score += 74.0
+                reasons.append("sm120_frontier_v8_tile32")
+            else:
+                score += 18.0
+                reasons.append("mid_smem_v8_tile32")
         elif cluster == "cuda_tc_mid_smem" and int(block_kv) == 64:
             score += 4.0
             reasons.append("mid_smem_v8_tile64")
@@ -283,6 +287,10 @@ def _score_flash_candidate(
             source_bonus = 28.0
         score += source_bonus
         reasons.append("source_exact")
+    if effective_sm >= 120 and not downleveled and cluster == "cuda_tc_mid_smem" and kind == "attn2d_causal_softmax_v6":
+        if int(block_kv) == 64 and int(score_warps) == 6:
+            score -= 12.0
+            reasons.append("sm120_v6_not_frontier")
     if is_async:
         score += (6.0 if cluster == "cuda_tc_mid_smem" else 14.0)
         reasons.append("async_pipeline")
