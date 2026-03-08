@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping
 
 from intent_ir.ir import IntentFunction
+from intent_ir.mlir import detect_mlir_toolchain
 
 from pipeline.triton.core import (
     _candidate_line,
@@ -99,6 +102,129 @@ def _resolve_source_oracle_facts(*, spec_name: str, shape_bindings: Mapping[str,
         compiler_stack=str(source_stack),
         db_path=(str(source_db_env) if source_db_env else None),
     )
+
+
+def _org_compile_topk() -> int:
+    raw = str(os.getenv("INTENTIR_ORG_COMPILE_TOPK", "4") or "").strip()
+    try:
+        return max(0, int(raw))
+    except Exception:
+        return 4
+
+
+def _compile_check_id(candidate_line: str, *, idx: int) -> str:
+    h = hashlib.sha256(str(candidate_line).encode("utf-8")).hexdigest()[:10]
+    return f"{idx:02d}_{h}"
+
+
+def _run_compile_check_candidates(
+    *,
+    spec_name: str,
+    out_dir: Path,
+    backend_target: str | None,
+    target_arch: str,
+    candidates: list[object],
+) -> list[dict[str, Any]]:
+    limit = int(_org_compile_topk())
+    if limit <= 0:
+        return []
+    CompileCheck = load_org_attr("org.backend_model", "CompileCheck")
+    checks: list[dict[str, Any]] = []
+    compile_root = Path(out_dir) / "org_compile_checks"
+    compile_root.mkdir(parents=True, exist_ok=True)
+    compiler_stack = str(_compiler_stack_name())
+    compiler_cpp_wave = str(_compiler_cpp_wave_name()) if compiler_stack in {"cpp", "cpp_plugin", "c++"} else ""
+    for idx, candidate in enumerate(list(candidates or [])[: int(limit)]):
+        cand_line = _candidate_line(getattr(candidate, "kernel_kind"), getattr(candidate, "bindings"))
+        cand_dir = compile_root / _compile_check_id(cand_line, idx=idx)
+        cand_dir.mkdir(parents=True, exist_ok=True)
+        tuning_path = cand_dir / "tuning.jsonl"
+        tuning_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "intentir_tuning_db_entry_v1",
+                    "backend": "cuda",
+                    "compiler_stack": compiler_stack,
+                    "kernel": str(spec_name),
+                    "arch": str(target_arch),
+                    "bindings": {str(k): int(v) for k, v in dict(getattr(candidate, "bindings", {}) or {}).items()},
+                    "kernel_kind": str(getattr(candidate, "kernel_kind")),
+                    "note": "org_compile_check",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env["INTENTIR_ORG_MODE"] = "off"
+        env["INTENTIR_CUDA_TUNING_DB"] = str(tuning_path)
+        env["INTENTIR_COMPILER_STACK"] = compiler_stack
+        if compiler_cpp_wave:
+            env["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
+        cmd = [
+            sys.executable,
+            str(ROOT / "scripts" / "triton" / "full_pipeline_verify.py"),
+            "--kernel",
+            str(spec_name),
+            "--backend-target",
+            str(backend_target or ""),
+            "--cases-limit",
+            "1",
+            "--no-stage-c",
+            "--no-mutation-kill",
+            "--out-dir",
+            str(cand_dir),
+        ]
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, env=env)
+        report_path = cand_dir / f"{spec_name}.json"
+        contract_path = ""
+        ptx_path = ""
+        entry = ""
+        requested_sm = ""
+        effective_sm = ""
+        downleveled: bool | None = None
+        error = ""
+        ok = bool(proc.returncode == 0 and report_path.is_file())
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                mlir = dict(report.get("mlir") or {})
+                exec_meta = dict((mlir.get("downstream_cuda_std_llvm_contract_exec_meta") or mlir.get("downstream_cuda_contract_exec_meta") or {}))
+                contract_path = str(
+                    mlir.get("downstream_cuda_std_llvm_contract_path")
+                    or mlir.get("downstream_cuda_contract_path")
+                    or mlir.get("downstream_contract_path")
+                    or ""
+                )
+                ptx_path = str(exec_meta.get("cuda_ptx_path") or "")
+                entry = str(((exec_meta.get("cuda_ptx_entries") or [None]) or [None])[0] or "")
+                requested_sm = str(exec_meta.get("cuda_requested_sm") or "")
+                effective_sm = str(exec_meta.get("cuda_effective_sm") or "")
+                downleveled = exec_meta.get("cuda_target_downleveled")
+                error = str(mlir.get("error") or "")
+                ok = bool(ok and contract_path)
+            except Exception as exc:  # noqa: BLE001
+                error = f"{type(exc).__name__}: {exc}"
+                ok = False
+        else:
+            error = (str(proc.stderr or proc.stdout).strip() or "compile_check_report_missing")
+        check = CompileCheck(
+            candidate=str(cand_line),
+            kernel_kind=str(getattr(candidate, "kernel_kind")),
+            bindings={str(k): int(v) for k, v in dict(getattr(candidate, "bindings", {}) or {}).items()},
+            report_path=str(report_path),
+            contract_path=str(contract_path),
+            ptx_path=str(ptx_path),
+            entry=str(entry),
+            requested_sm=str(requested_sm),
+            effective_sm=str(effective_sm),
+            downleveled=downleveled,
+            ok=bool(ok),
+            error=str(error),
+        )
+        checks.append(check.to_json_dict())
+    return checks
 
 
 def run_org_sidecar(
@@ -324,6 +450,7 @@ def run_org_sidecar(
         return
 
     build_hardware_model = load_org_attr("org.mapping.hardware_model", "build_hardware_model")
+    build_toolchain_model = load_org_attr("org.backend_model", "build_toolchain_model")
     hardware_model = build_hardware_model(target=str(backend_target or ""), arch=str(target_arch))
     org_report["hardware_model"] = hardware_model.to_json_dict()
     org_report["hardware_cluster"] = str(hardware_model.arch_cluster)
@@ -395,10 +522,58 @@ def run_org_sidecar(
             org_report["apply_reason"] = "org_kernel_deferred"
             return
 
+        mlir_report = dict(report.get("mlir") or {}) if isinstance(report.get("mlir"), dict) else {}
+        toolchain_model = build_toolchain_model(
+            toolchain_report=(
+                dict(mlir_report.get("toolchain") or {})
+                if isinstance(mlir_report.get("toolchain"), Mapping)
+                else detect_mlir_toolchain()
+            ),
+            contract_exec_meta=(
+                dict(mlir_report.get("downstream_cuda_std_llvm_contract_exec_meta") or mlir_report.get("downstream_cuda_contract_exec_meta") or {})
+                if (
+                    isinstance(mlir_report.get("downstream_cuda_std_llvm_contract_exec_meta"), Mapping)
+                    or isinstance(mlir_report.get("downstream_cuda_contract_exec_meta"), Mapping)
+                )
+                else {}
+            ),
+            compiler_stack=str(_compiler_stack_name()),
+        )
+        plan.toolchain_model = dict(toolchain_model.to_json_dict())
+        plan.effective_target = {
+            "backend_target": str(backend_target or ""),
+            "requested_sm": str((plan.toolchain_model or {}).get("requested_sm") or ""),
+            "effective_sm": str((plan.toolchain_model or {}).get("effective_sm") or ""),
+            "downleveled": (plan.toolchain_model or {}).get("downleveled"),
+        }
+        compile_checks = _run_compile_check_candidates(
+            spec_name=str(spec_name),
+            out_dir=Path(out_dir),
+            backend_target=backend_target,
+            target_arch=str(target_arch),
+            candidates=list(plan.candidates or []),
+        )
+        plan.compile_checks = list(compile_checks)
+        plan.realizations = [dict(x) for x in list(compile_checks or []) if bool(dict(x).get("ok"))]
+        if (not str((plan.toolchain_model or {}).get("requested_sm") or "")) and plan.realizations:
+            first_realization = dict(plan.realizations[0] or {})
+            plan.toolchain_model["requested_sm"] = str(first_realization.get("requested_sm") or "")
+            plan.toolchain_model["effective_sm"] = str(first_realization.get("effective_sm") or "")
+            plan.toolchain_model["downleveled"] = first_realization.get("downleveled")
+            plan.effective_target = {
+                "backend_target": str(backend_target or ""),
+                "requested_sm": str(first_realization.get("requested_sm") or ""),
+                "effective_sm": str(first_realization.get("effective_sm") or ""),
+                "downleveled": first_realization.get("downleveled"),
+            }
+
         plan_path.write_text(json.dumps(plan.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
         org_report["plan_path"] = str(plan_path)
         org_report["arch"] = str(target_arch)
         org_report["source_oracle"] = dict(source_oracle)
+        org_report["toolchain_model"] = dict(plan.toolchain_model or {})
+        org_report["effective_target"] = dict(plan.effective_target or {})
+        org_report["compile_checks_count"] = int(len(list(plan.compile_checks or [])))
 
         lines_jsonl: list[str] = []
         lines_txt: list[str] = [

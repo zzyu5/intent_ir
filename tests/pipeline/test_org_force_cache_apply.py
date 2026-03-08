@@ -234,6 +234,7 @@ def _write_seed(*, out_dir: Path, kernel: str) -> None:
 def test_force_cache_apply_flash_attention2d_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
     report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
     _run_org_plugin(
@@ -252,6 +253,7 @@ def test_force_cache_apply_flash_attention2d_requires_ttgir(monkeypatch: pytest.
 def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     monkeypatch.delenv("INTENTIR_ORG_SOURCE_ARCH", raising=False)
     _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
     ttgir = tmp_path / "flash.ttgir"
@@ -295,6 +297,7 @@ def test_force_cache_apply_flash_attention2d_uses_ttgir_primary(monkeypatch: pyt
 def test_force_cache_apply_attn_fwd_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     _write_seed(out_dir=tmp_path, kernel="_attn_fwd")
     report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
     _run_org_plugin(
@@ -313,6 +316,7 @@ def test_force_cache_apply_attn_fwd_requires_ttgir(monkeypatch: pytest.MonkeyPat
 def test_force_cache_apply_attn_fwd_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     monkeypatch.delenv("INTENTIR_ORG_SOURCE_ARCH", raising=False)
     _write_seed(out_dir=tmp_path, kernel="_attn_fwd")
     ttgir = tmp_path / "attn_fwd.ttgir"
@@ -346,6 +350,7 @@ def test_force_cache_apply_attn_fwd_uses_ttgir_primary(monkeypatch: pytest.Monke
 def test_force_cache_apply_masked_softmax2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     _write_seed(out_dir=tmp_path, kernel="masked_softmax2d")
     ttgir = tmp_path / "masked_softmax2d.ttgir"
     ttgir.write_text(
@@ -371,6 +376,7 @@ def test_force_cache_apply_masked_softmax2d_uses_ttgir_primary(monkeypatch: pyte
 def test_force_cache_apply_softmax_inner_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     _write_seed(out_dir=tmp_path, kernel="softmax_inner")
     ttgir = tmp_path / "softmax_inner.ttgir"
     ttgir.write_text(
@@ -396,6 +402,7 @@ def test_force_cache_apply_softmax_inner_uses_ttgir_primary(monkeypatch: pytest.
 def test_force_cache_apply_matmul_fused_epilogue_requires_ttgir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     _write_seed(out_dir=tmp_path, kernel="matmul_fused_epilogue2d")
     report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
     _run_org_plugin(
@@ -414,6 +421,7 @@ def test_force_cache_apply_matmul_fused_epilogue_requires_ttgir(monkeypatch: pyt
 def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
     monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
     monkeypatch.delenv("INTENTIR_ORG_SOURCE_ARCH", raising=False)
     _write_seed(out_dir=tmp_path, kernel="matmul_fused_epilogue2d")
     ttgir = tmp_path / "matmul.ttgir"
@@ -446,3 +454,51 @@ def test_force_cache_apply_matmul_fused_epilogue_uses_ttgir_primary(monkeypatch:
     assert Path(str((report["org"] or {}).get("hardware_model_path"))).is_file()
     assert (tmp_path / "matmul_fused_epilogue2d.org_plan.json").is_file()
     assert (tmp_path / "matmul_fused_epilogue2d.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "matmul_tile_v2"
+
+
+def test_force_cache_apply_flash_attention2d_records_compile_checks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "2")
+    _write_seed(out_dir=tmp_path, kernel="flash_attention2d")
+    ttgir = tmp_path / "flash.ttgir"
+    ptx = tmp_path / "flash.ptx"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [2, 16], warpsPerCTA = [4, 1], order = [1, 0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @flash_attention2d_kernel(%Q_ptr: !tt.ptr<f32>) {\n    %q_18 = tt.load %Q_ptr, %q_mask, %cst : tensor<64x!tt.ptr<f32>, #blocked>\n    %k_33 = tt.load %K_ptr, %k_25, %cst_2 : tensor<32x64x!tt.ptr<f32>, #blocked>\n    %v_43 = tt.load %V_ptr, %k_25, %cst_2 : tensor<32x64x!tt.ptr<f32>, #blocked>\n    %m_ij = "tt.reduce"(%scores_46) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %max = arith.maxnumf %lhs, %rhs : f32\n      tt.reduce.return %max : f32\n    }) : (tensor<32xf32, #ttg.slice<{dim = 1, parent = #blocked}>>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    ptx.write_text("cp.async.cg.shared.global;\nshfl.sync.bfly;\nbar.sync 0;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "pipeline.triton.org_bridge._run_compile_check_candidates",
+        lambda **_: [
+            {
+                "candidate": "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6",
+                "kernel_kind": "attn2d_causal_softmax_v6",
+                "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6},
+                "report_path": "/tmp/fake/report.json",
+                "contract_path": "/tmp/fake/contract.json",
+                "ptx_path": "/tmp/fake/kernel.ptx",
+                "entry": "flash_attention2d",
+                "requested_sm": "sm_120",
+                "effective_sm": "sm_120",
+                "downleveled": False,
+                "ok": True,
+                "error": "",
+            }
+        ],
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}, "mlir": {"toolchain": {"tools": {}}, "downstream_cuda_std_llvm_contract_exec_meta": {"cuda_requested_sm": "sm_120", "cuda_effective_sm": "sm_120", "cuda_target_downleveled": False}}}
+    _run_org_plugin(
+        spec_name="flash_attention2d",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="flash_attention2d", ttgir_path=ttgir, ptx_path=ptx),
+        intent=_dummy_intent("flash_attention2d"),
+        report=report,
+        shape_bindings={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    plan = json.loads((tmp_path / "flash_attention2d.org_plan.json").read_text(encoding="utf-8"))
+    assert len(plan["compile_checks"]) == 1
+    assert plan["realizations"][0]["effective_sm"] == "sm_120"
+    assert ((report["org"] or {}).get("compile_checks_count")) == 1

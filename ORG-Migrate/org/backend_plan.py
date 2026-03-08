@@ -143,12 +143,16 @@ class BackendPlan:
     kernel: str = ""
     source_oracle: dict[str, Any] = field(default_factory=dict)
     hardware_model: dict[str, Any] = field(default_factory=dict)
+    toolchain_model: dict[str, Any] = field(default_factory=dict)
+    effective_target: dict[str, Any] = field(default_factory=dict)
     selected_modules: list[BackendModule] = field(default_factory=list)
     module_edges: list[BackendModuleEdge] = field(default_factory=list)
     param_space: dict[str, Any] = field(default_factory=dict)
     constraints: list[str] = field(default_factory=list)
     substitutions: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[BackendCandidate] = field(default_factory=list)
+    compile_checks: list[dict[str, Any]] = field(default_factory=list)
+    realizations: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -157,12 +161,16 @@ class BackendPlan:
             "kernel": str(self.kernel),
             "source_oracle": dict(self.source_oracle or {}),
             "hardware_model": dict(self.hardware_model or {}),
+            "toolchain_model": dict(self.toolchain_model or {}),
+            "effective_target": dict(self.effective_target or {}),
             "selected_modules": [m.to_json_dict() for m in list(self.selected_modules or [])],
             "module_edges": [e.to_json_dict() for e in list(self.module_edges or [])],
             "param_space": dict(self.param_space or {}),
             "constraints": [str(x) for x in list(self.constraints or []) if str(x).strip()],
             "substitutions": [dict(x) for x in list(self.substitutions or []) if isinstance(x, Mapping)],
             "candidates": [c.to_json_dict() for c in list(self.candidates or [])],
+            "compile_checks": [dict(x) for x in list(self.compile_checks or []) if isinstance(x, Mapping)],
+            "realizations": [dict(x) for x in list(self.realizations or []) if isinstance(x, Mapping)],
             "notes": [str(x) for x in list(self.notes or []) if str(x).strip()],
         }
 
@@ -187,12 +195,16 @@ class BackendPlan:
             kernel=str(obj.get("kernel") or ""),
             source_oracle=(dict(obj.get("source_oracle") or {}) if isinstance(obj.get("source_oracle"), Mapping) else {}),
             hardware_model=(dict(obj.get("hardware_model") or {}) if isinstance(obj.get("hardware_model"), Mapping) else {}),
+            toolchain_model=(dict(obj.get("toolchain_model") or {}) if isinstance(obj.get("toolchain_model"), Mapping) else {}),
+            effective_target=(dict(obj.get("effective_target") or {}) if isinstance(obj.get("effective_target"), Mapping) else {}),
             selected_modules=selected_modules,
             module_edges=module_edges,
             param_space=(dict(obj.get("param_space") or {}) if isinstance(obj.get("param_space"), Mapping) else {}),
             constraints=[str(x) for x in list(obj.get("constraints") or []) if str(x).strip()],
             substitutions=substitutions,
             candidates=candidates,
+            compile_checks=[dict(x) for x in list(obj.get("compile_checks") or []) if isinstance(x, Mapping)],
+            realizations=[dict(x) for x in list(obj.get("realizations") or []) if isinstance(x, Mapping)],
             notes=[str(x) for x in list(obj.get("notes") or []) if str(x).strip()],
         )
 
