@@ -637,3 +637,103 @@ def test_compare_tool_propagates_cpp_wave(tmp_path, monkeypatch) -> None:
     )
     assert module.main() == 0
     assert ("guided", "cpp_plugin", "wave3") in seen
+
+
+def test_compare_tool_repairs_row_softmax_cluster_shift(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "softmax_inner.json"
+    plan_path = tmp_path / "softmax_inner.org_plan.json"
+    candidates_path = tmp_path / "softmax_inner.org_candidates.txt"
+    out_root = tmp_path / "compare"
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"M": 4, "N": 64},
+            "compiler_stack": "python",
+            "compiler_cpp_wave": "",
+            "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(
+        json.dumps(
+            {
+                "source_oracle": {
+                    "kernel_kind": "row_softmax_axis1_triton_v1",
+                    "bindings": {"SOFTMAX_BLOCK_THREADS": 128},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidates_path.write_text("row_softmax_axis1_triton_v1:SOFTMAX_BLOCK_THREADS=64\nrow_softmax_axis1_v1\n", encoding="utf-8")
+    source_root = out_root / "source_replay"
+    _write_graph(source_root, ok=False, reason_code="intentir_runtime_fail", reason_detail="unsupported softmax config", skip_reason="intentir_unavailable")
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        if out_dir.name == "guided":
+            return {
+                "returncode": 0,
+                "out_root": str(out_dir),
+                "summary": {
+                    "candidates": [
+                        {
+                            "kernel_kind": "row_softmax_axis1_triton_v1",
+                            "bindings": {"SOFTMAX_BLOCK_THREADS": 64},
+                            "ratio": 0.88,
+                        },
+                        {
+                            "kernel_kind": "row_softmax_axis1_v1",
+                            "bindings": {},
+                            "ratio": 0.84,
+                        },
+                    ]
+                },
+            }
+        if out_dir.name == "source_replay":
+            return {
+                "returncode": 0,
+                "out_root": str(source_root),
+                "summary": {
+                    "candidates": [
+                        {
+                            "kernel_kind": "row_softmax_axis1_triton_v1",
+                            "bindings": {"SOFTMAX_BLOCK_THREADS": 128},
+                            "ratio": None,
+                        }
+                    ]
+                },
+            }
+        if out_dir.name == "target_oracle":
+            return {
+                "returncode": 0,
+                "out_root": str(out_dir),
+                "summary": {"candidates": []},
+            }
+        raise AssertionError(f"unexpected out_root {out_dir}")
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "row_softmax_axis1_triton_v1:SOFTMAX_BLOCK_THREADS=128")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+    assert module.main() == 0
+    payload = json.loads((out_root / "comparison.json").read_text(encoding="utf-8"))
+    assert payload["comparisons"]["source_replay_analysis"]["status"] == "requires_substitution"
+    assert payload["comparisons"]["source_replay_analysis"]["repair"]["repair_candidate"] == "row_softmax_axis1_triton_v1:SOFTMAX_BLOCK_THREADS=64"
+    assert payload["comparisons"]["source_replay_portable_ratio"] == 0.88
