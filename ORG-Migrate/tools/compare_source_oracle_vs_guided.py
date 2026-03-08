@@ -430,6 +430,22 @@ def _find_guided_repair(guided_res: dict[str, Any], candidate: str) -> dict[str,
     return {}
 
 
+def _repair_metric(row: dict[str, Any]) -> float | None:
+    qps = row.get("qps_intentir")
+    if qps is not None:
+        try:
+            return float(qps)
+        except Exception:
+            pass
+    ratio = row.get("ratio")
+    if ratio is not None:
+        try:
+            return float(ratio)
+        except Exception:
+            return None
+    return None
+
+
 def _find_flash_cluster_repair(
     *,
     guided_res: dict[str, Any],
@@ -450,6 +466,7 @@ def _find_flash_cluster_repair(
     raw_candidate = _candidate_line(kind, bindings)
     block_kv = _coerce_int(bindings.get("ATTN_BLOCK_KV"))
     best: dict[str, Any] | None = None
+    best_value = float("-inf")
     for guided in _candidate_summaries(guided_res):
         guided_kind = str(guided.get("kernel_kind") or "")
         if guided_kind not in {
@@ -459,7 +476,7 @@ def _find_flash_cluster_repair(
         }:
             continue
         gb = {str(k): int(v) for k, v in dict(guided.get("bindings") or {}).items()}
-        if guided.get("ratio") is None:
+        if guided.get("ratio") is None and guided.get("qps_intentir") is None:
             continue
         cand_line = _candidate_line(guided_kind, gb)
         if cand_line == raw_candidate:
@@ -467,8 +484,12 @@ def _find_flash_cluster_repair(
         if kind == "attn2d_causal_softmax_v7" and block_kv is not None:
             if int(gb.get("ATTN_BLOCK_KV", -1)) != int(block_kv):
                 continue
-        if best is None or float(guided["ratio"]) > float(best["ratio"]):
+        metric_value = _repair_metric(guided)
+        if metric_value is None:
+            continue
+        if best is None or metric_value > best_value:
             best = guided
+            best_value = metric_value
     if best is None:
         return {}
     repair_ratio = float(best["ratio"])
@@ -495,15 +516,17 @@ def _find_matmul_cluster_repair(
     if kind != "matmul_mma_tf32_v1" or str(hardware_cluster) != "cuda_tc_mid_smem":
         return {}
     best: dict[str, Any] | None = None
+    best_value = float("-inf")
     for guided in _candidate_summaries(guided_res):
         guided_kind = str(guided.get("kernel_kind") or "")
         if guided_kind not in {"matmul_tile_v2", "matmul_tile_v1"}:
             continue
-        ratio = guided.get("ratio")
-        if ratio is None:
+        metric_value = _repair_metric(guided)
+        if metric_value is None:
             continue
-        if best is None or float(ratio) > float(best["ratio"]):
+        if best is None or metric_value > best_value:
             best = guided
+            best_value = metric_value
     if best is None:
         return {}
     return {
@@ -524,15 +547,17 @@ def _find_row_softmax_cluster_repair(
     if kind != "row_softmax_axis1_triton_v1" or str(hardware_cluster) not in {"cuda_tc_mid_smem", "cuda_generic"}:
         return {}
     best: dict[str, Any] | None = None
+    best_value = float("-inf")
     for guided in _candidate_summaries(guided_res):
         guided_kind = str(guided.get("kernel_kind") or "")
         if guided_kind not in {"row_softmax_axis1_v1", "row_softmax_axis1_triton_v1"}:
             continue
-        ratio = guided.get("ratio")
-        if ratio is None:
+        metric_value = _repair_metric(guided)
+        if metric_value is None:
             continue
-        if best is None or float(ratio) > float(best["ratio"]):
+        if best is None or metric_value > best_value:
             best = guided
+            best_value = metric_value
     if best is None:
         return {}
     return {
