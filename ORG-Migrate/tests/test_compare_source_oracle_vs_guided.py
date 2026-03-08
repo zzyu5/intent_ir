@@ -169,6 +169,7 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["comparisons"]["source_replay_portable_ratio"] is None
     assert payload["comparisons"]["guided_best_qps_intentir"] == 162.0
     assert payload["comparisons"]["guided_best_qps_native"] == 200.0
+    assert payload["comparisons"]["guided_outcome"]["best_qps_candidate"]["kernel_kind"] == "attn2d_causal_softmax_v6"
     assert payload["comparisons"]["guided_requested_sm"] == "sm_120"
     assert payload["comparisons"]["guided_effective_sm"] == "sm_86"
     assert payload["comparisons"]["guided_downleveled"] is True
@@ -563,6 +564,85 @@ def test_compare_tool_detects_flash_cluster_param_repair(tmp_path, monkeypatch) 
     assert payload["comparisons"]["source_replay_analysis"]["repair"]["reason"] == "cluster_param_shift"
     assert payload["comparisons"]["source_replay_analysis"]["repair"]["repair_candidate"] == "attn2d_causal_softmax_v6:ATTN_BLOCK_KV=32,ATTN_SCORE_WARPS=6"
     assert payload["comparisons"]["source_replay_portable_ratio"] == 0.878
+
+
+def test_compare_tool_uses_best_qps_candidate_for_qps_fields(tmp_path, monkeypatch) -> None:
+    module = _load_tool_module()
+    report_path = tmp_path / "flash_attention2d.json"
+    plan_path = tmp_path / "flash_attention2d.org_plan.json"
+    candidates_path = tmp_path / "flash_attention2d.org_candidates.txt"
+    out_root = tmp_path / "compare"
+
+    report = {
+        "org": {
+            "plan_path": str(plan_path),
+            "candidates_txt_path": str(candidates_path),
+            "arch": "sm120",
+            "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+            "compiler_stack": "python",
+            "compiler_cpp_wave": "",
+            "evidence_source": {"primary": "ttgir"},
+            "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
+        }
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan_path.write_text(json.dumps({"source_oracle": {"kernel_kind": "", "bindings": {}}}), encoding="utf-8")
+    candidates_path.write_text("attn2d_causal_softmax_v6:ATTN_BLOCK_KV=32,ATTN_SCORE_WARPS=6\n", encoding="utf-8")
+
+    def fake_run_tune(**kwargs):
+        out_dir = Path(kwargs["out_root"])
+        if out_dir.name == "guided":
+            return {
+                "returncode": 0,
+                "out_root": str(out_dir),
+                "summary": {
+                    "candidates": [
+                        {
+                            "kernel_kind": "attn2d_causal_softmax_v6",
+                            "bindings": {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6},
+                            "ratio": 1.0,
+                            "qps_intentir": 170.0,
+                            "qps_native": 170.0,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
+                        },
+                        {
+                            "kernel_kind": "attn2d_causal_softmax_v6",
+                            "bindings": {"ATTN_BLOCK_KV": 32, "ATTN_SCORE_WARPS": 6},
+                            "ratio": 0.88,
+                            "qps_intentir": 220.0,
+                            "qps_native": 250.0,
+                            "coverage_rc": 0,
+                            "perf_rc": 0,
+                        },
+                    ]
+                },
+            }
+        return {"returncode": 0, "out_root": str(out_dir), "summary": {"candidates": []}}
+
+    monkeypatch.setattr(module, "_run_tune", fake_run_tune)
+    monkeypatch.setattr(module, "_resolve_source_candidate", lambda **_: "")
+    monkeypatch.setattr(module, "_resolve_target_oracle_candidate", lambda **_: "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_source_oracle_vs_guided.py",
+            "--report",
+            str(report_path),
+            "--backend-target",
+            "cuda_5090d",
+            "--out-root",
+            str(out_root),
+        ],
+    )
+
+    assert module.main() == 0
+    payload = json.loads((out_root / "comparison.json").read_text(encoding="utf-8"))
+    assert payload["comparisons"]["guided_best_ratio"] == 1.0
+    assert payload["comparisons"]["guided_best_qps_intentir"] == 220.0
+    assert payload["comparisons"]["guided_best_qps_native"] == 250.0
+    assert payload["comparisons"]["guided_outcome"]["best_qps_candidate"]["bindings"] == {"ATTN_BLOCK_KV": 32, "ATTN_SCORE_WARPS": 6}
 
 
 def test_make_outcome_reports_process_error_without_graph(tmp_path) -> None:

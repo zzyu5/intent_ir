@@ -589,18 +589,20 @@ def _make_outcome(result: dict[str, Any]) -> dict[str, Any]:
     returncode = result.get("returncode")
     if ratio is not None:
         best_ratio_row = _best_candidate(result, metric="ratio")
+        best_qps_row = _best_candidate(result, metric="qps_intentir") or dict(best_ratio_row)
         return {
             "status": "ok",
             "best_ratio": float(ratio),
             "first_candidate": first,
             "best_candidate": dict(best_ratio_row),
-            "best_qps_intentir": best_ratio_row.get("qps_intentir"),
-            "best_qps_native": best_ratio_row.get("qps_native"),
-            "best_latency_intentir_ms": best_ratio_row.get("latency_intentir_ms"),
-            "best_latency_native_ms": best_ratio_row.get("latency_native_ms"),
-            "requested_sm": best_ratio_row.get("requested_sm"),
-            "effective_sm": best_ratio_row.get("effective_sm"),
-            "downleveled": best_ratio_row.get("downleveled"),
+            "best_qps_candidate": dict(best_qps_row),
+            "best_qps_intentir": best_qps_row.get("qps_intentir"),
+            "best_qps_native": best_qps_row.get("qps_native"),
+            "best_latency_intentir_ms": best_qps_row.get("latency_intentir_ms"),
+            "best_latency_native_ms": best_qps_row.get("latency_native_ms"),
+            "requested_sm": best_qps_row.get("requested_sm"),
+            "effective_sm": best_qps_row.get("effective_sm"),
+            "downleveled": best_qps_row.get("downleveled"),
             "candidate_count": len(candidates),
             "returncode": returncode,
             "failure": failure,
