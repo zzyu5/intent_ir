@@ -93,10 +93,6 @@ def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
     candidates = _candidate_names(base, env_var)
     # Prefer repo-local toolchains (artifacts/toolchains/mlir-current) over system PATH.
     extra_bindirs = _intentir_local_bindirs()
-    if str(base) == "llc":
-        llvm_like = [p for p in extra_bindirs if "LLVM-" in str(p)]
-        other = [p for p in extra_bindirs if "LLVM-" not in str(p)]
-        extra_bindirs = llvm_like + other
     extra_bindirs = extra_bindirs + _llvm_bindirs()
     checked: list[str] = []
     chosen_path = ""
@@ -246,6 +242,7 @@ def detect_mlir_toolchain() -> dict[str, Any]:
         "backend_install_hints": backend_install_hints,
         "local_toolchain_roots": [
             str(_DEFAULT_TOOLCHAIN_ROOT / "mlir-current"),
+            str(_DEFAULT_TOOLCHAIN_ROOT / "LLVM-*"),
             str(_DEFAULT_TOOLCHAIN_ROOT / "mlir-*"),
         ],
         "install_hint": (

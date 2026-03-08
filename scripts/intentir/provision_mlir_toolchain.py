@@ -57,6 +57,20 @@ def _find_tool(root: Path, *, tool: str, version: int) -> Path:
     )
 
 
+def _find_tool_in_roots(roots: list[Path], *, tool: str, version: int) -> Path:
+    checked: list[str] = []
+    for root in list(roots or []):
+        try:
+            return _find_tool(root, tool=tool, version=version)
+        except FileNotFoundError as exc:
+            checked.append(str(exc))
+            continue
+    raise FileNotFoundError(
+        f"cannot find executable `{tool}` in companion roots: {', '.join(str(x) for x in roots)}"
+        + (f" checked={checked}" if checked else "")
+    )
+
+
 def _normalize_sm(raw: str) -> str:
     s = str(raw or "").strip().lower()
     if not s:
@@ -166,6 +180,65 @@ def _version_candidates_for_source(source: str, requested_version: int) -> list[
     return [int(requested_version)]
 
 
+def _existing_official_prefix(toolchain_root: Path, release_version: str) -> Path | None:
+    candidate = Path(toolchain_root) / f"LLVM-{str(release_version).strip()}-Linux-X64"
+    return candidate if candidate.is_dir() else None
+
+
+def _companion_roots(*, toolchain_root: Path, current_link: Path, exclude: list[Path]) -> list[Path]:
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for p in [current_link, *sorted(Path(toolchain_root).glob("mlir-*")), *sorted(Path(toolchain_root).glob("LLVM-*"))]:
+        try:
+            resolved = p.resolve()
+        except Exception:
+            resolved = p
+        if not resolved.exists():
+            continue
+        if any(resolved == ex for ex in exclude):
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(resolved)
+    return roots
+
+
+def _resolve_tool_paths(
+    *,
+    source_root: Path,
+    toolchain_root: Path,
+    current_link: Path,
+    version: int,
+    require_cuda_sm: str,
+) -> tuple[dict[str, Path], dict[str, str]]:
+    resolved: dict[str, Path] = {}
+    origin: dict[str, str] = {}
+    llc = _find_tool(source_root, tool="llc", version=version)
+    if require_cuda_sm and (not _supports_required_sm(llc, require_cuda_sm)):
+        raise RuntimeError(
+            f"toolchain root {source_root} does not support required CUDA SM {require_cuda_sm}; supported={_llc_supported_sms(llc)}"
+        )
+    resolved["llc"] = llc
+    origin["llc"] = "source"
+    companion_roots = _companion_roots(
+        toolchain_root=toolchain_root,
+        current_link=current_link,
+        exclude=[source_root],
+    )
+    for tool_name in ("mlir-opt", "mlir-translate", "llvm-as", "opt"):
+        try:
+            tool_path = _find_tool(source_root, tool=tool_name, version=version)
+            resolved[tool_name] = tool_path
+            origin[tool_name] = "source"
+        except FileNotFoundError:
+            tool_path = _find_tool_in_roots(companion_roots, tool=tool_name, version=version)
+            resolved[tool_name] = tool_path
+            origin[tool_name] = "fallback"
+    return resolved, origin
+
+
 def _symlink_force(dst: Path, src: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists() or dst.is_symlink():
@@ -257,7 +330,7 @@ def main() -> None:
     current_link = Path(args.current_link) if args.current_link is not None else (toolchain_root / "mlir-current")
     prefix.parent.mkdir(parents=True, exist_ok=True)
 
-    if source == "apt" and prefix.exists():
+    if prefix.exists():
         if not bool(args.force):
             raise SystemExit(f"target prefix already exists: {prefix} (use --force to replace)")
         if prefix.is_symlink() or prefix.is_file():
@@ -268,17 +341,11 @@ def main() -> None:
     selected_version = int(version)
     selected_release_version = ""
     selected_url = ""
+    selected_source_root: Path | None = None
     packages: list[str] = []
     for candidate_version in _version_candidates_for_source(source, version):
         selected_version = int(candidate_version)
         candidate_prefix = Path(args.prefix) if args.prefix is not None else (toolchain_root / f"mlir-{selected_version}")
-        if candidate_prefix.exists():
-            if not bool(args.force):
-                raise SystemExit(f"target prefix already exists: {candidate_prefix} (use --force to replace)")
-            if candidate_prefix.is_symlink() or candidate_prefix.is_file():
-                candidate_prefix.unlink()
-            else:
-                shutil.rmtree(candidate_prefix)
         candidate_prefix.parent.mkdir(parents=True, exist_ok=True)
 
         if source == "apt":
@@ -296,42 +363,50 @@ def main() -> None:
                     deb = debs[-1]
                     p_x = _run(["dpkg-deb", "-x", str(deb), str(candidate_prefix)])
                     _require_ok(p_x, step=f"dpkg-deb -x ({pkg})")
+            selected_source_root = candidate_prefix
         else:
             packages = []
             selected_url = ""
-            with tempfile.TemporaryDirectory(prefix="intentir_mlir_prebuilt_") as td:
-                tmp = Path(td)
-                archive = tmp / f"llvm-{selected_version}.tar.xz"
-                for release_version in _official_release_version_candidates(selected_version):
+            for release_version in _official_release_version_candidates(selected_version):
+                existing = _existing_official_prefix(toolchain_root, release_version)
+                if existing is not None:
+                    selected_release_version = str(release_version)
+                    selected_source_root = existing
+                    break
+                with tempfile.TemporaryDirectory(prefix="intentir_mlir_prebuilt_") as td:
+                    tmp = Path(td)
+                    archive = tmp / f"llvm-{selected_version}.tar.xz"
                     for url in _official_prebuilt_url_candidates(release_version):
                         if not _url_exists(url):
                             continue
                         selected_release_version = str(release_version)
                         selected_url = str(url)
+                        extracted_prefix = toolchain_root / f"LLVM-{selected_release_version}-Linux-X64"
                         _download_url(selected_url, out_path=archive)
-                        _extract_tar_xz(archive, prefix=candidate_prefix)
+                        _extract_tar_xz(archive, prefix=extracted_prefix)
+                        selected_source_root = extracted_prefix
                         break
-                    if selected_url:
+                    if selected_source_root is not None:
                         break
-            if not selected_url:
+                if selected_source_root is not None:
+                    break
+            if selected_source_root is None:
                 if source == "official_prebuilt" and candidate_version == _version_candidates_for_source(source, version)[-1]:
                     raise RuntimeError(f"no official prebuilt archive found for LLVM {selected_version}")
                 continue
 
-        mlir_opt = _find_tool(candidate_prefix, tool="mlir-opt", version=selected_version)
-        mlir_translate = _find_tool(candidate_prefix, tool="mlir-translate", version=selected_version)
-        llvm_as = _find_tool(candidate_prefix, tool="llvm-as", version=selected_version)
-        llvm_opt = _find_tool(candidate_prefix, tool="opt", version=selected_version)
-        llc = _find_tool(candidate_prefix, tool="llc", version=selected_version)
-        if require_cuda_sm and (not _supports_required_sm(llc, require_cuda_sm)):
-            if candidate_prefix.exists():
-                shutil.rmtree(candidate_prefix)
-            if source == "official_prebuilt":
-                continue
-            raise RuntimeError(
-                f"toolchain llvm-{selected_version} does not support required CUDA SM {require_cuda_sm}; "
-                f"supported={_llc_supported_sms(llc)}"
-            )
+        resolved_tools, tool_origins = _resolve_tool_paths(
+            source_root=Path(selected_source_root),
+            toolchain_root=toolchain_root,
+            current_link=current_link,
+            version=selected_version,
+            require_cuda_sm=require_cuda_sm,
+        )
+        mlir_opt = resolved_tools["mlir-opt"]
+        mlir_translate = resolved_tools["mlir-translate"]
+        llvm_as = resolved_tools["llvm-as"]
+        llvm_opt = resolved_tools["opt"]
+        llc = resolved_tools["llc"]
         prefix = candidate_prefix
         break
     else:
@@ -370,6 +445,7 @@ def main() -> None:
         "version": int(selected_version),
         "release_version": (str(selected_release_version) if selected_release_version else str(selected_version)),
         "source": str(source),
+        "source_root": str(selected_source_root or prefix),
         "package": (str(packages[0]) if packages else ""),
         "packages": [str(x) for x in packages],
         "prefix": str(prefix),
@@ -380,6 +456,7 @@ def main() -> None:
         "supported_sms": _llc_supported_sms(bin_dir / "llc"),
         "downleveled": (bool(require_cuda_sm) and not _supports_required_sm(bin_dir / "llc", require_cuda_sm)),
         "download_url": str(selected_url),
+        "tool_origins": {str(k): str(v) for k, v in dict(tool_origins or {}).items()},
         "tools": {
             "mlir-opt": {"path": str(bin_dir / "mlir-opt"), "version": _tool_version(bin_dir / "mlir-opt")},
             "mlir-translate": {
