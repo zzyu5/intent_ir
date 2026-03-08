@@ -53,8 +53,8 @@ def test_resolve_tool_paths_uses_companion_fallback(tmp_path) -> None:
         path.chmod(0o755)
 
     _write_exec(source_bin / "llc", "#!/usr/bin/env bash\nif [[ \"$1\" == \"-march=nvptx64\" && \"$2\" == \"-mcpu=help\" ]]; then echo sm_120; exit 0; fi\necho 'LLVM 20'\n")
-    _write_exec(source_bin / "mlir-translate", "#!/usr/bin/env bash\necho 'LLVM 20'\n")
     _write_exec(current_bin / "mlir-opt", "#!/usr/bin/env bash\necho 'LLVM 14'\n")
+    _write_exec(current_bin / "mlir-translate", "#!/usr/bin/env bash\necho 'LLVM 14'\n")
     _write_exec(current_bin / "llvm-as", "#!/usr/bin/env bash\necho 'LLVM 14'\n")
     _write_exec(current_bin / "opt", "#!/usr/bin/env bash\necho 'LLVM 14'\n")
 
@@ -68,14 +68,14 @@ def test_resolve_tool_paths_uses_companion_fallback(tmp_path) -> None:
         require_cuda_sm="sm_120",
     )
     assert resolved["llc"] == source_bin / "llc"
-    assert resolved["mlir-translate"] == source_bin / "mlir-translate"
     assert resolved["mlir-opt"] == current_bin / "mlir-opt"
+    assert resolved["mlir-translate"] == current_bin / "mlir-translate"
     assert resolved["llvm-as"] == current_bin / "llvm-as"
     assert resolved["opt"] == current_bin / "opt"
     assert origins == {
         "llc": "source",
         "mlir-opt": "fallback",
-        "mlir-translate": "source",
+        "mlir-translate": "fallback",
         "llvm-as": "fallback",
         "opt": "fallback",
     }

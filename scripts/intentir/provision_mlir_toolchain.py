@@ -228,14 +228,9 @@ def _resolve_tool_paths(
         exclude=[source_root],
     )
     for tool_name in ("mlir-opt", "mlir-translate", "llvm-as", "opt"):
-        try:
-            tool_path = _find_tool(source_root, tool=tool_name, version=version)
-            resolved[tool_name] = tool_path
-            origin[tool_name] = "source"
-        except FileNotFoundError:
-            tool_path = _find_tool_in_roots(companion_roots, tool=tool_name, version=version)
-            resolved[tool_name] = tool_path
-            origin[tool_name] = "fallback"
+        tool_path = _find_tool_in_roots(companion_roots, tool=tool_name, version=version)
+        resolved[tool_name] = tool_path
+        origin[tool_name] = "fallback"
     return resolved, origin
 
 
