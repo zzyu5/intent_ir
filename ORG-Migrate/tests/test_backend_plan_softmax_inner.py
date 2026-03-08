@@ -64,3 +64,22 @@ def test_backend_plan_softmax_inner_chain() -> None:
     assert plan.candidates[0].kernel_kind == "row_softmax_axis1_triton_v1"
     assert plan.candidates[0].bindings == {"SOFTMAX_BLOCK_THREADS": 64}
     assert any(c.kernel_kind == "row_softmax_axis1_v1" for c in plan.candidates)
+
+
+def test_backend_plan_softmax_inner_skips_incompatible_triton_threads() -> None:
+    plan = plan_softmax_inner(
+        _org_softmax_inner(),
+        shape_bindings={"M": 4, "N": 64},
+        source_oracle={"kernel_kind": "row_softmax_axis1_triton_v1", "bindings": {"SOFTMAX_BLOCK_THREADS": 128}},
+        hardware_model=build_hardware_model(target="cuda_5090d", arch="sm120"),
+        ttgir_facts={
+            "mechanisms": {
+                "staging.row_tile_resident": {"present": True, "attrs": {"resident_bytes_hint": 256}},
+                "communication.row_reduction": {"present": True, "attrs": {"reduction_scope": "warp"}},
+            }
+        },
+        budget=4,
+    )
+    assert plan.candidates[0].kernel_kind == "row_softmax_axis1_triton_v1"
+    assert plan.candidates[0].bindings == {"SOFTMAX_BLOCK_THREADS": 64}
+    assert all(c.bindings.get("SOFTMAX_BLOCK_THREADS") != 128 for c in plan.candidates if c.kernel_kind == "row_softmax_axis1_triton_v1")

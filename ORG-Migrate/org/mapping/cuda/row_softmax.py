@@ -58,6 +58,18 @@ def _fact_present(facts: Mapping[str, Any] | None, key: str) -> bool:
     return bool(dict(mechanisms.get(str(key)) or {}).get("present"))
 
 
+def _triton_candidate_supported(*, row_width: int, block_threads: int) -> bool:
+    if int(row_width) <= 0:
+        return False
+    if int(block_threads) <= 0 or (int(block_threads) % 32) != 0:
+        return False
+    if int(block_threads) > 256:
+        return False
+    pad_n = 1 << (int(row_width) - 1).bit_length()
+    pad_n = int(min(int(pad_n), 1024))
+    return int(pad_n) % int(block_threads) == 0
+
+
 def _selected_modules(
     *,
     modules: list[BackendModule],
@@ -106,6 +118,10 @@ def _score_softmax_candidate(
     if kind == "row_softmax_axis1_triton_v1":
         score += {64: 14.0, 128: 18.0, 256: 10.0}.get(block_threads, 0.0)
         reasons.append(f"block_threads={block_threads}")
+        if not _triton_candidate_supported(row_width=row_width, block_threads=block_threads):
+            score -= 140.0
+            portability_note = "requires_fallback"
+            reasons.append("incompatible:block_threads")
         if row_width <= 64 and block_threads == 64:
             score += 14.0
             reasons.append("small_row_fit")
@@ -192,15 +208,27 @@ def _plan_row_softmax(
         scored.append(BackendCandidate(kernel_kind=cand.kernel_kind, bindings={}, note="cluster_rank", score=score, score_reason=reason, cluster=cluster, portability_note=portability))
     else:
         if exact_kind == "row_softmax_axis1_triton_v1":
-            score, reason, portability = _score_softmax_candidate(
-                candidate=BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings)),
-                cluster=cluster,
-                goal_tags=goal_tags,
-                mechanism_tags=mechanism_tags,
-                row_width=n_dim,
-                masked=False,
-            )
-            scored.append(BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings), note="source_exact", score=score + 18.0, score_reason=f"{reason},source_exact", cluster=cluster, portability_note=portability))
+            source_threads = int(exact_bindings.get("SOFTMAX_BLOCK_THREADS", 0) or 128)
+            if _triton_candidate_supported(row_width=n_dim, block_threads=source_threads):
+                score, reason, portability = _score_softmax_candidate(
+                    candidate=BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings)),
+                    cluster=cluster,
+                    goal_tags=goal_tags,
+                    mechanism_tags=mechanism_tags,
+                    row_width=n_dim,
+                    masked=False,
+                )
+                scored.append(
+                    BackendCandidate(
+                        kernel_kind=exact_kind,
+                        bindings=dict(exact_bindings),
+                        note="source_exact",
+                        score=score + 18.0,
+                        score_reason=f"{reason},source_exact",
+                        cluster=cluster,
+                        portability_note=portability,
+                    )
+                )
         for threads in thread_values:
             score, reason, portability = _score_softmax_candidate(
                 candidate=BackendCandidate(kernel_kind="row_softmax_axis1_triton_v1", bindings={"SOFTMAX_BLOCK_THREADS": int(threads)}),
@@ -210,7 +238,18 @@ def _plan_row_softmax(
                 row_width=n_dim,
                 masked=False,
             )
-            scored.append(BackendCandidate(kernel_kind="row_softmax_axis1_triton_v1", bindings={"SOFTMAX_BLOCK_THREADS": int(threads)}, note="cluster_rank", score=score, score_reason=reason, cluster=cluster, portability_note=portability))
+            if _triton_candidate_supported(row_width=n_dim, block_threads=int(threads)):
+                scored.append(
+                    BackendCandidate(
+                        kernel_kind="row_softmax_axis1_triton_v1",
+                        bindings={"SOFTMAX_BLOCK_THREADS": int(threads)},
+                        note="cluster_rank",
+                        score=score,
+                        score_reason=reason,
+                        cluster=cluster,
+                        portability_note=portability,
+                    )
+                )
         score, reason, portability = _score_softmax_candidate(
             candidate=BackendCandidate(kernel_kind="row_softmax_axis1_v1", bindings={}),
             cluster=cluster,

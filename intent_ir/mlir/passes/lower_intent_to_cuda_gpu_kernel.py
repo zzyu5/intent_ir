@@ -6089,6 +6089,13 @@ def lower_intent_to_cuda_gpu_kernel(
                 "row_softmax_axis1_vec4_v2",
                 "row_softmax_axis1_v1",
             },
+            "softmax_inner": {
+                "row_softmax_axis1_triton_v1",
+                "row_softmax_axis1_v1",
+            },
+            "masked_softmax2d": {
+                "row_masked_softmax_axis1_v1",
+            },
             "ai_bench_matmul": {
                 "matmul_mma_tf32_v1",
                 "matmul_mma_tf32_v2",
@@ -9379,8 +9386,21 @@ def lower_intent_to_cuda_gpu_kernel(
         pad_n = 1 << (int(red_n) - 1).bit_length()
         pad_n = int(min(int(pad_n), 1024))
         block_threads = 128
+        req_block_threads = int(bindings.get("SOFTMAX_BLOCK_THREADS") or 0)
+        if req_block_threads:
+            if int(req_block_threads) <= 0 or (int(req_block_threads) % 32) != 0:
+                raise RuntimeError(
+                    f"{kernel_kind} requires SOFTMAX_BLOCK_THREADS to be a positive multiple of 32; got {req_block_threads}"
+                )
+            if int(req_block_threads) > 256:
+                raise RuntimeError(
+                    f"{kernel_kind} SOFTMAX_BLOCK_THREADS>256 is currently unsupported; got {req_block_threads}"
+                )
+            block_threads = int(req_block_threads)
         if (int(pad_n) % int(block_threads)) != 0:
-            raise RuntimeError(f"{kernel_kind} requires pad_n%128==0; got pad_n={pad_n}")
+            raise RuntimeError(
+                f"{kernel_kind} requires pad_n%block_threads==0; got pad_n={pad_n} block_threads={block_threads}"
+            )
         ept = int(pad_n) // int(block_threads)
         if ept <= 0 or ept > 16:
             raise RuntimeError(f"{kernel_kind} invalid EPT={ept} (pad_n={pad_n} block_threads={block_threads})")

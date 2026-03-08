@@ -490,6 +490,35 @@ def _find_matmul_cluster_repair(
     }
 
 
+def _find_row_softmax_cluster_repair(
+    *,
+    guided_res: dict[str, Any],
+    candidate: str,
+    hardware_cluster: str,
+) -> dict[str, Any]:
+    kind, _bindings = _parse_candidate_line(candidate)
+    if kind != "row_softmax_axis1_triton_v1" or str(hardware_cluster) not in {"cuda_tc_mid_smem", "cuda_generic"}:
+        return {}
+    best: dict[str, Any] | None = None
+    for guided in _candidate_summaries(guided_res):
+        guided_kind = str(guided.get("kernel_kind") or "")
+        if guided_kind not in {"row_softmax_axis1_v1", "row_softmax_axis1_triton_v1"}:
+            continue
+        ratio = guided.get("ratio")
+        if ratio is None:
+            continue
+        if best is None or float(ratio) > float(best["ratio"]):
+            best = guided
+    if best is None:
+        return {}
+    return {
+        "status": "requires_substitution",
+        "reason": "cluster_variant_shift",
+        "repair_candidate": _candidate_line(str(best.get("kernel_kind") or ""), dict(best.get("bindings") or {})),
+        "repair_ratio": float(best["ratio"]),
+    }
+
+
 def _best_repair(*repairs: dict[str, Any]) -> dict[str, Any]:
     best: dict[str, Any] = {}
     best_ratio = float("-inf")
@@ -641,7 +670,12 @@ def _analyze_replay_candidate(
             candidate=candidate,
             hardware_cluster=hardware_cluster,
         )
-        cluster_repair = _best_repair(flash_cluster_repair, matmul_cluster_repair)
+        row_softmax_cluster_repair = _find_row_softmax_cluster_repair(
+            guided_res=guided_res,
+            candidate=candidate,
+            hardware_cluster=hardware_cluster,
+        )
+        cluster_repair = _best_repair(flash_cluster_repair, matmul_cluster_repair, row_softmax_cluster_repair)
         if cluster_repair:
             return {
                 "status": str(cluster_repair.get("status") or "requires_substitution"),
@@ -670,6 +704,15 @@ def _analyze_replay_candidate(
         ),
         (
             _find_matmul_cluster_repair(
+                guided_res=guided_res,
+                candidate=candidate,
+                hardware_cluster=hardware_cluster,
+            )
+            if label in {"source_replay", "target_oracle"}
+            else {}
+        ),
+        (
+            _find_row_softmax_cluster_repair(
                 guided_res=guided_res,
                 candidate=candidate,
                 hardware_cluster=hardware_cluster,
