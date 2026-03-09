@@ -512,6 +512,7 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
 
     We currently rewrite:
     - LLVM intrinsics: `llvm.exp/exp2/log/sin/cos/pow.f32` -> internal helpers backed by NVVM approx intrinsics.
+    - Libdevice FMA calls: `__nv_fmaf` -> `llvm.fma.f32` to recover inline PTX FMA.
     - External libcalls: `acosf/atanf/tanf/erff` -> internal helpers (no unresolved externs).
     """
 
@@ -524,6 +525,7 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
     rewrite_sin = "@llvm.sin.f32(" in text
     rewrite_cos = "@llvm.cos.f32(" in text
     rewrite_pow = "@llvm.pow.f32(" in text
+    rewrite_fma = "@__nv_fmaf(" in text
     rewrite_acos = "@acosf(" in text
     rewrite_atan = "@atanf(" in text
     rewrite_tan = "@tanf(" in text
@@ -554,6 +556,16 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
             out,
             flags=re.MULTILINE,
         )
+    if rewrite_fma:
+        out = out.replace("@__nv_fmaf(", "@llvm.fma.f32(")
+        out = re.sub(r"^declare[^\n]*@__nv_fmaf\([^\n]*\)\s*[^\n]*\n", "", out, flags=re.MULTILINE)
+        if "declare float @llvm.fma.f32(float, float, float)" not in out:
+            decl_anchor = out.find("define ")
+            decl_line = "declare float @llvm.fma.f32(float, float, float)\n"
+            if decl_anchor >= 0:
+                out = out[:decl_anchor] + decl_line + out[decl_anchor:]
+            else:
+                out = decl_line + out
     if rewrite_acos:
         out = out.replace("@acosf(", "@intentir_nvvm_acosf_approx(")
         out = re.sub(r"^declare[^\n]*@acosf\([^\n]*\)\s*[^\n]*\n", "", out, flags=re.MULTILINE)

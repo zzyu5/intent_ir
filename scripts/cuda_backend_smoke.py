@@ -20,6 +20,7 @@ import multiprocessing as mp
 import os
 from functools import lru_cache
 from queue import Empty
+import re
 import shutil
 import sys
 import time
@@ -66,6 +67,37 @@ DEFAULT_CUDA_NATIVE_KERNELS = [
 
 _PERSISTENT_WORKERS: dict[str, dict[str, Any]] = {}
 _PERSISTENT_TASK_SEQ = 0
+
+
+def _list_ptx_entry_symbols(ptx_text: str) -> list[str]:
+    text = str(ptx_text or "")
+    if not text:
+        return []
+    pat = re.compile(r"^[\s\.]*visible\s+\.entry\s+([A-Za-z_.$][0-9A-Za-z_.$]*)\s*\(|^[\s]*\.entry\s+([A-Za-z_.$][0-9A-Za-z_.$]*)\s*\(", re.MULTILINE)
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in pat.finditer(text):
+        name = str(m.group(1) or m.group(2) or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _resolve_ptx_entry_symbol(*, ptx_path: Path, preferred_entry: str) -> tuple[str, list[str]]:
+    text = str(ptx_path.read_text(encoding="utf-8", errors="ignore") or "")
+    entries = _list_ptx_entry_symbols(text)
+    preferred = str(preferred_entry or "").strip()
+    if preferred and preferred in entries:
+        return preferred, entries
+    if preferred:
+        heuristics = [e for e in entries if e.endswith(preferred) or preferred in e]
+        if len(heuristics) == 1:
+            return str(heuristics[0]), entries
+    if entries:
+        return str(entries[0]), entries
+    return preferred, entries
 
 
 def _intent_from_json_payload(intent_json: dict[str, Any]) -> IntentFunction:
@@ -408,12 +440,16 @@ def _frontend_cuda_ptx_artifact(
     if ptx_path is None or (not ptx_path.is_file()):
         return None
     io_spec = desc.get("io_spec") if isinstance(desc.get("io_spec"), dict) else {}
-    entry = str(report.get("kernel") or desc.get("name") or "").strip()
-    if not entry:
-        entry = "intent"
+    preferred_entry = str(report.get("kernel") or desc.get("name") or "").strip() or "intent"
+    resolved_entry, discovered_entries = _resolve_ptx_entry_symbol(
+        ptx_path=ptx_path,
+        preferred_entry=preferred_entry,
+    )
     return {
         "ptx_path": str(ptx_path),
-        "entry": str(entry),
+        "entry": str(resolved_entry or preferred_entry),
+        "entry_preferred": str(preferred_entry),
+        "entries": [str(x) for x in list(discovered_entries or [])],
         "io_spec": dict(io_spec),
     }
 
@@ -523,8 +559,12 @@ def _patch_contract_with_frontend_ptx(
     artifacts = out.get("artifacts")
     artifacts = dict(artifacts) if isinstance(artifacts, dict) else {}
     artifacts["cuda_ptx_path"] = str(fb["ptx_path"])
-    artifacts["cuda_ptx_origin"] = "llvm_llc"
+    artifacts["cuda_ptx_origin"] = "frontend_ptx"
     artifacts["cuda_ptx_origin_fallback"] = "frontend_ptx"
+    artifacts["cuda_ptx_entry_resolved"] = str(fb.get("entry") or "")
+    artifacts["cuda_ptx_entry_preferred"] = str(fb.get("entry_preferred") or "")
+    if isinstance(fb.get("entries"), list) and list(fb.get("entries") or []):
+        artifacts["cuda_ptx_entries"] = [str(x) for x in list(fb.get("entries") or [])]
     out["artifacts"] = artifacts
     return out
 
