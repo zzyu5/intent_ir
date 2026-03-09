@@ -76,10 +76,10 @@ def test_backend_plan_flash_attention2d_chain() -> None:
     ]
     assert "attn2d_causal_softmax_v8" in plan.param_space["kernel_kind"]
     assert any(c.kernel_kind == "attn2d_causal_softmax_v8" for c in plan.candidates)
-    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 6}
+    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 4}
     assert plan.candidates[0].score is not None
     assert "cluster=cuda_tc_mid_smem" in str(plan.candidates[0].score_reason)
-    assert "source_exact" in str(plan.candidates[0].score_reason)
+    assert "mid_smem_balanced_resident_tile" in str(plan.candidates[0].score_reason)
     assert any(str(x).startswith("preserve:") for x in plan.notes)
     assert any(item.get("reason") == "incomplete async evidence" for item in plan.substitutions)
 
@@ -124,9 +124,10 @@ def test_backend_plan_flash_attention2d_sm120_exposes_frontier_variants() -> Non
     )
     kinds = [c.kernel_kind for c in plan.candidates]
     assert "attn2d_causal_softmax_v9" in plan.param_space["kernel_kind"]
-    assert plan.candidates[0].kernel_kind == "attn2d_causal_softmax_v9"
+    assert plan.candidates[0].kernel_kind == "attn2d_causal_softmax_v8"
     assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 32}
     assert "attn2d_causal_softmax_v9" in kinds
-    assert kinds.index("attn2d_causal_softmax_v9") < kinds.index("attn2d_causal_softmax_v8")
-    assert "sm120_frontier_v9_tile32" in str(plan.candidates[0].score_reason)
+    assert kinds.index("attn2d_causal_softmax_v8") < kinds.index("attn2d_causal_softmax_v9")
+    assert "sm120_v8_tile32_resource_fit" in str(plan.candidates[0].score_reason)
+    assert "register_ratio=" in str(plan.candidates[0].score_reason)
     assert any("toolchain_effective_sm=sm_120" in note for note in plan.notes)

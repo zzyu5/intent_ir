@@ -148,6 +148,50 @@ def _flash_resident_bytes_hint(*, block_kv: int, head_dim: int, ttgir_facts: Map
     return int(q_bytes + kv_bytes + output_bytes)
 
 
+def _flash_thread_count_hint(*, kind: str, score_warps: int, hardware_model: HardwareModel) -> int:
+    warp = max(1, int(hardware_model.warp_size))
+    if kind == "attn2d_causal_softmax_v6":
+        return int((2 + int(score_warps)) * warp)
+    if kind == "attn2d_causal_softmax_v8":
+        return int(4 * warp)
+    if kind == "attn2d_causal_softmax_v9":
+        return int(6 * warp)
+    if kind == "attn2d_causal_softmax_v7":
+        return int(4 * warp)
+    return int(4 * warp)
+
+
+def _flash_register_pressure_hint(*, kind: str, block_kv: int, score_warps: int) -> int:
+    base = {
+        "attn2d_causal_softmax_v6": 52,
+        "attn2d_causal_softmax_v7": 58,
+        "attn2d_causal_softmax_v8": 54,
+        "attn2d_causal_softmax_v9": 62,
+    }.get(str(kind), 56)
+    base += {16: 0, 32: 4, 64: 10}.get(int(block_kv), 12)
+    if kind == "attn2d_causal_softmax_v6":
+        base += int(score_warps) * 2
+    if kind == "attn2d_causal_softmax_v9":
+        base += 4
+    return int(base)
+
+
+def _flash_resource_pressure(
+    *,
+    kind: str,
+    block_kv: int,
+    score_warps: int,
+    resident_bytes: int,
+    hardware_model: HardwareModel,
+) -> tuple[int, float, float]:
+    threads = _flash_thread_count_hint(kind=kind, score_warps=score_warps, hardware_model=hardware_model)
+    shared_budget = max(1, int(hardware_model.shared_mem_kb) * 1024)
+    resident_ratio = float(resident_bytes) / float(shared_budget)
+    reg_hint = _flash_register_pressure_hint(kind=kind, block_kv=block_kv, score_warps=score_warps)
+    register_ratio = float(int(threads) * int(reg_hint)) / float(max(1, int(hardware_model.register_budget)))
+    return int(threads), float(resident_ratio), float(register_ratio)
+
+
 def _complete_async_evidence(
     *,
     ttgir_facts: Mapping[str, Any] | None,
@@ -172,6 +216,7 @@ def _score_flash_candidate(
     ttgir_facts: Mapping[str, Any] | None,
     async_evidence_ok: bool,
     toolchain_model: Mapping[str, Any] | None,
+    hardware_model: HardwareModel,
 ) -> tuple[float, str, str]:
     kind = str(candidate.kernel_kind)
     bindings = {str(k): int(v) for k, v in dict(candidate.bindings or {}).items()}
@@ -182,6 +227,13 @@ def _score_flash_candidate(
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
     resident_bytes = _flash_resident_bytes_hint(block_kv=block_kv, head_dim=head_dim, ttgir_facts=ttgir_facts)
     residency_complete = bool(_fact_present(ttgir_facts, "staging.q_resident_state") and _fact_present(ttgir_facts, "staging.kv_streamed_tiles"))
+    threads_hint, resident_ratio, register_ratio = _flash_resource_pressure(
+        kind=kind,
+        block_kv=block_kv,
+        score_warps=score_warps,
+        resident_bytes=resident_bytes,
+        hardware_model=hardware_model,
+    )
     effective_sm = _sm_number((toolchain_model or {}).get("effective_sm"))
     downleveled = bool((toolchain_model or {}).get("downleveled"))
     v7_front_allowed = bool(
@@ -191,7 +243,14 @@ def _score_flash_candidate(
     )
 
     score = 0.0
-    reasons: list[str] = [f"cluster={cluster}", f"resident_bytes={resident_bytes}", f"effective_sm={effective_sm or 0}"]
+    reasons: list[str] = [
+        f"cluster={cluster}",
+        f"resident_bytes={resident_bytes}",
+        f"threads_hint={threads_hint}",
+        f"resident_ratio={resident_ratio:.3f}",
+        f"register_ratio={register_ratio:.3f}",
+        f"effective_sm={effective_sm or 0}",
+    ]
     portability_note = "portable"
 
     if cluster == "cuda_tc_mid_smem":
@@ -227,10 +286,10 @@ def _score_flash_candidate(
         if cluster == "cuda_tc_mid_smem":
             if effective_sm >= 120 and not downleveled:
                 if int(block_kv) == 32 and int(score_warps) == 6:
-                    score += 46.0
-                    reasons.append("sm120_frontier_v6_tile32_w6")
+                    score += 34.0
+                    reasons.append("sm120_v6_tile32_w6_resource_fit")
                 elif int(block_kv) == 32 and int(score_warps) == 4:
-                    score += 30.0
+                    score += 24.0
                     reasons.append("sm120_v6_tile32_w4")
                 elif int(block_kv) == 16 and int(score_warps) == 6:
                     score += 18.0
@@ -255,8 +314,19 @@ def _score_flash_candidate(
     if kind == "attn2d_causal_softmax_v8":
         if cluster == "cuda_tc_mid_smem" and int(block_kv) == 32:
             if effective_sm >= 120 and not downleveled:
-                score += 22.0
-                reasons.append("sm120_v8_tile32")
+                if (
+                    residency_complete
+                    and resident_ratio <= 0.28
+                    and register_ratio <= 0.16
+                    and hardware_model.supports_async_copy
+                    and hardware_model.compute_cluster == "tensor_core"
+                    and hardware_model.pipeline_cluster == "async_pipeline"
+                ):
+                    score += 84.0
+                    reasons.append("sm120_v8_tile32_resource_fit")
+                else:
+                    score += 36.0
+                    reasons.append("sm120_v8_tile32_partial_fit")
             else:
                 score += 18.0
                 reasons.append("mid_smem_v8_tile32")
@@ -266,8 +336,13 @@ def _score_flash_candidate(
     if kind == "attn2d_causal_softmax_v9":
         if effective_sm >= 120 and not downleveled:
             if int(block_kv) == 32:
-                score += 116.0
-                reasons.append("sm120_frontier_v9_tile32")
+                if resident_ratio <= 0.18 and register_ratio <= 0.24 and hardware_model.supports_async_copy:
+                    score += 28.0
+                    reasons.append("sm120_v9_tile32_partial_fit")
+                else:
+                    score += 8.0
+                    portability_note = "register_pressure_high"
+                    reasons.append("sm120_v9_tile32_register_heavy")
             elif int(block_kv) == 64:
                 score += 8.0
                 reasons.append("sm120_v9_tile64")
@@ -291,10 +366,17 @@ def _score_flash_candidate(
             score -= 80.0
             portability_note = "resident_bytes_over_budget"
             reasons.append("resident_bytes_over_budget")
+        elif register_ratio > 0.26:
+            score -= 20.0
+            portability_note = "register_pressure_high"
+            reasons.append("register_pressure_high")
+        if effective_sm >= 120 and not downleveled and kind == "attn2d_causal_softmax_v6" and resident_ratio >= 0.24 and threads_hint >= 192:
+            score -= 24.0
+            reasons.append("sm120_mid_smem_thread_pressure")
     if source_kind == kind and {str(k): int(v) for k, v in source_bindings.items()} == bindings:
         source_bonus = 4.0
         if cluster == "cuda_tc_mid_smem" and kind == "attn2d_causal_softmax_v6":
-            source_bonus = 28.0
+            source_bonus = 12.0
         score += source_bonus
         reasons.append("source_exact")
     if effective_sm >= 120 and not downleveled and cluster == "cuda_tc_mid_smem" and kind == "attn2d_causal_softmax_v6":
@@ -445,6 +527,7 @@ def plan_flash_attention2d(
             ttgir_facts=ttgir_facts,
             async_evidence_ok=async_evidence_ok,
             toolchain_model=toolchain_model,
+            hardware_model=hardware_model,
         )
         scored.append(
             BackendCandidate(
@@ -471,6 +554,7 @@ def plan_flash_attention2d(
                 ttgir_facts=ttgir_facts,
                 async_evidence_ok=async_evidence_ok,
                 toolchain_model=toolchain_model,
+                hardware_model=hardware_model,
             )
             scored.append(
                 BackendCandidate(
@@ -496,6 +580,7 @@ def plan_flash_attention2d(
             ttgir_facts=ttgir_facts,
             async_evidence_ok=async_evidence_ok,
             toolchain_model=toolchain_model,
+            hardware_model=hardware_model,
         )
         scored.append(
             BackendCandidate(
@@ -521,6 +606,7 @@ def plan_flash_attention2d(
             ttgir_facts=ttgir_facts,
             async_evidence_ok=async_evidence_ok,
             toolchain_model=toolchain_model,
+            hardware_model=hardware_model,
         )
         scored.append(
             BackendCandidate(
@@ -547,6 +633,7 @@ def plan_flash_attention2d(
                 ttgir_facts=ttgir_facts,
                 async_evidence_ok=async_evidence_ok,
                 toolchain_model=toolchain_model,
+                hardware_model=hardware_model,
             )
             scored.append(
                 BackendCandidate(
@@ -585,6 +672,7 @@ def plan_flash_attention2d(
                 ttgir_facts=ttgir_facts,
                 async_evidence_ok=async_evidence_ok,
                 toolchain_model=toolchain_model,
+                hardware_model=hardware_model,
             )
             scored.append(
                 BackendCandidate(
