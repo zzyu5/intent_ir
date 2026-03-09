@@ -11,6 +11,10 @@ ORG_GOAL_TAGS: tuple[str, ...] = (
     "operand_reuse",
     "mma_acceleration",
     "fused_epilogue_avoid_writeback",
+    "reduction_tree_balance",
+    "memory_coalescing",
+    "persistent_row_state",
+    "affine_epilogue_fusion",
 )
 
 ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
@@ -36,6 +40,25 @@ ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
         "resident_working_set",
         "streaming_softmax_state",
         "avoid_materialization",
+        "latency_hiding",
+    ),
+    "row_sum": (
+        "resident_working_set",
+        "reduction_tree_balance",
+        "memory_coalescing",
+        "latency_hiding",
+    ),
+    "row_max": (
+        "resident_working_set",
+        "reduction_tree_balance",
+        "memory_coalescing",
+        "latency_hiding",
+    ),
+    "layer_norm_persistent": (
+        "resident_working_set",
+        "persistent_row_state",
+        "memory_coalescing",
+        "affine_epilogue_fusion",
         "latency_hiding",
     ),
     "matmul_fused_epilogue2d": (

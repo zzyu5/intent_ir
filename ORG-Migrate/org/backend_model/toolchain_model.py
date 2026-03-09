@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 import subprocess
 from typing import Any, Mapping
 
@@ -138,6 +139,12 @@ def build_toolchain_model(
     llvm_pipeline_norm = str(llvm_pipeline or "").strip().lower()
     cuda_wave = str(cuda_real_mlir_wave or "").strip().lower()
     rvv_wave = str(rvv_real_mlir_wave or "").strip().lower()
+    if requested_norm and not execution_ir_norm:
+        execution_ir_norm = "cuda_ptx"
+    if requested_norm and not llvm_pipeline_norm:
+        llvm_pipeline_norm = "downstream_cuda_std_llvm"
+    if requested_norm and not cuda_wave:
+        cuda_wave = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "wave25")).strip().lower() or "wave25"
     requires_real_mlir = bool(
         llvm_pipeline_norm in {"downstream_cuda_std_llvm", "downstream_rvv_std_llvm", "downstream_cuda_std_cpp_llvm", "downstream_rvv_std_llvm_cpp"}
         or cuda_wave

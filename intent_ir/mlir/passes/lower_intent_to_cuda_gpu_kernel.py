@@ -1875,6 +1875,8 @@ def lower_intent_to_cuda_gpu_kernel(
     row_log_softmax_axis1_v1: dict[str, Any] | None = None
     row_softmax_axis1: dict[str, Any] | None = None
     row_masked_softmax_axis1: dict[str, Any] | None = None
+    row_sum_axis1: dict[str, Any] | None = None
+    row_max_axis1: dict[str, Any] | None = None
     row_grouped_row_sum2d: dict[str, Any] | None = None
     group_norm_kernel_v1: dict[str, Any] | None = None
     row_layer_norm_persistent: dict[str, Any] | None = None
@@ -6118,6 +6120,15 @@ def lower_intent_to_cuda_gpu_kernel(
             "masked_softmax2d": {
                 "row_masked_softmax_axis1_v1",
             },
+            "row_sum": {
+                "row_sum_axis1_v2",
+            },
+            "row_max": {
+                "row_max_axis1_v2",
+            },
+            "layer_norm_persistent": {
+                "layer_norm_axis1_v1",
+            },
             "ai_bench_matmul": {
                 "matmul_mma_tf32_v1",
                 "matmul_mma_tf32_v2",
@@ -6297,6 +6308,82 @@ def lower_intent_to_cuda_gpu_kernel(
                 raise RuntimeError(f"ai_bench_softmax softmax reduce_n must be >0; got {red_n}")
             if kernel_kind_override == "row_softmax_axis1_triton_v1" and red_n > 1024:
                 raise RuntimeError("row_softmax_axis1_triton_v1 currently requires reduce_n<=1024")
+        if intent_name == "row_sum":
+            if row_reduce_sum_axis1 is None:
+                raise RuntimeError(
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires row_sum matcher; "
+                    "got no row_reduce_sum_axis1 pattern match"
+                )
+            req_threads = int(bindings.get("ROW_REDUCE_BLOCK_THREADS") or 64)
+            req_vec = int(bindings.get("ROW_REDUCE_VECTOR_WIDTH") or 1)
+            req_shared = int(bindings.get("ROW_REDUCE_SHARED_STAGE") or 0)
+            if req_threads not in {32, 64, 128, 256}:
+                raise RuntimeError(
+                    "row_sum_axis1_v2 requires ROW_REDUCE_BLOCK_THREADS in {32,64,128,256}; "
+                    f"got {req_threads}"
+                )
+            if req_vec not in {1, 2, 4}:
+                raise RuntimeError(
+                    "row_sum_axis1_v2 requires ROW_REDUCE_VECTOR_WIDTH in {1,2,4}; "
+                    f"got {req_vec}"
+                )
+            if req_shared not in {0, 1}:
+                raise RuntimeError(
+                    "row_sum_axis1_v2 requires ROW_REDUCE_SHARED_STAGE in {0,1}; "
+                    f"got {req_shared}"
+                )
+            if req_threads > 32 and req_shared != 1:
+                raise RuntimeError("row_sum_axis1_v2 requires shared_stage=1 when block_threads>32")
+        if intent_name == "row_max":
+            if row_reduce_max_axis1 is None:
+                raise RuntimeError(
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires row_max matcher; "
+                    "got no row_reduce_max_axis1 pattern match"
+                )
+            req_threads = int(bindings.get("ROW_REDUCE_BLOCK_THREADS") or 64)
+            req_vec = int(bindings.get("ROW_REDUCE_VECTOR_WIDTH") or 1)
+            req_shared = int(bindings.get("ROW_REDUCE_SHARED_STAGE") or 0)
+            if req_threads not in {32, 64, 128, 256}:
+                raise RuntimeError(
+                    "row_max_axis1_v2 requires ROW_REDUCE_BLOCK_THREADS in {32,64,128,256}; "
+                    f"got {req_threads}"
+                )
+            if req_vec not in {1, 2, 4}:
+                raise RuntimeError(
+                    "row_max_axis1_v2 requires ROW_REDUCE_VECTOR_WIDTH in {1,2,4}; "
+                    f"got {req_vec}"
+                )
+            if req_shared not in {0, 1}:
+                raise RuntimeError(
+                    "row_max_axis1_v2 requires ROW_REDUCE_SHARED_STAGE in {0,1}; "
+                    f"got {req_shared}"
+                )
+            if req_threads > 32 and req_shared != 1:
+                raise RuntimeError("row_max_axis1_v2 requires shared_stage=1 when block_threads>32")
+        if intent_name == "layer_norm_persistent":
+            if row_layer_norm_persistent is None:
+                raise RuntimeError(
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires layer_norm_persistent matcher; "
+                    "got no row_layer_norm_persistent pattern match"
+                )
+            req_threads = int(bindings.get("LAYER_NORM_BLOCK_THREADS") or 64)
+            req_vec = int(bindings.get("LAYER_NORM_VECTOR_WIDTH") or 1)
+            req_persistent = int(bindings.get("LAYER_NORM_PERSISTENT_ROW") or 0)
+            if req_threads not in {32, 64, 128, 256}:
+                raise RuntimeError(
+                    "layer_norm_axis1_v1 requires LAYER_NORM_BLOCK_THREADS in {32,64,128,256}; "
+                    f"got {req_threads}"
+                )
+            if req_vec not in {1, 2, 4}:
+                raise RuntimeError(
+                    "layer_norm_axis1_v1 requires LAYER_NORM_VECTOR_WIDTH in {1,2,4}; "
+                    f"got {req_vec}"
+                )
+            if req_persistent not in {0, 1}:
+                raise RuntimeError(
+                    "layer_norm_axis1_v1 requires LAYER_NORM_PERSISTENT_ROW in {0,1}; "
+                    f"got {req_persistent}"
+                )
         kernel_kind_override_enabled = True
     lines: list[str] = []
     lines.append("module attributes {")
@@ -10556,7 +10643,27 @@ def lower_intent_to_cuda_gpu_kernel(
         mean_memref = str(arg_specs[mean_name]["memref"])
         rstd_memref = str(arg_specs[rstd_name]["memref"])
 
-        launch_override = {"block": [256, 1, 1], "grid": [int(out_m), 1, 1]}
+        req_block_threads = int(bindings.get("LAYER_NORM_BLOCK_THREADS") or 128)
+        req_vector_width = int(bindings.get("LAYER_NORM_VECTOR_WIDTH") or 1)
+        req_persistent_row = int(bindings.get("LAYER_NORM_PERSISTENT_ROW") or 0) == 1
+        if req_block_threads not in {32, 64, 128, 256}:
+            raise RuntimeError(
+                f"layer_norm_axis1_v1 requires LAYER_NORM_BLOCK_THREADS in {{32,64,128,256}}; got {req_block_threads}"
+            )
+        if req_vector_width not in {1, 2, 4}:
+            raise RuntimeError(
+                f"layer_norm_axis1_v1 requires LAYER_NORM_VECTOR_WIDTH in {{1,2,4}}; got {req_vector_width}"
+            )
+        if kernel_kind_override_enabled and intent_name == "layer_norm_persistent" and not req_persistent_row:
+            raise RuntimeError("layer_norm_axis1_v1 currently requires LAYER_NORM_PERSISTENT_ROW=1")
+
+        active_strides: list[int] = []
+        stride = int(req_block_threads) // 2
+        while stride >= 1:
+            active_strides.append(int(stride))
+            stride //= 2
+
+        launch_override = {"block": [int(req_block_threads), 1, 1], "grid": [int(out_m), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
         shared_global_memref_ty = "memref<256xf32, 3>"
 
@@ -10566,6 +10673,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %c0 = arith.constant 0 : index")
         lines.append(f"      %cM = arith.constant {int(out_m)} : index")
         lines.append(f"      %cN = arith.constant {int(out_n)} : index")
+        lines.append(f"      %cVec = arith.constant {int(req_vector_width)} : index")
+        lines.append(f"      %cStep = arith.constant {int(req_block_threads * req_vector_width)} : index")
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
         lines.append("      scf.if %pred_row {")
         lines.append("        %base = arith.muli %bid, %cN : index")
@@ -10573,19 +10682,49 @@ def lower_intent_to_cuda_gpu_kernel(
 
         # sum
         lines.append("        %c0f = arith.constant 0.0 : f32")
-        lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
-        lines.append("          %idx = arith.addi %base, %j : index")
-        lines.append(f"          %x = memref.load {arg_ssa[in_name]}[%idx] : {in_memref}")
-        lines.append(f"          %acc_next = arith.addf %acc, %x{fm} : f32")
-        lines.append("          scf.yield %acc_next : f32")
-        lines.append("        }")
+        if req_persistent_row and req_vector_width > 1:
+            lines.append("        %j_start = arith.muli %tid, %cVec : index")
+            lines.append("        %partial_sum = scf.for %jb = %j_start to %cN step %cStep iter_args(%acc = %c0f) -> (f32) {")
+            lines.append("          %j0 = arith.addi %jb, %c0 : index")
+            lines.append("          %pred0 = arith.cmpi ult, %j0, %cN : index")
+            lines.append("          %acc0 = scf.if %pred0 -> (f32) {")
+            lines.append("            %idx0 = arith.addi %base, %j0 : index")
+            lines.append(f"            %x0 = memref.load {arg_ssa[in_name]}[%idx0] : {in_memref}")
+            lines.append(f"            %acc0_next = arith.addf %acc, %x0{fm} : f32")
+            lines.append("            scf.yield %acc0_next : f32")
+            lines.append("          } else {")
+            lines.append("            scf.yield %acc : f32")
+            lines.append("          }")
+            acc_name = "%acc0"
+            for offset in range(1, int(req_vector_width)):
+                lines.append(f"          %cvec_off_{offset} = arith.constant {int(offset)} : index")
+                lines.append(f"          %j{offset} = arith.addi %jb, %cvec_off_{offset} : index")
+                lines.append(f"          %pred{offset} = arith.cmpi ult, %j{offset}, %cN : index")
+                lines.append(f"          %acc{offset} = scf.if %pred{offset} -> (f32) {{")
+                lines.append(f"            %idx{offset} = arith.addi %base, %j{offset} : index")
+                lines.append(f"            %x{offset} = memref.load {arg_ssa[in_name]}[%idx{offset}] : {in_memref}")
+                lines.append(f"            %acc{offset}_next = arith.addf {acc_name}, %x{offset}{fm} : f32")
+                lines.append(f"            scf.yield %acc{offset}_next : f32")
+                lines.append("          } else {")
+                lines.append(f"            scf.yield {acc_name} : f32")
+                lines.append("          }")
+                acc_name = f"%acc{offset}"
+            lines.append(f"          scf.yield {acc_name} : f32")
+            lines.append("        }")
+        else:
+            lines.append("        %partial_sum = scf.for %j = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
+            lines.append("          %idx = arith.addi %base, %j : index")
+            lines.append(f"          %x = memref.load {arg_ssa[in_name]}[%idx] : {in_memref}")
+            lines.append(f"          %acc_next = arith.addf %acc, %x{fm} : f32")
+            lines.append("          scf.yield %acc_next : f32")
+            lines.append("        }")
 
         assert shared_global_sym is not None
         assert shared_global_memref_ty == "memref<256xf32, 3>"
         lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
         lines.append("        memref.store %partial_sum, %sh[%tid] : memref<256xf32, 3>")
         lines.append("        gpu.barrier")
-        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+        for stride in active_strides:
             cS = f"%cS_sum_{stride}"
             pS = f"%pS_sum_{stride}"
             tid2 = f"%tid_sum_{stride}"
@@ -10607,17 +10746,51 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        %mean_v = arith.divf %sumv, %n_f{fm} : f32")
 
         # var = mean((x-mean)^2)
-        lines.append("        %partial_var = scf.for %j2 = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
-        lines.append("          %idx2 = arith.addi %base, %j2 : index")
-        lines.append(f"          %x2 = memref.load {arg_ssa[in_name]}[%idx2] : {in_memref}")
-        lines.append(f"          %dx = arith.subf %x2, %mean_v{fm} : f32")
-        lines.append(f"          %dx2 = arith.mulf %dx, %dx{fm} : f32")
-        lines.append(f"          %acc_next = arith.addf %acc, %dx2{fm} : f32")
-        lines.append("          scf.yield %acc_next : f32")
-        lines.append("        }")
+        if req_persistent_row and req_vector_width > 1:
+            lines.append("        %j2_start = arith.muli %tid, %cVec : index")
+            lines.append("        %partial_var = scf.for %jb2 = %j2_start to %cN step %cStep iter_args(%acc = %c0f) -> (f32) {")
+            lines.append("          %j2_0 = arith.addi %jb2, %c0 : index")
+            lines.append("          %pred2_0 = arith.cmpi ult, %j2_0, %cN : index")
+            lines.append("          %acc2_0 = scf.if %pred2_0 -> (f32) {")
+            lines.append("            %idx2_0 = arith.addi %base, %j2_0 : index")
+            lines.append(f"            %x2_0 = memref.load {arg_ssa[in_name]}[%idx2_0] : {in_memref}")
+            lines.append(f"            %dx2_0 = arith.subf %x2_0, %mean_v{fm} : f32")
+            lines.append(f"            %sq2_0 = arith.mulf %dx2_0, %dx2_0{fm} : f32")
+            lines.append(f"            %acc2_0_next = arith.addf %acc, %sq2_0{fm} : f32")
+            lines.append("            scf.yield %acc2_0_next : f32")
+            lines.append("          } else {")
+            lines.append("            scf.yield %acc : f32")
+            lines.append("          }")
+            acc_name = "%acc2_0"
+            for offset in range(1, int(req_vector_width)):
+                lines.append(f"          %cvec2_off_{offset} = arith.constant {int(offset)} : index")
+                lines.append(f"          %j2_{offset} = arith.addi %jb2, %cvec2_off_{offset} : index")
+                lines.append(f"          %pred2_{offset} = arith.cmpi ult, %j2_{offset}, %cN : index")
+                lines.append(f"          %acc2_{offset} = scf.if %pred2_{offset} -> (f32) {{")
+                lines.append(f"            %idx2_{offset} = arith.addi %base, %j2_{offset} : index")
+                lines.append(f"            %x2_{offset} = memref.load {arg_ssa[in_name]}[%idx2_{offset}] : {in_memref}")
+                lines.append(f"            %dx2_{offset} = arith.subf %x2_{offset}, %mean_v{fm} : f32")
+                lines.append(f"            %sq2_{offset} = arith.mulf %dx2_{offset}, %dx2_{offset}{fm} : f32")
+                lines.append(f"            %acc2_{offset}_next = arith.addf {acc_name}, %sq2_{offset}{fm} : f32")
+                lines.append(f"            scf.yield %acc2_{offset}_next : f32")
+                lines.append("          } else {")
+                lines.append(f"            scf.yield {acc_name} : f32")
+                lines.append("          }")
+                acc_name = f"%acc2_{offset}"
+            lines.append(f"          scf.yield {acc_name} : f32")
+            lines.append("        }")
+        else:
+            lines.append("        %partial_var = scf.for %j2 = %tid to %cN step %bdim iter_args(%acc = %c0f) -> (f32) {")
+            lines.append("          %idx2 = arith.addi %base, %j2 : index")
+            lines.append(f"          %x2 = memref.load {arg_ssa[in_name]}[%idx2] : {in_memref}")
+            lines.append(f"          %dx = arith.subf %x2, %mean_v{fm} : f32")
+            lines.append(f"          %dx2 = arith.mulf %dx, %dx{fm} : f32")
+            lines.append(f"          %acc_next = arith.addf %acc, %dx2{fm} : f32")
+            lines.append("          scf.yield %acc_next : f32")
+            lines.append("        }")
         lines.append("        memref.store %partial_var, %sh[%tid] : memref<256xf32, 3>")
         lines.append("        gpu.barrier")
-        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+        for stride in active_strides:
             cS = f"%cS_var_{stride}"
             pS = f"%pS_var_{stride}"
             tid2 = f"%tid_var_{stride}"
@@ -10647,17 +10820,40 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # output
-        lines.append("        scf.for %j3 = %tid to %cN step %bdim {")
-        lines.append("          %idx3 = arith.addi %base, %j3 : index")
-        lines.append(f"          %x3 = memref.load {arg_ssa[in_name]}[%idx3] : {in_memref}")
-        lines.append(f"          %w = memref.load {arg_ssa[w_name]}[%j3] : {w_memref}")
-        lines.append(f"          %b = memref.load {arg_ssa[b_name]}[%j3] : {b_memref}")
-        lines.append(f"          %dx3 = arith.subf %x3, %mean_v{fm} : f32")
-        lines.append(f"          %xn = arith.mulf %dx3, %rstd_v{fm} : f32")
-        lines.append(f"          %xw = arith.mulf %xn, %w{fm} : f32")
-        lines.append(f"          %y = arith.addf %xw, %b{fm} : f32")
-        lines.append(f"          memref.store %y, {arg_ssa[out_name2]}[%idx3] : {out_memref}")
-        lines.append("        }")
+        if req_persistent_row and req_vector_width > 1:
+            lines.append("        %j3_start = arith.muli %tid, %cVec : index")
+            lines.append("        scf.for %jb3 = %j3_start to %cN step %cStep {")
+            for offset in range(int(req_vector_width)):
+                if offset == 0:
+                    lines.append("          %j3_0 = arith.addi %jb3, %c0 : index")
+                else:
+                    lines.append(f"          %cvec3_off_{offset} = arith.constant {int(offset)} : index")
+                    lines.append(f"          %j3_{offset} = arith.addi %jb3, %cvec3_off_{offset} : index")
+                lines.append(f"          %pred3_{offset} = arith.cmpi ult, %j3_{offset}, %cN : index")
+                lines.append(f"          scf.if %pred3_{offset} {{")
+                lines.append(f"            %idx3_{offset} = arith.addi %base, %j3_{offset} : index")
+                lines.append(f"            %x3_{offset} = memref.load {arg_ssa[in_name]}[%idx3_{offset}] : {in_memref}")
+                lines.append(f"            %w3_{offset} = memref.load {arg_ssa[w_name]}[%j3_{offset}] : {w_memref}")
+                lines.append(f"            %b3_{offset} = memref.load {arg_ssa[b_name]}[%j3_{offset}] : {b_memref}")
+                lines.append(f"            %dx3_{offset} = arith.subf %x3_{offset}, %mean_v{fm} : f32")
+                lines.append(f"            %xn3_{offset} = arith.mulf %dx3_{offset}, %rstd_v{fm} : f32")
+                lines.append(f"            %xw3_{offset} = arith.mulf %xn3_{offset}, %w3_{offset}{fm} : f32")
+                lines.append(f"            %y3_{offset} = arith.addf %xw3_{offset}, %b3_{offset}{fm} : f32")
+                lines.append(f"            memref.store %y3_{offset}, {arg_ssa[out_name2]}[%idx3_{offset}] : {out_memref}")
+                lines.append("          }")
+            lines.append("        }")
+        else:
+            lines.append("        scf.for %j3 = %tid to %cN step %bdim {")
+            lines.append("          %idx3 = arith.addi %base, %j3 : index")
+            lines.append(f"          %x3 = memref.load {arg_ssa[in_name]}[%idx3] : {in_memref}")
+            lines.append(f"          %w = memref.load {arg_ssa[w_name]}[%j3] : {w_memref}")
+            lines.append(f"          %b = memref.load {arg_ssa[b_name]}[%j3] : {b_memref}")
+            lines.append(f"          %dx3 = arith.subf %x3, %mean_v{fm} : f32")
+            lines.append(f"          %xn = arith.mulf %dx3, %rstd_v{fm} : f32")
+            lines.append(f"          %xw = arith.mulf %xn, %w{fm} : f32")
+            lines.append(f"          %y = arith.addf %xw, %b{fm} : f32")
+            lines.append(f"          memref.store %y, {arg_ssa[out_name2]}[%idx3] : {out_memref}")
+            lines.append("        }")
         lines.append("      }")
     elif row_layer_norm_residual2d is not None:
         kernel_kind = "layer_norm_residual_axis1_v1"
@@ -14045,6 +14241,130 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          memref.store {out_ssa}, {arg_ssa[out_name2]}[%bid] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
+    elif row_reduce_sum_axis1 is not None and kernel_kind_override_enabled and kernel_kind_override == "row_sum_axis1_v2":
+        kernel_kind = "row_sum_axis1_v2"
+        red_in = str(row_reduce_sum_axis1["red_in"])
+        red_out = str(row_reduce_sum_axis1["red_out"])
+        red_n = int(row_reduce_sum_axis1["reduce_n"])
+        if red_in not in arg_specs or red_out not in arg_specs:
+            raise RuntimeError(f"row_sum_axis1_v2 missing ABI tensors: red_in={red_in} red_out={red_out}")
+        inp_memref = str(arg_specs[red_in]["memref"])
+        out_memref = str(arg_specs[red_out]["memref"])
+        req_threads = int(bindings.get("ROW_REDUCE_BLOCK_THREADS") or 64)
+        req_vec = int(bindings.get("ROW_REDUCE_VECTOR_WIDTH") or 1)
+        req_shared_stage = int(bindings.get("ROW_REDUCE_SHARED_STAGE") or 0) == 1
+        launch_override = {"block": [int(req_threads), 1, 1], "grid": [int(out_total), 1, 1]}
+        if req_shared_stage:
+            shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+            shared_global_memref_ty = "memref<256xf32, 3>"
+
+        active_strides: list[int] = []
+        stride = int(req_threads) // 2
+        while stride >= 32:
+            active_strides.append(int(stride))
+            stride //= 2
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(out_total)} : index")
+        lines.append(f"      %cN_red = arith.constant {int(red_n)} : index")
+        lines.append(f"      %cVec = arith.constant {int(req_vec)} : index")
+        lines.append(f"      %cStep = arith.constant {int(req_threads * req_vec)} : index")
+        lines.append("      %cSharedMax = arith.constant 256 : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        for off in (16, 8, 4, 2, 1):
+            lines.append(f"      %c{off}_i32 = arith.constant {int(off)} : i32")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN_red : index")
+        lines.append("        %j_start = arith.muli %tid, %cVec : index")
+        lines.append("        %partial = scf.for %jb = %j_start to %cN_red step %cStep iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("          %j0 = arith.addi %jb, %c0 : index")
+        lines.append("          %pred0 = arith.cmpi ult, %j0, %cN_red : index")
+        lines.append("          %acc0 = scf.if %pred0 -> (f32) {")
+        lines.append("            %idx0 = arith.addi %base, %j0 : index")
+        lines.append(f"            %x0 = memref.load {arg_ssa[red_in]}[%idx0] : {inp_memref}")
+        lines.append(f"            %acc0_next = arith.addf %acc, %x0{fm} : f32")
+        lines.append("            scf.yield %acc0_next : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %acc : f32")
+        lines.append("          }")
+        acc_name = "%acc0"
+        for offset in range(1, int(req_vec)):
+            lines.append(f"          %cvec_off_{offset} = arith.constant {int(offset)} : index")
+            lines.append(f"          %j{offset} = arith.addi %jb, %cvec_off_{offset} : index")
+            lines.append(f"          %pred{offset} = arith.cmpi ult, %j{offset}, %cN_red : index")
+            lines.append(f"          %acc{offset} = scf.if %pred{offset} -> (f32) {{")
+            lines.append(f"            %idx{offset} = arith.addi %base, %j{offset} : index")
+            lines.append(f"            %x{offset} = memref.load {arg_ssa[red_in]}[%idx{offset}] : {inp_memref}")
+            lines.append(f"            %acc{offset}_next = arith.addf {acc_name}, %x{offset}{fm} : f32")
+            lines.append("            scf.yield %acc{0}_next : f32".format(offset))
+            lines.append("          } else {")
+            lines.append(f"            scf.yield {acc_name} : f32")
+            lines.append("          }")
+            acc_name = f"%acc{offset}"
+        lines.append(f"          scf.yield {acc_name} : f32")
+        lines.append("        }")
+        if req_shared_stage:
+            assert shared_global_sym is not None
+            assert shared_global_memref_ty == "memref<256xf32, 3>"
+            lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+            lines.append("        scf.for %slot = %tid to %cSharedMax step %bdim {")
+            lines.append("          %pred_slot = arith.cmpi ult, %slot, %cSharedMax : index")
+            lines.append("          scf.if %pred_slot {")
+            lines.append("            memref.store %c0f, %sh[%slot] : memref<256xf32, 3>")
+            lines.append("          }")
+            lines.append("        }")
+            lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        gpu.barrier")
+            for stride in active_strides:
+                lines.append(f"        %cS_{stride} = arith.constant {int(stride)} : index")
+                lines.append(f"        %pS_{stride} = arith.cmpi ult, %tid, %cS_{stride} : index")
+                lines.append(f"        scf.if %pS_{stride} {{")
+                lines.append(f"          %tid2_{stride} = arith.addi %tid, %cS_{stride} : index")
+                lines.append(f"          %a_{stride} = memref.load %sh[%tid] : memref<256xf32, 3>")
+                lines.append(f"          %b_{stride} = memref.load %sh[%tid2_{stride}] : memref<256xf32, 3>")
+                lines.append(f"          %s_{stride} = arith.addf %a_{stride}, %b_{stride}{fm} : f32")
+                lines.append(f"          memref.store %s_{stride}, %sh[%tid] : memref<256xf32, 3>")
+                lines.append("        }")
+                lines.append("        gpu.barrier")
+            lines.append("        %warp_pred = arith.cmpi ult, %tid, %c32 : index")
+            lines.append("        scf.if %warp_pred {")
+            lines.append("          %cur0 = memref.load %sh[%tid] : memref<256xf32, 3>")
+            cur = "%cur0"
+            for off in (16, 8, 4, 2, 1):
+                sh = f"%shuf_{off}"
+                ok = f"%ok_{off}"
+                nxt = f"%cur_{off}"
+                lines.append(f"          {sh}, {ok} = gpu.shuffle xor {cur}, %c{off}_i32, %c32_i32 : f32")
+                lines.append(f"          {nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = nxt
+            lines.append("          %is0 = arith.cmpi eq, %tid, %c0 : index")
+            lines.append("          scf.if %is0 {")
+            lines.append(f"            memref.store {cur}, {arg_ssa[red_out]}[%bid] : {out_memref}")
+            lines.append("          }")
+            lines.append("        }")
+        else:
+            lines.append("        %warp_pred = arith.cmpi ult, %tid, %c32 : index")
+            lines.append("        scf.if %warp_pred {")
+            cur = "%partial"
+            for off in (16, 8, 4, 2, 1):
+                sh = f"%shuf_{off}"
+                ok = f"%ok_{off}"
+                nxt = f"%cur_{off}"
+                lines.append(f"          {sh}, {ok} = gpu.shuffle xor {cur}, %c{off}_i32, %c32_i32 : f32")
+                lines.append(f"          {nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = nxt
+            lines.append("          %is0 = arith.cmpi eq, %tid, %c0 : index")
+            lines.append("          scf.if %is0 {")
+            lines.append(f"            memref.store {cur}, {arg_ssa[red_out]}[%bid] : {out_memref}")
+            lines.append("          }")
+            lines.append("        }")
+        lines.append("      }")
     elif row_reduce_sum_axis1 is not None:
         kernel_kind = "row_reduce_sum_axis1_v1"
         # One block per output row; let each block reduce across the N dimension.
@@ -14277,6 +14597,131 @@ def lower_intent_to_cuda_gpu_kernel(
             for l in body_lines:
                 lines.append("  " + l)
         lines.append("        }")
+        lines.append("      }")
+    elif row_reduce_max_axis1 is not None and kernel_kind_override_enabled and kernel_kind_override == "row_max_axis1_v2":
+        kernel_kind = "row_max_axis1_v2"
+        red_in = str(row_reduce_max_axis1["red_in"])
+        red_out = str(row_reduce_max_axis1["red_out"])
+        red_n = int(row_reduce_max_axis1["reduce_n"])
+        if red_in not in arg_specs or red_out not in arg_specs:
+            raise RuntimeError(f"row_max_axis1_v2 missing ABI tensors: red_in={red_in} red_out={red_out}")
+        inp_memref = str(arg_specs[red_in]["memref"])
+        out_memref = str(arg_specs[red_out]["memref"])
+        req_threads = int(bindings.get("ROW_REDUCE_BLOCK_THREADS") or 64)
+        req_vec = int(bindings.get("ROW_REDUCE_VECTOR_WIDTH") or 1)
+        req_shared_stage = int(bindings.get("ROW_REDUCE_SHARED_STAGE") or 0) == 1
+        launch_override = {"block": [int(req_threads), 1, 1], "grid": [int(out_total), 1, 1]}
+        if req_shared_stage:
+            shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+            shared_global_memref_ty = "memref<256xf32, 3>"
+
+        active_strides: list[int] = []
+        stride = int(req_threads) // 2
+        while stride >= 32:
+            active_strides.append(int(stride))
+            stride //= 2
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cM = arith.constant {int(out_total)} : index")
+        lines.append(f"      %cN_red = arith.constant {int(red_n)} : index")
+        lines.append(f"      %cVec = arith.constant {int(req_vec)} : index")
+        lines.append(f"      %cStep = arith.constant {int(req_threads * req_vec)} : index")
+        lines.append("      %cSharedMax = arith.constant 256 : index")
+        lines.append("      %init = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        for off in (16, 8, 4, 2, 1):
+            lines.append(f"      %c{off}_i32 = arith.constant {int(off)} : i32")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN_red : index")
+        lines.append("        %j_start = arith.muli %tid, %cVec : index")
+        lines.append("        %partial = scf.for %jb = %j_start to %cN_red step %cStep iter_args(%acc = %init) -> (f32) {")
+        lines.append("          %j0 = arith.addi %jb, %c0 : index")
+        lines.append("          %pred0 = arith.cmpi ult, %j0, %cN_red : index")
+        lines.append("          %acc0 = scf.if %pred0 -> (f32) {")
+        lines.append("            %idx0 = arith.addi %base, %j0 : index")
+        lines.append(f"            %x0 = memref.load {arg_ssa[red_in]}[%idx0] : {inp_memref}")
+        lines.append(f"            %acc0_next = arith.maximumf %acc, %x0{fm} : f32")
+        lines.append("            scf.yield %acc0_next : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %acc : f32")
+        lines.append("          }")
+        acc_name = "%acc0"
+        for offset in range(1, int(req_vec)):
+            lines.append(f"          %cvec_off_{offset} = arith.constant {int(offset)} : index")
+            lines.append(f"          %j{offset} = arith.addi %jb, %cvec_off_{offset} : index")
+            lines.append(f"          %pred{offset} = arith.cmpi ult, %j{offset}, %cN_red : index")
+            lines.append(f"          %acc{offset} = scf.if %pred{offset} -> (f32) {{")
+            lines.append(f"            %idx{offset} = arith.addi %base, %j{offset} : index")
+            lines.append(f"            %x{offset} = memref.load {arg_ssa[red_in]}[%idx{offset}] : {inp_memref}")
+            lines.append(f"            %acc{offset}_next = arith.maximumf {acc_name}, %x{offset}{fm} : f32")
+            lines.append("            scf.yield %acc{0}_next : f32".format(offset))
+            lines.append("          } else {")
+            lines.append(f"            scf.yield {acc_name} : f32")
+            lines.append("          }")
+            acc_name = f"%acc{offset}"
+        lines.append(f"          scf.yield {acc_name} : f32")
+        lines.append("        }")
+        if req_shared_stage:
+            assert shared_global_sym is not None
+            assert shared_global_memref_ty == "memref<256xf32, 3>"
+            lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+            lines.append("        %cInit = arith.constant -3.402823466e+38 : f32")
+            lines.append("        scf.for %slot = %tid to %cSharedMax step %bdim {")
+            lines.append("          %pred_slot = arith.cmpi ult, %slot, %cSharedMax : index")
+            lines.append("          scf.if %pred_slot {")
+            lines.append("            memref.store %cInit, %sh[%slot] : memref<256xf32, 3>")
+            lines.append("          }")
+            lines.append("        }")
+            lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
+            lines.append("        gpu.barrier")
+            for stride in active_strides:
+                lines.append(f"        %cS_{stride} = arith.constant {int(stride)} : index")
+                lines.append(f"        %pS_{stride} = arith.cmpi ult, %tid, %cS_{stride} : index")
+                lines.append(f"        scf.if %pS_{stride} {{")
+                lines.append(f"          %tid2_{stride} = arith.addi %tid, %cS_{stride} : index")
+                lines.append(f"          %a_{stride} = memref.load %sh[%tid] : memref<256xf32, 3>")
+                lines.append(f"          %b_{stride} = memref.load %sh[%tid2_{stride}] : memref<256xf32, 3>")
+                lines.append(f"          %s_{stride} = arith.maximumf %a_{stride}, %b_{stride}{fm} : f32")
+                lines.append(f"          memref.store %s_{stride}, %sh[%tid] : memref<256xf32, 3>")
+                lines.append("        }")
+                lines.append("        gpu.barrier")
+            lines.append("        %warp_pred = arith.cmpi ult, %tid, %c32 : index")
+            lines.append("        scf.if %warp_pred {")
+            lines.append("          %cur0 = memref.load %sh[%tid] : memref<256xf32, 3>")
+            cur = "%cur0"
+            for off in (16, 8, 4, 2, 1):
+                sh = f"%shuf_{off}"
+                ok = f"%ok_{off}"
+                nxt = f"%cur_{off}"
+                lines.append(f"          {sh}, {ok} = gpu.shuffle xor {cur}, %c{off}_i32, %c32_i32 : f32")
+                lines.append(f"          {nxt} = arith.maximumf {cur}, {sh}{fm} : f32")
+                cur = nxt
+            lines.append("          %is0 = arith.cmpi eq, %tid, %c0 : index")
+            lines.append("          scf.if %is0 {")
+            lines.append(f"            memref.store {cur}, {arg_ssa[red_out]}[%bid] : {out_memref}")
+            lines.append("          }")
+            lines.append("        }")
+        else:
+            lines.append("        %warp_pred = arith.cmpi ult, %tid, %c32 : index")
+            lines.append("        scf.if %warp_pred {")
+            cur = "%partial"
+            for off in (16, 8, 4, 2, 1):
+                sh = f"%shuf_{off}"
+                ok = f"%ok_{off}"
+                nxt = f"%cur_{off}"
+                lines.append(f"          {sh}, {ok} = gpu.shuffle xor {cur}, %c{off}_i32, %c32_i32 : f32")
+                lines.append(f"          {nxt} = arith.maximumf {cur}, {sh}{fm} : f32")
+                cur = nxt
+            lines.append("          %is0 = arith.cmpi eq, %tid, %c0 : index")
+            lines.append("          scf.if %is0 {")
+            lines.append(f"            memref.store {cur}, {arg_ssa[red_out]}[%bid] : {out_memref}")
+            lines.append("          }")
+            lines.append("        }")
         lines.append("      }")
     elif row_reduce_max_axis1 is not None:
         kernel_kind = "row_reduce_max_axis1_v1"

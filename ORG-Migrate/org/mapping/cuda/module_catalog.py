@@ -250,6 +250,132 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def row_reduction_catalog(
+    hardware_model: HardwareModel,
+    *,
+    reduction_kind: str,
+) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    prefix = f"row_{reduction_kind}"
+    kernel_kind = f"row_{reduction_kind}_axis1_v2"
+    modules = [
+        BackendModule(
+            id=f"{prefix}_row_tile_resident",
+            kind="staging",
+            provides=[f"{prefix}.row_tile_resident"],
+            params=["ROW_REDUCE_BLOCK_THREADS", "ROW_REDUCE_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_vector_row_load",
+            kind="mapping",
+            provides=[f"{prefix}.vector_row_load"],
+            params=["ROW_REDUCE_VECTOR_WIDTH"],
+            constraints=["ROW_REDUCE_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id=f"{prefix}_warp_reduction_tree",
+            kind="communication",
+            provides=[f"{prefix}.warp_reduction_tree"],
+            params=["ROW_REDUCE_BLOCK_THREADS"],
+            constraints=["ROW_REDUCE_BLOCK_THREADS in {32,64,128,256}"],
+        ),
+        BackendModule(
+            id=f"{prefix}_shared_warp_exchange",
+            kind="staging",
+            provides=[f"{prefix}.shared_warp_exchange"],
+            params=["ROW_REDUCE_SHARED_STAGE"],
+            constraints=(["shared_mem_kb >= 32"] if int(hardware_model.shared_mem_kb or 0) >= 32 else []),
+        ),
+        BackendModule(
+            id=f"{prefix}_writeback",
+            kind="primitive",
+            provides=[f"{prefix}.writeback"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_backend_v2",
+            kind="template",
+            provides=[f"backend.kernel_kind.{kernel_kind}"],
+            requires=[
+                f"{prefix}.row_tile_resident",
+                f"{prefix}.warp_reduction_tree",
+                f"{prefix}.writeback",
+            ],
+            params=["ROW_REDUCE_BLOCK_THREADS", "ROW_REDUCE_VECTOR_WIDTH", "ROW_REDUCE_SHARED_STAGE"],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_warp_reduction_tree", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_writeback", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_vector_row_load", edge_type="optional"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_shared_warp_exchange", edge_type="optional"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
+def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    modules = [
+        BackendModule(
+            id="layer_norm_row_tile_resident",
+            kind="staging",
+            provides=["layer_norm.row_tile_resident"],
+            params=["LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_PERSISTENT_ROW"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="layer_norm_warp_statistics",
+            kind="communication",
+            provides=["layer_norm.warp_statistics"],
+            params=["LAYER_NORM_BLOCK_THREADS"],
+            constraints=["LAYER_NORM_BLOCK_THREADS in {32,64,128,256}"],
+        ),
+        BackendModule(
+            id="layer_norm_register_stage",
+            kind="staging",
+            provides=["layer_norm.register_stage"],
+            params=["LAYER_NORM_VECTOR_WIDTH"],
+            constraints=["LAYER_NORM_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id="layer_norm_persistent_row_cache",
+            kind="staging",
+            provides=["layer_norm.persistent_row_cache"],
+            params=["LAYER_NORM_PERSISTENT_ROW"],
+            constraints=(["shared_mem_kb >= 64"] if int(hardware_model.shared_mem_kb or 0) >= 64 else []),
+        ),
+        BackendModule(
+            id="layer_norm_affine_epilogue",
+            kind="fusion",
+            provides=["layer_norm.affine_epilogue"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="layer_norm_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.layer_norm_axis1_v1"],
+            requires=[
+                "layer_norm.row_tile_resident",
+                "layer_norm.warp_statistics",
+                "layer_norm.affine_epilogue",
+            ],
+            params=["LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_PERSISTENT_ROW"],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_warp_statistics", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_register_stage", edge_type="optional"),
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_persistent_row_cache", edge_type="optional"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
     modules = [
         BackendModule(

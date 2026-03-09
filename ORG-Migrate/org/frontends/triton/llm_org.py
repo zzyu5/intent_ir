@@ -99,6 +99,24 @@ Kernel-specific expectations:
   row_reduction, vector_row_path, row_tile_resident
   and prefer dims/attrs such as:
   row_width, block_threads, communication_scope
+- For row_sum, capture:
+  resident_working_set, reduction_tree_balance, memory_coalescing, latency_hiding
+  and prefer mechanism tags such as:
+  row_tile_resident, vector_row_path, row_reduction, warp_parallel_rows, shared_staging
+  and prefer dims/attrs such as:
+  row_width, block_threads, vector_width, communication_scope
+- For row_max, capture:
+  resident_working_set, reduction_tree_balance, memory_coalescing, latency_hiding
+  and prefer mechanism tags such as:
+  row_tile_resident, tile_load_stage, warp_reduction_tree, row_parallel_axis, block_synchronization
+  and prefer dims/attrs such as:
+  row_width, block_threads, vector_width, communication_scope
+- For layer_norm_persistent, capture:
+  resident_working_set, persistent_row_state, memory_coalescing, affine_epilogue_fusion, latency_hiding
+  and prefer mechanism tags such as:
+  row_tile_resident, warp_reduction, register_staging, persistent_row_cache, affine_epilogue
+  and prefer dims/attrs such as:
+  row_width, block_threads, vector_width, resident_bytes, communication_scope
 - For matmul_fused_epilogue2d, capture:
   operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
   and prefer mechanism tags such as:

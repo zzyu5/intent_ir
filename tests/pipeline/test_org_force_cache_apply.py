@@ -173,6 +173,125 @@ def _seed_payload(*, kernel: str) -> dict[str, object]:
                 {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
             ],
         }
+    if kernel == "row_sum":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "row_sum",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 256},
+                "artifacts": {"ttgir_path": "row_sum.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep row resident", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "reduction_tree_balance", "summary": "balanced reduction tree", "scope": "reduce", "tensors": ["output"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "memory_coalescing", "summary": "vector row loads", "scope": "load", "tensors": ["input"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "row_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "vector_row_path", "category": "mapping", "supports_goals": ["g2"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "row_reduction", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "shared_staging", "category": "staging", "supports_goals": ["g0", "g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_threads", "role": "thread_block", "candidates": [128, 64], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "vector_width", "role": "vector_width", "candidates": [2, 1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "row_sum_axis1_v2",
+                "bindings": {"ROW_REDUCE_BLOCK_THREADS": 128, "ROW_REDUCE_VECTOR_WIDTH": 2, "ROW_REDUCE_SHARED_STAGE": 1},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "row_sum.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    if kernel == "row_max":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "row_max",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 256},
+                "artifacts": {"ttgir_path": "row_max.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep row resident", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "reduction_tree_balance", "summary": "balanced reduction tree", "scope": "reduce", "tensors": ["output"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "memory_coalescing", "summary": "vector row loads", "scope": "load", "tensors": ["input"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "row_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "tile_load_stage", "category": "mapping", "supports_goals": ["g2"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "warp_reduction_tree", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "block_synchronization", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_threads", "role": "thread_block", "candidates": [128, 64], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "vector_width", "role": "vector_width", "candidates": [2, 1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "row_max_axis1_v2",
+                "bindings": {"ROW_REDUCE_BLOCK_THREADS": 128, "ROW_REDUCE_VECTOR_WIDTH": 2, "ROW_REDUCE_SHARED_STAGE": 1},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "row_max.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    if kernel == "layer_norm_persistent":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "layer_norm_persistent",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 64},
+                "artifacts": {"ttgir_path": "layer_norm_persistent.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep row resident", "scope": "row", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "persistent_row_state", "summary": "cache row statistics", "scope": "norm", "tensors": ["mean", "rstd"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "memory_coalescing", "summary": "vectorized row path", "scope": "load", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "affine_epilogue_fusion", "summary": "fuse affine writeback", "scope": "epilogue", "tensors": ["weight", "bias"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "row_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "warp_reduction", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "persistent_row_cache", "category": "staging", "supports_goals": ["g1"], "attrs": {}, "dims": ["persistent_row"], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "tile_load_stage", "category": "mapping", "supports_goals": ["g2"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m4", "tag": "affine_epilogue", "category": "fusion", "supports_goals": ["g3"], "attrs": {}, "dims": [], "evidence_refs": ["e0"]},
+                {"id": "m5", "tag": "row_parallel_axis", "category": "mapping", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m6", "tag": "block_synchronization", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_threads", "role": "thread_block", "candidates": [32, 64], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "vector_width", "role": "vector_width", "candidates": [2, 1], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "persistent_row", "role": "persistent_row", "candidates": [1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "layer_norm_axis1_v1",
+                "bindings": {"LAYER_NORM_BLOCK_THREADS": 32, "LAYER_NORM_VECTOR_WIDTH": 2, "LAYER_NORM_PERSISTENT_ROW": 1},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "layer_norm_persistent.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
     return {
         "schema_version": "intentir_org_v1",
         "kernel": "matmul_fused_epilogue2d",
@@ -502,3 +621,81 @@ def test_force_cache_apply_flash_attention2d_records_compile_checks(monkeypatch:
     assert len(plan["compile_checks"]) == 1
     assert plan["realizations"][0]["effective_sm"] == "sm_120"
     assert ((report["org"] or {}).get("compile_checks_count")) == 1
+
+
+def test_force_cache_apply_row_sum_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
+    _write_seed(out_dir=tmp_path, kernel="row_sum")
+    ttgir = tmp_path / "row_sum.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [2], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @row_sum_kernel(%inp_ptr: !tt.ptr<f32>) {\n    %x_12 = tt.load %inp_ptr, %in_bounds, %cst : tensor<256x!tt.ptr<f32>, #blocked>\n    %sum = "tt.reduce"(%x_12) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %acc = arith.addf %lhs, %rhs : f32\n      tt.reduce.return %acc : f32\n    }) : (tensor<256xf32, #blocked>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="row_sum",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="row_sum", ttgir_path=ttgir),
+        intent=_dummy_intent("row_sum"),
+        report=report,
+        shape_bindings={"M": 4, "N": 256},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "row_sum.org_plan.json").is_file()
+    assert (tmp_path / "row_sum.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "row_sum_axis1_v2:ROW_REDUCE_BLOCK_THREADS=128,ROW_REDUCE_SHARED_STAGE=1,ROW_REDUCE_VECTOR_WIDTH=2"
+
+
+def test_force_cache_apply_row_max_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
+    _write_seed(out_dir=tmp_path, kernel="row_max")
+    ttgir = tmp_path / "row_max.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [2], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @row_max_kernel(%inp_ptr: !tt.ptr<f32>) {\n    %x_12 = tt.load %inp_ptr, %in_bounds, %cst : tensor<256x!tt.ptr<f32>, #blocked>\n    %mx = "tt.reduce"(%x_12) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %acc = arith.maxnumf %lhs, %rhs : f32\n      tt.reduce.return %acc : f32\n    }) : (tensor<256xf32, #blocked>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="row_max",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="row_max", ttgir_path=ttgir),
+        intent=_dummy_intent("row_max"),
+        report=report,
+        shape_bindings={"M": 4, "N": 256},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "row_max.org_plan.json").is_file()
+    assert (tmp_path / "row_max.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "row_max_axis1_v2:ROW_REDUCE_BLOCK_THREADS=128,ROW_REDUCE_SHARED_STAGE=1,ROW_REDUCE_VECTOR_WIDTH=2"
+
+
+def test_force_cache_apply_layer_norm_persistent_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
+    _write_seed(out_dir=tmp_path, kernel="layer_norm_persistent")
+    ttgir = tmp_path / "layer_norm_persistent.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>\nmodule attributes {"ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @layer_norm_persistent_kernel(%inp_ptr: !tt.ptr<f32>, %weight_ptr: !tt.ptr<f32>, %bias_ptr: !tt.ptr<f32>) {\n    %x_12 = tt.load %inp_ptr, %in_bounds, %cst : tensor<64x!tt.ptr<f32>, #blocked>\n    %mx = "tt.reduce"(%x_12) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %acc = arith.addf %lhs, %rhs : f32\n      tt.reduce.return %acc : f32\n    }) : (tensor<64xf32, #blocked>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="layer_norm_persistent",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="layer_norm_persistent", ttgir_path=ttgir),
+        intent=_dummy_intent("layer_norm_persistent"),
+        report=report,
+        shape_bindings={"M": 4, "N": 64},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "layer_norm_persistent.org_plan.json").is_file()
+    assert (tmp_path / "layer_norm_persistent.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "layer_norm_axis1_v1:LAYER_NORM_BLOCK_THREADS=32,LAYER_NORM_PERSISTENT_ROW=1,LAYER_NORM_VECTOR_WIDTH=2"
