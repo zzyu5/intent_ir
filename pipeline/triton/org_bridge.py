@@ -117,6 +117,20 @@ def _compile_check_id(candidate_line: str, *, idx: int) -> str:
     return f"{idx:02d}_{h}"
 
 
+def _toolchain_env_overrides(toolchain_model: Mapping[str, Any] | None) -> dict[str, str]:
+    model = dict(toolchain_model or {})
+    env: dict[str, str] = {}
+    if bool(model.get("requires_real_mlir")):
+        env["INTENTIR_REAL_MLIR"] = "1"
+    cuda_wave = str(model.get("cuda_real_mlir_wave") or "").strip().lower()
+    if cuda_wave:
+        env["INTENTIR_CUDA_REAL_MLIR_WAVE"] = cuda_wave
+    rvv_wave = str(model.get("rvv_real_mlir_wave") or "").strip().lower()
+    if rvv_wave:
+        env["INTENTIR_RVV_REAL_MLIR_WAVE"] = rvv_wave
+    return env
+
+
 def _run_compile_check_candidates(
     *,
     spec_name: str,
@@ -124,6 +138,7 @@ def _run_compile_check_candidates(
     backend_target: str | None,
     target_arch: str,
     candidates: list[object],
+    toolchain_model: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     limit = int(_org_compile_topk())
     if limit <= 0:
@@ -162,6 +177,7 @@ def _run_compile_check_candidates(
         env["INTENTIR_COMPILER_STACK"] = compiler_stack
         if compiler_cpp_wave:
             env["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
+        env.update(_toolchain_env_overrides(toolchain_model))
         cmd = [
             sys.executable,
             str(ROOT / "scripts" / "triton" / "full_pipeline_verify.py"),
@@ -474,6 +490,10 @@ def run_org_sidecar(
         ),
         compiler_stack=str(_compiler_stack_name()),
         requested_sm=str(target_arch),
+        execution_ir=str(mlir_report.get("execution_ir") or ""),
+        llvm_pipeline=str(mlir_report.get("llvm_pipeline") or ""),
+        cuda_real_mlir_wave=str(mlir_report.get("cuda_real_mlir_wave") or ""),
+        rvv_real_mlir_wave=str(mlir_report.get("rvv_real_mlir_wave") or ""),
     )
 
     try:
@@ -554,6 +574,7 @@ def run_org_sidecar(
             backend_target=backend_target,
             target_arch=str(target_arch),
             candidates=list(plan.candidates or []),
+            toolchain_model=toolchain_model.to_json_dict(),
         )
         plan.compile_checks = list(compile_checks)
         plan.realizations = [dict(x) for x in list(compile_checks or []) if bool(dict(x).get("ok"))]

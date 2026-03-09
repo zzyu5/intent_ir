@@ -24,6 +24,9 @@ def test_build_toolchain_model_from_contract_exec_meta() -> None:
     assert payload["requested_sm"] == "sm_120"
     assert payload["effective_sm"] == "sm_86"
     assert payload["downleveled"] is True
+    assert payload["execution_ir"] == ""
+    assert payload["llvm_pipeline"] == ""
+    assert payload["requires_real_mlir"] is False
 
 
 def test_build_toolchain_model_infers_sm_from_llc(monkeypatch) -> None:
@@ -46,3 +49,28 @@ def test_build_toolchain_model_infers_sm_from_llc(monkeypatch) -> None:
     assert payload["effective_sm"] == "sm_120"
     assert payload["downleveled"] is False
     assert payload["supported_sms"] == ["sm_86", "sm_120"]
+
+
+def test_build_toolchain_model_records_real_mlir_pipeline(monkeypatch) -> None:
+    import org.backend_model.toolchain_model as tm
+
+    monkeypatch.setattr(tm, "_llc_supported_sms", lambda _path: ["sm_86", "sm_120"])
+    model = build_toolchain_model(
+        toolchain_report={
+            "tools": {
+                "llc": {"path": "/tmp/LLVM-20/bin/llc", "version": "LLVM 20.1.8"},
+                "mlir-opt": {"path": "/tmp/mlir-opt", "version": "MLIR 20.1.8"},
+            }
+        },
+        contract_exec_meta={},
+        compiler_stack="python",
+        requested_sm="sm_120",
+        execution_ir="mlir",
+        llvm_pipeline="downstream_cuda_std_llvm",
+        cuda_real_mlir_wave="wave25",
+    )
+    payload = model.to_json_dict()
+    assert payload["execution_ir"] == "mlir"
+    assert payload["llvm_pipeline"] == "downstream_cuda_std_llvm"
+    assert payload["requires_real_mlir"] is True
+    assert payload["cuda_real_mlir_wave"] == "wave25"

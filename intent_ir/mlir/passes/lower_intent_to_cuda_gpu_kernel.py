@@ -132,7 +132,7 @@ def _rewrite_legacy_arith_maxmin(module_text: str) -> str:
     return text
 
 
-def _rewrite_legacy_llvm_intr_fma(module_text: str) -> str:
+def _rewrite_legacy_llvm_intr_fma(module_text: str, *, mlir_major: int = 0) -> str:
     text = str(module_text or "")
     if "llvm.intr.fma(" not in text:
         return text
@@ -147,7 +147,10 @@ def _rewrite_legacy_llvm_intr_fma(module_text: str) -> str:
             out_lines.append(line)
             continue
         indent, dst, a, b, c, _sig, out_ty = m.groups()
-        out_lines.append(f'{indent}{dst} = "llvm.intr.fma"({a}, {b}, {c}) : ({out_ty}, {out_ty}, {out_ty}) -> {out_ty}')
+        if mlir_major and mlir_major >= 20:
+            out_lines.append(f"{indent}{dst} = math.fma {a}, {b}, {c} : {out_ty}")
+        else:
+            out_lines.append(f'{indent}{dst} = "llvm.intr.fma"({a}, {b}, {c}) : ({out_ty}, {out_ty}, {out_ty}) -> {out_ty}')
     out = "\n".join(out_lines)
     if text.endswith("\n"):
         out += "\n"
@@ -21907,7 +21910,7 @@ def lower_intent_to_cuda_gpu_kernel(
     if mlir_major and mlir_major < 20:
         module_text = _rewrite_legacy_arith_select(module_text)
         module_text = _rewrite_legacy_arith_maxmin(module_text)
-    module_text = _rewrite_legacy_llvm_intr_fma(module_text)
+    module_text = _rewrite_legacy_llvm_intr_fma(module_text, mlir_major=mlir_major)
     module_text = _ensure_legacy_index_constants(module_text)
 
     out = IntentMLIRModule(

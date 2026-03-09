@@ -15,6 +15,11 @@ class ToolchainModel:
     supported_sms: list[str] = field(default_factory=list)
     mlir_version: str = ""
     llvm_version: str = ""
+    execution_ir: str = ""
+    llvm_pipeline: str = ""
+    requires_real_mlir: bool = False
+    cuda_real_mlir_wave: str = ""
+    rvv_real_mlir_wave: str = ""
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +31,11 @@ class ToolchainModel:
             "supported_sms": [str(x) for x in list(self.supported_sms or []) if str(x).strip()],
             "mlir_version": str(self.mlir_version),
             "llvm_version": str(self.llvm_version),
+            "execution_ir": str(self.execution_ir),
+            "llvm_pipeline": str(self.llvm_pipeline),
+            "requires_real_mlir": bool(self.requires_real_mlir),
+            "cuda_real_mlir_wave": str(self.cuda_real_mlir_wave),
+            "rvv_real_mlir_wave": str(self.rvv_real_mlir_wave),
         }
 
 
@@ -105,6 +115,10 @@ def build_toolchain_model(
     contract_exec_meta: Mapping[str, Any] | None,
     compiler_stack: str,
     requested_sm: str = "",
+    execution_ir: str = "",
+    llvm_pipeline: str = "",
+    cuda_real_mlir_wave: str = "",
+    rvv_real_mlir_wave: str = "",
 ) -> ToolchainModel:
     toolchain = dict(toolchain_report or {})
     tools = dict(toolchain.get("tools") or {})
@@ -120,6 +134,15 @@ def build_toolchain_model(
     effective = str(exec_meta.get("cuda_effective_sm") or _effective_sm(requested_sm=requested, supported_sms=supported_sms) or "")
     requested_norm = _normalize_sm(requested)
     effective_norm = _normalize_sm(effective)
+    execution_ir_norm = str(execution_ir or "").strip().lower()
+    llvm_pipeline_norm = str(llvm_pipeline or "").strip().lower()
+    cuda_wave = str(cuda_real_mlir_wave or "").strip().lower()
+    rvv_wave = str(rvv_real_mlir_wave or "").strip().lower()
+    requires_real_mlir = bool(
+        llvm_pipeline_norm in {"downstream_cuda_std_llvm", "downstream_rvv_std_llvm", "downstream_cuda_std_cpp_llvm", "downstream_rvv_std_llvm_cpp"}
+        or cuda_wave
+        or rvv_wave
+    )
     return ToolchainModel(
         source=source,
         compiler_stack=str(compiler_stack or ""),
@@ -129,6 +152,11 @@ def build_toolchain_model(
         supported_sms=[str(x) for x in list(supported_sms or []) if str(x).strip()],
         mlir_version=str(mlir_opt.get("version") or ""),
         llvm_version=str(llc.get("version") or ""),
+        execution_ir=execution_ir_norm,
+        llvm_pipeline=llvm_pipeline_norm,
+        requires_real_mlir=requires_real_mlir,
+        cuda_real_mlir_wave=cuda_wave,
+        rvv_real_mlir_wave=rvv_wave,
     )
 
 

@@ -626,6 +626,9 @@ def _emit_mlir_shadow_artifacts(
     mlir_report["execution_ir"] = _execution_ir_mode()
     mlir_report["shadow_mode"] = bool(shadow_enabled)
     mlir_report["evidence_mode"] = str(evidence_mode())
+    mlir_report["real_mlir_enabled"] = bool(_real_mlir_enabled())
+    mlir_report["cuda_real_mlir_wave"] = str(_cuda_real_mlir_wave_name())
+    mlir_report["rvv_real_mlir_wave"] = str(_rvv_real_mlir_wave_name())
     mlir_report["toolchain"] = detect_mlir_toolchain()
     try:
         # For C++ plugin lowering (and remote audit), persist concrete shape

@@ -2934,6 +2934,9 @@ def run_pipeline_for_spec(
     report["mlir"] = {
         "enabled": str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() not in {"0", "false", "no", "off"},
         "execution_ir": "mlir",
+        "real_mlir_enabled": bool(_real_mlir_enabled()),
+        "cuda_real_mlir_wave": str(_cuda_real_mlir_wave_name()),
+        "rvv_real_mlir_wave": str(_rvv_real_mlir_wave_name()),
         "toolchain": detect_mlir_toolchain(),
     }
     try:

@@ -50,9 +50,15 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
             "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
             "compiler_stack": "python",
             "compiler_cpp_wave": "",
+            "toolchain_model": {
+                "llvm_pipeline": "downstream_cuda_std_llvm",
+                "requires_real_mlir": True,
+                "cuda_real_mlir_wave": "wave25",
+            },
             "evidence_source": {"primary": "ttgir", "ptx_available": True},
             "hardware_model": {"arch_cluster": "cuda_tc_mid_smem"},
         },
+        "mlir": {"real_mlir_enabled": True, "cuda_real_mlir_wave": "wave25", "llvm_pipeline": "downstream_cuda_std_llvm"},
         "org_doc": {
             "source_context": {
                 "shape_bindings": {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
@@ -87,6 +93,8 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
         out_dir = Path(kwargs["out_root"])
         assert kwargs["compiler_stack"] == "python"
         assert kwargs["compiler_cpp_wave"] == ""
+        assert kwargs["env_overrides"]["INTENTIR_REAL_MLIR"] == "1"
+        assert kwargs["env_overrides"]["INTENTIR_CUDA_REAL_MLIR_WAVE"] == "wave25"
         if out_dir.name == "guided":
             return {
                 "returncode": 0,
@@ -154,6 +162,10 @@ def test_compare_tool_writes_outcomes_and_metadata(tmp_path, monkeypatch) -> Non
     assert payload["shape_bindings"] == {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64}
     assert payload["compiler_stack"] == "python"
     assert payload["compiler_cpp_wave"] == ""
+    assert payload["toolchain_env"] == {
+        "INTENTIR_REAL_MLIR": "1",
+        "INTENTIR_CUDA_REAL_MLIR_WAVE": "wave25",
+    }
     assert payload["guided_compiler_stack"] == "python"
     assert payload["source_compiler_stack"] == "python"
     assert payload["evidence_source"]["primary"] == "ttgir"

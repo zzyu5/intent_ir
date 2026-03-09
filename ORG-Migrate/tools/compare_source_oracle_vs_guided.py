@@ -58,6 +58,32 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _toolchain_env_from_report(report: dict[str, Any]) -> dict[str, str]:
+    org = dict(report.get("org") or {})
+    mlir = dict(report.get("mlir") or {})
+    toolchain_model = dict(org.get("toolchain_model") or {})
+    env: dict[str, str] = {}
+    requires_real_mlir = bool(
+        toolchain_model.get("requires_real_mlir")
+        or mlir.get("real_mlir_enabled")
+        or str(toolchain_model.get("llvm_pipeline") or mlir.get("llvm_pipeline") or "").strip().lower() in {
+            "downstream_cuda_std_llvm",
+            "downstream_rvv_std_llvm",
+            "downstream_cuda_std_cpp_llvm",
+            "downstream_rvv_std_llvm_cpp",
+        }
+    )
+    if requires_real_mlir:
+        env["INTENTIR_REAL_MLIR"] = "1"
+    cuda_wave = str(toolchain_model.get("cuda_real_mlir_wave") or mlir.get("cuda_real_mlir_wave") or "").strip().lower()
+    if cuda_wave:
+        env["INTENTIR_CUDA_REAL_MLIR_WAVE"] = cuda_wave
+    rvv_wave = str(toolchain_model.get("rvv_real_mlir_wave") or mlir.get("rvv_real_mlir_wave") or "").strip().lower()
+    if rvv_wave:
+        env["INTENTIR_RVV_REAL_MLIR_WAVE"] = rvv_wave
+    return env
+
+
 def _infer_compiler_stack_from_candidate_file(path: Path) -> str:
     try:
         first = str(path.read_text(encoding="utf-8").splitlines()[0] if path.is_file() else "")
@@ -134,6 +160,7 @@ def _run_tune(
     cuda_runtime_backend: str,
     compiler_stack: str,
     compiler_cpp_wave: str = "",
+    env_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     cmd = [
         sys.executable,
@@ -167,11 +194,15 @@ def _run_tune(
     env["INTENTIR_COMPILER_STACK"] = str(compiler_stack or "python")
     if str(compiler_cpp_wave or "").strip():
         env["INTENTIR_COMPILER_CPP_WAVE"] = str(compiler_cpp_wave)
+    for key, value in dict(env_overrides or {}).items():
+        if str(key).strip() and str(value).strip():
+            env[str(key)] = str(value)
     proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, env=env)
     result: dict[str, Any] = {
         "command": cmd,
         "compiler_stack": str(compiler_stack or "python"),
         "compiler_cpp_wave": str(compiler_cpp_wave or ""),
+        "env_overrides": {str(k): str(v) for k, v in dict(env_overrides or {}).items() if str(k).strip()},
         "returncode": int(proc.returncode),
         "stdout_tail": "\n".join(proc.stdout.splitlines()[-10:]),
         "stderr_tail": "\n".join(proc.stderr.splitlines()[-10:]),
@@ -926,6 +957,7 @@ def main() -> int:
     source_compiler_stack = str(dict(plan.get("source_oracle") or {}).get("compiler_stack") or compiler_stack or "python").strip().lower() or "python"
     target_compiler_stack = str(compiler_stack or "python").strip().lower() or "python"
     compiler_cpp_wave = str((report.get("org") or {}).get("compiler_cpp_wave") or os.getenv("INTENTIR_COMPILER_CPP_WAVE", "") or "").strip().lower()
+    toolchain_env = _toolchain_env_from_report(report)
 
     source_candidate = _resolve_source_candidate(
         kernel=kernel,
@@ -969,6 +1001,7 @@ def main() -> int:
         cuda_runtime_backend=args.cuda_runtime_backend,
         compiler_stack=target_compiler_stack,
         compiler_cpp_wave=compiler_cpp_wave,
+        env_overrides=toolchain_env,
     )
     source_res = {}
     if source_candidate:
@@ -984,6 +1017,7 @@ def main() -> int:
             cuda_runtime_backend=args.cuda_runtime_backend,
             compiler_stack=source_compiler_stack,
             compiler_cpp_wave=compiler_cpp_wave,
+            env_overrides=toolchain_env,
         )
     target_res = {}
     if target_candidate:
@@ -999,6 +1033,7 @@ def main() -> int:
             cuda_runtime_backend=args.cuda_runtime_backend,
             compiler_stack=target_compiler_stack,
             compiler_cpp_wave=compiler_cpp_wave,
+            env_overrides=toolchain_env,
         )
 
     guided_outcome = _make_outcome(guided_res)
@@ -1031,6 +1066,7 @@ def main() -> int:
         "shape_bindings": shape_bindings,
         "compiler_stack": compiler_stack,
         "compiler_cpp_wave": compiler_cpp_wave,
+        "toolchain_env": dict(toolchain_env),
         "guided_compiler_stack": target_compiler_stack,
         "source_compiler_stack": source_compiler_stack,
         "target_compiler_stack": target_compiler_stack,
