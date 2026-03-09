@@ -30,6 +30,13 @@ def flash_attention2d_catalog(hardware_model: HardwareModel) -> tuple[list[Backe
             constraints=["ATTN_BLOCK_KV <= KV_CTX"],
         ),
         BackendModule(
+            id="kv_shared_stage",
+            kind="staging",
+            provides=["flash.kv_shared_stage"],
+            params=["FLASH_KV_SHARED_STAGE"],
+            constraints=["FLASH_KV_SHARED_STAGE in {1}"],
+        ),
+        BackendModule(
             id="online_softmax_reduce",
             kind="communication",
             provides=["flash.online_softmax_reduce"],
@@ -66,6 +73,22 @@ def flash_attention2d_catalog(hardware_model: HardwareModel) -> tuple[list[Backe
             params=["ATTN_BLOCK_KV"],
             constraints=["HEAD_DIM == 64"],
         ),
+        BackendModule(
+            id="backend_v8",
+            kind="template",
+            provides=["backend.kernel_kind.attn2d_causal_softmax_v8"],
+            requires=["flash.q_resident_state", "flash.kv_tile_stage", "flash.kv_shared_stage", "flash.output_accumulator"],
+            params=["ATTN_BLOCK_KV", "FLASH_KV_SHARED_STAGE"],
+            constraints=["HEAD_DIM == 64"],
+        ),
+        BackendModule(
+            id="backend_v9",
+            kind="template",
+            provides=["backend.kernel_kind.attn2d_causal_softmax_v9"],
+            requires=["flash.q_resident_state", "flash.kv_tile_stage", "flash.output_accumulator"],
+            params=["ATTN_BLOCK_KV"],
+            constraints=["HEAD_DIM == 64"],
+        ),
     ]
     edges = [
         BackendModuleEdge(src="backend_v6", dst="q_resident_state", edge_type="uses"),
@@ -75,8 +98,17 @@ def flash_attention2d_catalog(hardware_model: HardwareModel) -> tuple[list[Backe
         BackendModuleEdge(src="backend_v7", dst="q_resident_state", edge_type="uses"),
         BackendModuleEdge(src="backend_v7", dst="kv_tile_stage", edge_type="uses"),
         BackendModuleEdge(src="backend_v7", dst="output_accumulator", edge_type="uses"),
+        BackendModuleEdge(src="backend_v8", dst="q_resident_state", edge_type="uses"),
+        BackendModuleEdge(src="backend_v8", dst="kv_tile_stage", edge_type="uses"),
+        BackendModuleEdge(src="backend_v8", dst="kv_shared_stage", edge_type="uses"),
+        BackendModuleEdge(src="backend_v8", dst="output_accumulator", edge_type="uses"),
+        BackendModuleEdge(src="backend_v9", dst="q_resident_state", edge_type="uses"),
+        BackendModuleEdge(src="backend_v9", dst="kv_tile_stage", edge_type="uses"),
+        BackendModuleEdge(src="backend_v9", dst="output_accumulator", edge_type="uses"),
         BackendModuleEdge(src="backend_v7", dst="prefetch_pipeline", edge_type="optional"),
         BackendModuleEdge(src="backend_v6", dst="prefetch_pipeline", edge_type="optional"),
+        BackendModuleEdge(src="backend_v8", dst="prefetch_pipeline", edge_type="optional"),
+        BackendModuleEdge(src="backend_v9", dst="prefetch_pipeline", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 

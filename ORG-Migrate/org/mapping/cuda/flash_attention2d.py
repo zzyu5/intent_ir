@@ -85,8 +85,50 @@ def _selected_modules(
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
 ) -> tuple[list[BackendModule], list[BackendModuleEdge], list[dict[str, Any]]]:
-    selected_ids = {"q_resident_state", "kv_tile_stage", "output_accumulator"}
+    selected_ids = {"output_accumulator"}
     substitutions: list[dict[str, Any]] = []
+
+    resident_goal = "resident_working_set" in goal_tags
+    q_resident = resident_goal or "q_resident_state" in mechanism_tags
+    kv_streamed = resident_goal or "kv_streamed_tiles" in mechanism_tags
+    kv_shared_stage = bool(
+        resident_goal
+        and "kv_streamed_tiles" in mechanism_tags
+        and int(hardware_model.shared_mem_kb) >= 96
+    )
+
+    if q_resident:
+        selected_ids.add("q_resident_state")
+    else:
+        substitutions.append(
+            {
+                "from": "flash.q_resident_state",
+                "to": "flash.direct_q_fetch",
+                "reason": "ORG rationale did not request resident query state",
+            }
+        )
+
+    if kv_streamed:
+        selected_ids.add("kv_tile_stage")
+    else:
+        substitutions.append(
+            {
+                "from": "flash.kv_tile_stage",
+                "to": "flash.direct_kv_fetch",
+                "reason": "ORG rationale did not request streamed KV tiling",
+            }
+        )
+
+    if kv_shared_stage:
+        selected_ids.add("kv_shared_stage")
+    elif kv_streamed:
+        substitutions.append(
+            {
+                "from": "flash.kv_shared_stage",
+                "to": "flash.scalar_kv_fetch",
+                "reason": "ORG/H model did not authorize shared KV staging",
+            }
+        )
 
     if "streaming_softmax_state" in goal_tags or "online_softmax_reduce" in mechanism_tags:
         selected_ids.add("online_softmax_reduce")
@@ -102,7 +144,7 @@ def _selected_modules(
                 }
             )
 
-    selected_ids.update({"backend_v6", "backend_v7"})
+    selected_ids.update({"backend_v6", "backend_v7", "backend_v8", "backend_v9"})
     selected_modules = [m for m in modules if m.id in selected_ids]
     selected_edges = [e for e in module_edges if e.src in selected_ids and e.dst in selected_ids]
     source_kind = str(source_oracle.get("kernel_kind") or "").strip()
@@ -205,6 +247,41 @@ def _complete_async_evidence(
     )
 
 
+def _kv_shared_stage_enabled(
+    *,
+    goal_tags: set[str],
+    mechanism_tags: set[str],
+    ttgir_facts: Mapping[str, Any] | None,
+    hardware_model: HardwareModel,
+    toolchain_model: Mapping[str, Any] | None,
+    block_kv: int,
+    head_dim: int,
+) -> bool:
+    if "resident_working_set" not in goal_tags:
+        return False
+    if "kv_streamed_tiles" not in mechanism_tags:
+        return False
+    if not _fact_present(ttgir_facts, "staging.q_resident_state"):
+        return False
+    if not _fact_present(ttgir_facts, "staging.kv_streamed_tiles"):
+        return False
+    effective_sm = _sm_number((toolchain_model or {}).get("effective_sm"))
+    downleveled = bool((toolchain_model or {}).get("downleveled"))
+    if effective_sm < 120 or downleveled:
+        return False
+    if int(hardware_model.shared_mem_kb) < 96:
+        return False
+    resident_bytes = _flash_resident_bytes_hint(block_kv=block_kv, head_dim=head_dim, ttgir_facts=ttgir_facts)
+    _, resident_ratio, register_ratio = _flash_resource_pressure(
+        kind="attn2d_causal_softmax_v8",
+        block_kv=block_kv,
+        score_warps=0,
+        resident_bytes=resident_bytes,
+        hardware_model=hardware_model,
+    )
+    return bool(resident_ratio <= 0.28 and register_ratio <= 0.16)
+
+
 def _score_flash_candidate(
     *,
     candidate: BackendCandidate,
@@ -223,6 +300,7 @@ def _score_flash_candidate(
     block_kv = int(bindings.get("ATTN_BLOCK_KV", 16))
     score_warps = int(bindings.get("ATTN_SCORE_WARPS", 0))
     is_async = bool(bindings.get("FLASH_ATTN_ASYNC_COPY", 0))
+    kv_shared_stage = bool(bindings.get("FLASH_KV_SHARED_STAGE", 0))
     source_kind = str(source_oracle.get("kernel_kind") or "").strip()
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
     resident_bytes = _flash_resident_bytes_hint(block_kv=block_kv, head_dim=head_dim, ttgir_facts=ttgir_facts)
@@ -250,6 +328,7 @@ def _score_flash_candidate(
         f"resident_ratio={resident_ratio:.3f}",
         f"register_ratio={register_ratio:.3f}",
         f"effective_sm={effective_sm or 0}",
+        f"kv_shared_stage={int(kv_shared_stage)}",
     ]
     portability_note = "portable"
 
@@ -315,7 +394,8 @@ def _score_flash_candidate(
         if cluster == "cuda_tc_mid_smem" and int(block_kv) == 32:
             if effective_sm >= 120 and not downleveled:
                 if (
-                    residency_complete
+                    kv_shared_stage
+                    and residency_complete
                     and resident_ratio <= 0.28
                     and register_ratio <= 0.16
                     and hardware_model.supports_async_copy
@@ -323,10 +403,10 @@ def _score_flash_candidate(
                     and hardware_model.pipeline_cluster == "async_pipeline"
                 ):
                     score += 84.0
-                    reasons.append("sm120_v8_tile32_resource_fit")
+                    reasons.append("sm120_v8_tile32_shared_stage_fit")
                 else:
-                    score += 36.0
-                    reasons.append("sm120_v8_tile32_partial_fit")
+                    score += (36.0 if kv_shared_stage else 4.0)
+                    reasons.append("sm120_v8_tile32_partial_fit" if kv_shared_stage else "v8_missing_org_shared_stage")
             else:
                 score += 18.0
                 reasons.append("mid_smem_v8_tile32")
@@ -490,6 +570,15 @@ def plan_flash_attention2d(
     async_evidence_ok = _complete_async_evidence(ttgir_facts=ttgir_facts, ptx_facts=ptx_facts)
     effective_sm = _sm_number((toolchain_model or {}).get("effective_sm"))
     downleveled = bool((toolchain_model or {}).get("downleveled"))
+    kv_shared_stage_allowed = _kv_shared_stage_enabled(
+        goal_tags=goal_tags,
+        mechanism_tags=mechanism_tags,
+        ttgir_facts=ttgir_facts,
+        hardware_model=hardware_model,
+        toolchain_model=toolchain_model,
+        block_kv=32,
+        head_dim=head_dim,
+    )
     if want_pipeline and not async_evidence_ok:
         substitutions.append(
             {
@@ -505,6 +594,7 @@ def plan_flash_attention2d(
         "ATTN_BLOCK_KV": list(block_candidates),
         "ATTN_SCORE_WARPS": list(score_candidates),
         "FLASH_ATTN_ASYNC_COPY": ([1] if want_pipeline and hardware_model.supports_async_copy and async_evidence_ok else []),
+        "FLASH_KV_SHARED_STAGE": ([1] if kv_shared_stage_allowed else []),
     }
     constraints = [
         "HEAD_DIM == 64",
@@ -513,12 +603,16 @@ def plan_flash_attention2d(
         "resident_working_set preserved",
         "streaming_softmax_state preserved",
         "async requires complete pipeline evidence",
+        "FLASH_KV_SHARED_STAGE requires resident_working_set + kv_streamed_tiles + sm120-ready toolchain",
     ]
 
     scored: list[BackendCandidate] = []
     if exact_kind in {"attn2d_causal_softmax_v6", "attn2d_causal_softmax_v7", "attn2d_causal_softmax_v8", "attn2d_causal_softmax_v9"}:
+        exact_bindings_scored = dict(exact_bindings)
+        if exact_kind == "attn2d_causal_softmax_v8" and kv_shared_stage_allowed:
+            exact_bindings_scored["FLASH_KV_SHARED_STAGE"] = 1
         score, score_reason, portability_note = _score_flash_candidate(
-            candidate=BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings)),
+            candidate=BackendCandidate(kernel_kind=exact_kind, bindings=dict(exact_bindings_scored)),
             goal_tags=goal_tags,
             cluster=cluster,
             source_oracle=source_oracle,
@@ -532,7 +626,7 @@ def plan_flash_attention2d(
         scored.append(
             BackendCandidate(
                 kernel_kind=exact_kind,
-                bindings=dict(exact_bindings),
+                bindings=dict(exact_bindings_scored),
                 note="source_exact",
                 score=score,
                 score_reason=score_reason,
@@ -595,7 +689,18 @@ def plan_flash_attention2d(
         )
 
     for bk in block_candidates:
-        candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v8", bindings={"ATTN_BLOCK_KV": int(bk)})
+        v8_bindings = {"ATTN_BLOCK_KV": int(bk)}
+        if _kv_shared_stage_enabled(
+            goal_tags=goal_tags,
+            mechanism_tags=mechanism_tags,
+            ttgir_facts=ttgir_facts,
+            hardware_model=hardware_model,
+            toolchain_model=toolchain_model,
+            block_kv=int(bk),
+            head_dim=head_dim,
+        ):
+            v8_bindings["FLASH_KV_SHARED_STAGE"] = 1
+        candidate = BackendCandidate(kernel_kind="attn2d_causal_softmax_v8", bindings=v8_bindings)
         score, score_reason, portability_note = _score_flash_candidate(
             candidate=candidate,
             goal_tags=goal_tags,
@@ -741,6 +846,7 @@ def plan_flash_attention2d(
             f"toolchain_effective_sm={str((toolchain_model or {}).get('effective_sm') or '')}",
             f"toolchain_downleveled={bool((toolchain_model or {}).get('downleveled'))}",
             f"async_evidence={bool(async_evidence_ok)}",
+            f"kv_shared_stage_allowed={bool(kv_shared_stage_allowed)}",
             *preserve_notes,
         ],
     )

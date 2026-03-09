@@ -24,9 +24,10 @@ def _org_flash() -> object:
                 {"id": "g3", "tag": "latency_hiding", "summary": "prefetch next tile", "scope": "kv_loop", "tensors": ["K", "V"], "evidence_refs": ["e0"]},
             ],
             "mechanisms": [
-                {"id": "m0", "tag": "kv_tile_stage", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["tile_kv"], "evidence_refs": ["e0"]},
-                {"id": "m1", "tag": "online_softmax_reduce", "category": "communication", "supports_goals": ["g1", "g2"], "attrs": {}, "dims": ["score_warps"], "evidence_refs": ["e0"]},
-                {"id": "m2", "tag": "prefetch_pipeline", "category": "pipeline", "supports_goals": ["g3"], "attrs": {}, "dims": ["pipeline_stages"], "evidence_refs": ["e0"]},
+                {"id": "m0", "tag": "q_resident_state", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["tile_kv"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "kv_streamed_tiles", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["tile_kv"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "online_softmax_reduce", "category": "communication", "supports_goals": ["g1", "g2"], "attrs": {}, "dims": ["score_warps"], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "prefetch_pipeline", "category": "pipeline", "supports_goals": ["g3"], "attrs": {}, "dims": ["pipeline_stages"], "evidence_refs": ["e0"]},
             ],
             "dims": [
                 {"name": "tile_kv", "role": "kv_tile", "candidates": [32, 64], "constraints": ["tile_kv <= KV_CTX"], "evidence_refs": ["e0"]},
@@ -79,7 +80,7 @@ def test_backend_plan_flash_attention2d_chain() -> None:
     assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 64, "ATTN_SCORE_WARPS": 4}
     assert plan.candidates[0].score is not None
     assert "cluster=cuda_tc_mid_smem" in str(plan.candidates[0].score_reason)
-    assert "mid_smem_balanced_resident_tile" in str(plan.candidates[0].score_reason)
+    assert "kv_shared_stage=0" in str(plan.candidates[0].score_reason)
     assert any(str(x).startswith("preserve:") for x in plan.notes)
     assert any(item.get("reason") == "incomplete async evidence" for item in plan.substitutions)
 
@@ -125,9 +126,9 @@ def test_backend_plan_flash_attention2d_sm120_exposes_frontier_variants() -> Non
     kinds = [c.kernel_kind for c in plan.candidates]
     assert "attn2d_causal_softmax_v9" in plan.param_space["kernel_kind"]
     assert plan.candidates[0].kernel_kind == "attn2d_causal_softmax_v8"
-    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 32}
+    assert plan.candidates[0].bindings == {"ATTN_BLOCK_KV": 32, "FLASH_KV_SHARED_STAGE": 1}
     assert "attn2d_causal_softmax_v9" in kinds
     assert kinds.index("attn2d_causal_softmax_v8") < kinds.index("attn2d_causal_softmax_v9")
-    assert "sm120_v8_tile32_resource_fit" in str(plan.candidates[0].score_reason)
+    assert "sm120_v8_tile32_shared_stage_fit" in str(plan.candidates[0].score_reason)
     assert "register_ratio=" in str(plan.candidates[0].score_reason)
     assert any("toolchain_effective_sm=sm_120" in note for note in plan.notes)
