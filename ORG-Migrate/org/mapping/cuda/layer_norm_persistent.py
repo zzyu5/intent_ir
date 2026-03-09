@@ -104,6 +104,28 @@ def _score_layer_norm_candidate(
     waste_ratio = float(max(0, effective_width - row_width)) / float(max(1, row_width))
     score -= waste_ratio * 16.0
     reasons.append(f"waste={waste_ratio:.3f}")
+    large_row = int(row_width) >= 16384
+    bandwidth_row = int(row_width) >= 1048576
+    if large_row:
+        if int(vector_width) == 4:
+            score += 16.0
+            reasons.append("large_row:vec4")
+        elif int(vector_width) == 2:
+            score += 8.0
+            reasons.append("large_row:vec2")
+        if int(threads) in {128, 256}:
+            score += 10.0
+            reasons.append("large_row:wide_cta")
+    if bandwidth_row and int(persistent_row) == 0:
+        if int(threads) == 256 and int(vector_width) == 2:
+            score += 40.0
+            reasons.append("bandwidth_row:cta256_vec2")
+        elif int(threads) == 128 and int(vector_width) == 2:
+            score += 14.0
+            reasons.append("bandwidth_row:cta128_vec2")
+        elif int(vector_width) == 4:
+            score -= 28.0
+            reasons.append("bandwidth_row:vec4_pressure")
 
     if blocked_threads_hint is not None:
         if int(threads) == int(blocked_threads_hint):
@@ -139,11 +161,28 @@ def _score_layer_norm_candidate(
 
     resident_ratio = float(row_width * 4) / float(max(1, shared_mem_kb * 1024))
     if int(persistent_row) == 1:
-        score += 6.0 if resident_ratio <= 0.25 else -12.0
         reasons.append(f"resident_ratio={resident_ratio:.4f}")
+        if resident_ratio > 1.0:
+            score -= 96.0
+            reasons.append("resident_over_budget")
+            portability = "requires_streaming_repair"
+        else:
+            score += 6.0 if resident_ratio <= 0.25 else -12.0
+        if large_row and int(vector_width) == 2 and int(threads) in {128, 256}:
+            score += 18.0
+            reasons.append("large_row:persistent_cache_reuse")
+        elif large_row and int(vector_width) == 4:
+            score -= 10.0
+            reasons.append("large_row:persistent_vec4_pressure")
+        if bandwidth_row:
+            score -= 18.0
+            reasons.append("bandwidth_row:persistent_reuse_loss")
     if int(persistent_row) == 0 and mechanism_tags & {"row_tile_resident", "register_staging", "persistent_row_cache"}:
         score -= 24.0
         portability = "missing_persistent_row"
+    if large_row and int(persistent_row) == 0:
+        score += 6.0
+        reasons.append("large_row:streaming_row")
     if int(threads) not in {32, 64, 128, 256}:
         score -= 100.0
         portability = "requires_thread_repair"
@@ -183,7 +222,7 @@ def plan_layer_norm_persistent(
             expanded_threads.append(iv * int(hardware_model.warp_size))
         else:
             expanded_threads.append(iv)
-    expanded_threads.extend([32, 64, 128])
+    expanded_threads.extend([32, 64, 128, 256])
     if blocked_threads_hint is not None:
         expanded_threads.append(int(blocked_threads_hint))
     if "LAYER_NORM_BLOCK_THREADS" in source_bindings:
@@ -201,10 +240,13 @@ def plan_layer_norm_persistent(
         vector_values = [1, 2, 4]
 
     cluster = str(hardware_model.arch_cluster)
+    persistent_rationale = bool(
+        mechanism_tags & {"row_tile_resident", "register_staging", "persistent_row_cache", "warp_parallel_execution"}
+    ) or bool(goal_tags & {"persistent_row_state", "resident_working_set", "memory_coalescing"})
     persistent_allowed = bool(
-        (mechanism_tags & {"row_tile_resident", "register_staging"})
+        persistent_rationale
         and int(hardware_model.shared_mem_kb or 0) >= 64
-        and int(n_dim) <= 1024
+        and (int(n_dim) <= 1024 or int(n_dim) >= 16384)
     )
     param_space = {
         "kernel_kind": ["layer_norm_axis1_v1"],
@@ -247,7 +289,7 @@ def plan_layer_norm_persistent(
         for vector_width in vector_values:
             if int(vector_width) > max(1, n_dim):
                 continue
-            persistent_values = [1] if persistent_allowed else [0]
+            persistent_values = [0, 1] if persistent_allowed else [0]
             for persistent_row in persistent_values:
                 score, reason, portability = _score_layer_norm_candidate(
                     candidate=BackendCandidate(

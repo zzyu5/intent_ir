@@ -119,6 +119,27 @@ def _score_row_reduce_candidate(
     waste_ratio = float(max(0, effective_width - row_width)) / float(max(1, row_width))
     score -= waste_ratio * 18.0
     reasons.append(f"waste={waste_ratio:.3f}")
+    large_row = int(row_width) >= 16384
+    bandwidth_row = int(row_width) >= 1048576
+    if large_row:
+        score += min(14.0, float(int(vector_width)) * 3.5)
+        reasons.append("large_row:vectorized")
+        if int(threads) in {128, 256}:
+            score += 8.0
+            reasons.append("large_row:wide_cta")
+        if int(shared_stage) == 1:
+            score += 6.0
+            reasons.append("large_row:shared_tree")
+    if bandwidth_row and int(shared_stage) == 1:
+        if int(threads) == 256 and int(vector_width) == 4:
+            score += 20.0
+            reasons.append("bandwidth_row:cta256_vec4")
+        elif int(threads) == 256 and int(vector_width) == 2:
+            score += 12.0
+            reasons.append("bandwidth_row:cta256_vec2")
+        elif int(threads) == 128 and int(vector_width) == 4:
+            score += 8.0
+            reasons.append("bandwidth_row:cta128_vec4")
 
     if blocked_threads_hint is not None:
         if int(threads) == int(blocked_threads_hint):
@@ -172,6 +193,10 @@ def _score_row_reduce_candidate(
         score += 2.0
     if reduction_kind == "max" and int(threads) == 64:
         score += 2.0
+    if large_row and reduction_kind == "sum" and int(vector_width) == 4:
+        score += 4.0
+    if large_row and reduction_kind == "max" and int(vector_width) == 4:
+        score += 4.0
 
     return score, ",".join(reasons), portability
 
@@ -230,7 +255,7 @@ def _plan_row_reduction(
         expanded_threads.append(int(exact_threads))
     thread_values = [int(x) for x in _ordered_unique(expanded_threads) if int(x) in {32, 64, 128, 256}]
     if not thread_values:
-        thread_values = [32, 64, 128]
+        thread_values = [32, 64, 128, 256]
 
     vector_values = _ordered_unique(
         [
@@ -248,7 +273,7 @@ def _plan_row_reduction(
         vector_values.append(int(exact_vector))
     vector_values = [int(x) for x in _ordered_unique(vector_values) if int(x) in {1, 2, 4}]
     if not vector_values:
-        vector_values = [1, 2]
+        vector_values = [1, 2, 4]
 
     cluster = str(hardware_model.arch_cluster)
     row_tile_present = "row_tile_resident" in mechanism_tags

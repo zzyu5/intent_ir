@@ -1662,8 +1662,6 @@ def _run_row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
     M = int(case.shapes.get("M", 4))
     N = int(case.shapes.get("N", 256))
     device = "cuda"
-    if N > 1024:
-        raise ValueError(f"row_sum requires N<=1024, got N={N}")
     if case.inputs and "input" in case.inputs:
         inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
         if tuple(inp.shape) != (M, N):
@@ -1749,8 +1747,6 @@ def _run_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
     M = int(case.shapes.get("M", 4))
     N = int(case.shapes.get("N", 256))
     device = "cuda"
-    if N > 1024:
-        raise ValueError(f"row_max requires N<=1024, got N={N}")
     if case.inputs and "input" in case.inputs:
         inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
         if tuple(inp.shape) != (M, N):
@@ -2825,7 +2821,7 @@ def default_kernel_specs() -> List[KernelSpec]:
             module="kernels.triton.ops.layernorm",
             attr="layer_norm_persistent_kernel.fn.src",
             runner=_run_layernorm_reference,
-            canonical_shapes={"M": 4, "N": 64},
+            canonical_shapes={"M": 256, "N": 2097152},
             vary_axes=["M", "N"],
         ),
         KernelSpec(
@@ -2850,7 +2846,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     def _norm_row_sum(shapes: Dict[str, int]) -> Dict[str, int]:
         out = dict(shapes)
         if "N" in out:
-            out["N"] = max(1, min(int(out["N"]), 1024))
+            out["N"] = max(1, int(out["N"]))
         if "M" in out:
             out["M"] = max(1, int(out["M"]))
         return out
@@ -2948,7 +2944,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.row_sum",
                 attr="row_sum_kernel.src",
                 runner=_run_row_sum_reference,
-                canonical_shapes={"M": 4, "N": 256},
+                canonical_shapes={"M": 256, "N": 2097152},
                 vary_axes=["M", "N"],
                 normalize_shapes=_norm_row_sum,
             ),
@@ -2981,7 +2977,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.row_max",
                 attr="row_max_kernel.src",
                 runner=_run_row_max_reference,
-                canonical_shapes={"M": 4, "N": 256},
+                canonical_shapes={"M": 256, "N": 2097152},
                 vary_axes=["M", "N"],
                 normalize_shapes=_norm_row_sum,
             ),

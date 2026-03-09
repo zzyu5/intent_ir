@@ -6549,7 +6549,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.providers.flaggems.specs",
         attr="FLAGGEMS_LAYER_NORM_SRC",
         runner=_run_flaggems_layer_norm_reference,
-        canonical_shapes={"M": 4, "N": 64},
+        canonical_shapes={"M": 256, "N": 2097152},
         vary_axes=["M", "N"],
     ),
     "rms_norm2d": lambda: KernelSpec(
@@ -6758,7 +6758,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.providers.flaggems.specs",
         attr="FLAGGEMS_SUM_SRC",
         runner=_run_flaggems_row_sum_reference,
-        canonical_shapes={"M": 4, "N": 64},
+        canonical_shapes={"M": 256, "N": 2097152},
         vary_axes=["M", "N"],
     ),
     "prod2d": lambda: KernelSpec(
@@ -6782,7 +6782,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.providers.flaggems.specs",
         attr="FLAGGEMS_MAX_SRC",
         runner=_run_flaggems_row_max_reference,
-        canonical_shapes={"M": 4, "N": 64},
+        canonical_shapes={"M": 256, "N": 2097152},
         vary_axes=["M", "N"],
     ),
     "sort2d": lambda: KernelSpec(
