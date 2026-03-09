@@ -6,7 +6,7 @@ Snapshot:
 
 - Date: **2026‑03‑09**
 - Branch: `compiler-cleanup-v1`
-- HEAD: `9029451d75bcaa63e69e7e68bbd7db35d7c3d789`
+- HEAD: *(run `git rev-parse HEAD` for exact hash)*
 - Working tree: clean
 
 ---
