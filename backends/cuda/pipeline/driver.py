@@ -301,12 +301,17 @@ def _augment_scalar_bindings_from_io_spec(
             for k in scalars.keys():
                 if size_pat.match(str(k)):
                     size_slot_count += 1
-            if size_slot_count == 1 and idx == 0 and shape:
-                total = 1
-                for dim in shape:
-                    rv = resolve_dim_int(dim, out)
-                    total *= max(1, int(rv) if rv is not None else 1)
-                out[name] = int(total)
+            if size_slot_count == 1 and idx == 0:
+                if shape:
+                    total = 1
+                    for dim in shape:
+                        rv = resolve_dim_int(dim, out)
+                        total *= max(1, int(rv) if rv is not None else 1)
+                    out[name] = int(total)
+                else:
+                    # Scalar tensors (shape=[]) may still lower through a rank-1
+                    # memref ABI slot. Treat these as a length-1 flat buffer.
+                    out[name] = 1
             elif 0 <= idx < len(shape):
                 dim_v = resolve_dim_int(shape[idx], out)
                 if dim_v is not None:
@@ -318,6 +323,9 @@ def _augment_scalar_bindings_from_io_spec(
             idx = int(m_stride.group(2))
             spec = tensor_specs.get(t_name)
             shape = list(spec.get("shape") or []) if isinstance(spec, dict) else []
+            if not shape and idx == 0:
+                out[name] = 1
+                continue
             if 0 <= idx < len(shape):
                 size_slot_count = 0
                 size_pat = re.compile(rf"^{re.escape(t_name)}__size\d+$")

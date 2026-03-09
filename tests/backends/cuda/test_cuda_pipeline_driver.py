@@ -548,6 +548,21 @@ def test_lower_cuda_contract_to_kernel_uses_historical_io_template_when_arg_name
     assert scalars.get("N") == "i32"
 
 
+def test_cuda_driver_augments_scalar_tensor_memref_size_stride_defaults() -> None:
+    from backends.cuda.pipeline import driver as cuda_driver
+
+    io_spec = {
+        "arg_names": ["sm_scale", "sm_scale__aligned", "sm_scale__offset", "sm_scale__size0", "sm_scale__stride0"],
+        "tensors": {"sm_scale": {"dtype": "f32", "shape": []}},
+        "scalars": {"sm_scale__offset": "i64", "sm_scale__size0": "i64", "sm_scale__stride0": "i64"},
+        "outputs": [],
+    }
+    bindings = cuda_driver._augment_scalar_bindings_from_io_spec(bindings={}, io_spec=io_spec)
+    assert bindings.get("sm_scale__offset") == 0
+    assert bindings.get("sm_scale__size0") == 1
+    assert bindings.get("sm_scale__stride0") == 1
+
+
 def test_lower_cuda_contract_to_kernel_infers_grid_x_from_ptx_ctaid_bound(tmp_path: Path) -> None:
     mod = to_mlir(_add_intent("cuda_pipeline_ptx_grid_infer"))
     contract = build_cuda_contract(mod)
