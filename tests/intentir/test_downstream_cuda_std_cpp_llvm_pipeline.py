@@ -17,6 +17,7 @@ def test_downstream_cuda_std_cpp_llvm_falls_back_without_plugin(monkeypatch: pyt
     monkeypatch.setenv("INTENTIR_COMPILER_STACK", "cpp_plugin")
     monkeypatch.setenv("INTENTIR_COMPILER_CPP_WAVE", "wave3")
     monkeypatch.delenv("INTENTIR_MLIR_PASS_PLUGIN", raising=False)
+    monkeypatch.setenv("INTENTIR_AUTO_MLIR_PASS_PLUGIN", "0")
 
     intent = IntentFunction.from_json_dict(
         {

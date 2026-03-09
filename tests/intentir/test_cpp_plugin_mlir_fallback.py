@@ -32,6 +32,7 @@ def test_cpp_plugin_mlir_fallback_runs_python_cuda_passes(monkeypatch) -> None:
         return mod
 
     monkeypatch.delenv("INTENTIR_MLIR_PASS_PLUGIN", raising=False)
+    monkeypatch.setenv("INTENTIR_AUTO_MLIR_PASS_PLUGIN", "0")
     monkeypatch.setitem(__import__("intent_ir.mlir.pass_manager", fromlist=["PASS_REGISTRY"]).PASS_REGISTRY, "apply_tuning_db", _apply_tuning_db)
     monkeypatch.setitem(__import__("intent_ir.mlir.pass_manager", fromlist=["PASS_REGISTRY"]).PASS_REGISTRY, "lower_intent_to_cuda_gpu_kernel", _lower_cuda)
 
@@ -67,6 +68,7 @@ def test_cpp_plugin_mlir_fallback_runs_extract_gpu_module(monkeypatch) -> None:
         return mod
 
     monkeypatch.delenv("INTENTIR_MLIR_PASS_PLUGIN", raising=False)
+    monkeypatch.setenv("INTENTIR_AUTO_MLIR_PASS_PLUGIN", "0")
     monkeypatch.setitem(__import__("intent_ir.mlir.pass_manager", fromlist=["PASS_REGISTRY"]).PASS_REGISTRY, "extract_gpu_module_llvm", _extract_gpu)
 
     result = _run_one_pass(

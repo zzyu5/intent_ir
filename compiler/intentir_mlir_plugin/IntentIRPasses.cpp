@@ -591,7 +591,7 @@ static mlir::Value makeI32Const(mlir::OpBuilder &b, mlir::Location loc, int32_t 
 }
 
 static mlir::Value makeF32Const(mlir::OpBuilder &b, mlir::Location loc, float v) {
-  return b.create<mlir::arith::ConstantFloatOp>(loc, b.getF32Type(), llvm::APFloat(v));
+  return b.create<mlir::arith::ConstantFloatOp>(loc, llvm::APFloat(v), b.getF32Type());
 }
 
 static mlir::Value warpAllReduceSumF32(mlir::OpBuilder &b, mlir::Location loc, mlir::Value v) {
@@ -1346,7 +1346,7 @@ createCudaKernelWithFlattenedABI(LoweringContext &ctx, mlir::gpu::GPUModuleOp gp
 
   auto fnType = mlir::FunctionType::get(mlirCtx, argTypes, {});
   ctx.builder.setInsertionPointToEnd(&gpuModule.getBodyRegion().front());
-  auto fn = mlir::gpu::GPUFuncOp::create(ctx.builder, loc, funcName, fnType);
+  auto fn = ctx.builder.create<mlir::gpu::GPUFuncOp>(loc, funcName, fnType);
   fn.setPrivate();
   fn->setAttr(mlir::gpu::GPUDialect::getKernelFuncAttrName(),
               mlir::UnitAttr::get(mlirCtx));
@@ -1471,7 +1471,7 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
 
   // GPU module + kernel.
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   // Types.
@@ -1514,18 +1514,18 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
     shB1Name = "__intentir_sh_b1_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
 
     auto align16 = b.getI64IntegerAttr(16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shA0Name, b.getStringAttr("private"), shATy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shA1Name, b.getStringAttr("private"), shATy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shB0Name, b.getStringAttr("private"), shBTy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shB1Name, b.getStringAttr("private"), shBTy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shA0Name, b.getStringAttr("private"), shATy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shA1Name, b.getStringAttr("private"), shATy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shB0Name, b.getStringAttr("private"), shBTy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shB1Name, b.getStringAttr("private"), shBTy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
   }
 
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule,
@@ -1554,14 +1554,14 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
                                     globalMemSpace);
 
   // Reinterpret 1D memrefs as 2D matrices.
-  auto A2 = mlir::memref::ReinterpretCastOp::create(b, loc, a2Ty, A, 0, {M, K},
-                                                    {K, 1})
+  auto A2 = b.create<mlir::memref::ReinterpretCastOp>(loc, a2Ty, A, 0, mlir::ArrayRef<int64_t>{M, K},
+                                                      mlir::ArrayRef<int64_t>{K, 1})
                 .getResult();
-  auto B2 = mlir::memref::ReinterpretCastOp::create(b, loc, b2Ty, Bv, 0, {K, N},
-                                                    {N, 1})
+  auto B2 = b.create<mlir::memref::ReinterpretCastOp>(loc, b2Ty, Bv, 0, mlir::ArrayRef<int64_t>{K, N},
+                                                      mlir::ArrayRef<int64_t>{N, 1})
                 .getResult();
-  auto C2 = mlir::memref::ReinterpretCastOp::create(b, loc, c2Ty, C, 0, {M, N},
-                                                    {N, 1})
+  auto C2 = b.create<mlir::memref::ReinterpretCastOp>(loc, c2Ty, C, 0, mlir::ArrayRef<int64_t>{M, N},
+                                                      mlir::ArrayRef<int64_t>{N, 1})
                 .getResult();
 
   // Thread and block ids.
@@ -1595,8 +1595,8 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
   auto cFragTy = mlir::gpu::MMAMatrixType::get({16, 16}, f32, "COp");
 
   // Accumulator init.
-  auto acc = mlir::gpu::SubgroupMmaConstantMatrixOp::create(b, loc, cFragTy,
-                                                           c0f)
+  auto acc = b.create<mlir::gpu::SubgroupMmaConstantMatrixOp>(loc, cFragTy,
+                                                              c0f)
                  .getResult();
 
   auto ldK = b.getIndexAttr(K);
@@ -1610,13 +1610,13 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
 
     // Double-buffered static shared tiles.
     auto As0 =
-        mlir::memref::GetGlobalOp::create(b, loc, shATy, shA0Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shATy, shA0Name).getResult();
     auto As1 =
-        mlir::memref::GetGlobalOp::create(b, loc, shATy, shA1Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shATy, shA1Name).getResult();
     auto Bs0 =
-        mlir::memref::GetGlobalOp::create(b, loc, shBTy, shB0Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shBTy, shB0Name).getResult();
     auto Bs1 =
-        mlir::memref::GetGlobalOp::create(b, loc, shBTy, shB1Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shBTy, shB1Name).getResult();
 
     auto c4 = makeIndexConst(b, loc, 4);
     int64_t aIters = tileA4 / threads;
@@ -1704,19 +1704,19 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
 
       for (int64_t kk = 0; kk < bk; kk += 8) {
         auto kkC = makeIndexConst(b, loc, kk);
-        auto aFrag = mlir::gpu::SubgroupMmaLoadMatrixOp::create(
-                         b, loc, aFragTy, curAs,
+        auto aFrag = b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(
+                         loc, aFragTy, curAs,
                          mlir::ValueRange{rowW, kkC}, ldBK,
-                         /*transpose=*/{})
+                         /*transpose=*/mlir::UnitAttr())
                          .getResult();
-        auto bFrag = mlir::gpu::SubgroupMmaLoadMatrixOp::create(
-                         b, loc, bFragTy, curBs,
+        auto bFrag = b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(
+                         loc, bFragTy, curBs,
                          mlir::ValueRange{kkC, colW}, ldBN,
                          transposeAttr)
                          .getResult();
-        acc = mlir::gpu::SubgroupMmaComputeOp::create(
-                  b, loc, cFragTy, aFrag, bFrag, acc,
-                  /*a_transpose=*/{}, /*b_transpose=*/transposeAttr)
+        acc = b.create<mlir::gpu::SubgroupMmaComputeOp>(
+                  loc, cFragTy, aFrag, bFrag, acc,
+                  /*a_transpose=*/mlir::UnitAttr(), /*b_transpose=*/transposeAttr)
                   .getResult();
       }
 
@@ -1734,26 +1734,26 @@ static mlir::LogicalResult lowerCudaAiBenchMatmulMmaTF32V1(LoweringContext &ctx)
         auto kkC = makeIndexConst(b, loc, kk);
         auto kIdx = b.create<mlir::arith::AddIOp>(loc, kbC, kkC);
         auto aFrag =
-            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, A2,
+            b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(loc, aFragTy, A2,
                                                        mlir::ValueRange{gm, kIdx},
-                                                       ldK, /*transpose=*/{})
+                                                       ldK, /*transpose=*/mlir::UnitAttr())
                 .getResult();
         auto bFrag =
-            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, bFragTy, B2,
+            b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(loc, bFragTy, B2,
                                                        mlir::ValueRange{kIdx, gn},
                                                        ldN, transposeAttr)
                 .getResult();
-        acc = mlir::gpu::SubgroupMmaComputeOp::create(
-                  b, loc, cFragTy, aFrag, bFrag, acc,
-                  /*a_transpose=*/{}, /*b_transpose=*/transposeAttr)
+        acc = b.create<mlir::gpu::SubgroupMmaComputeOp>(
+                  loc, cFragTy, aFrag, bFrag, acc,
+                  /*a_transpose=*/mlir::UnitAttr(), /*b_transpose=*/transposeAttr)
                   .getResult();
       }
     }
   }
 
-  mlir::gpu::SubgroupMmaStoreMatrixOp::create(b, loc, acc, C2,
+  b.create<mlir::gpu::SubgroupMmaStoreMatrixOp>(loc, acc, C2,
                                              mlir::ValueRange{gm, gn}, ldN,
-                                             /*transpose=*/{});
+                                             /*transpose=*/mlir::UnitAttr());
   b.create<mlir::gpu::ReturnOp>(loc);
 
   // Annotate for audit (also mirrored into python meta by the driver).
@@ -1937,7 +1937,7 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
 
   // GPU module + kernel.
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -1986,18 +1986,18 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
         "__intentir_sh_b1_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
 
     auto align16 = b.getI64IntegerAttr(16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shA0Name, b.getStringAttr("private"), shATy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shA1Name, b.getStringAttr("private"), shATy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shB0Name, b.getStringAttr("private"), shBTy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
-    (void)mlir::memref::GlobalOp::create(
-        b, loc, shB1Name, b.getStringAttr("private"), shBTy,
-        /*initial_value=*/{}, /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shA0Name, b.getStringAttr("private"), shATy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shA1Name, b.getStringAttr("private"), shATy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shB0Name, b.getStringAttr("private"), shBTy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
+    (void)b.create<mlir::memref::GlobalOp>(
+        loc, shB1Name, b.getStringAttr("private"), shBTy,
+        /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
   }
 
   // Shared accumulator tile for fused epilogue: Cs[BM,BN].
@@ -2008,9 +2008,9 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
                                      sharedMemSpace);
   std::string shCName =
       "__intentir_sh_c_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
-  (void)mlir::memref::GlobalOp::create(
-      b, loc, shCName, b.getStringAttr("private"), shCTy,
-      /*initial_value=*/{}, /*constant=*/false, b.getI64IntegerAttr(16));
+  (void)b.create<mlir::memref::GlobalOp>(
+      loc, shCName, b.getStringAttr("private"), shCTy,
+      /*initial_value=*/mlir::Attribute(), /*constant=*/false, b.getI64IntegerAttr(16));
 
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule,
                                                sanitizeSymbolName(ctx.kernelName));
@@ -2040,14 +2040,14 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
                                       mlir::MemRefLayoutAttrInterface{},
                                       globalMemSpace);
 
-  auto A2 = mlir::memref::ReinterpretCastOp::create(b, loc, a2Ty, A, 0, {M, K},
-                                                    {K, 1})
+  auto A2 = b.create<mlir::memref::ReinterpretCastOp>(loc, a2Ty, A, 0, mlir::ArrayRef<int64_t>{M, K},
+                                                      mlir::ArrayRef<int64_t>{K, 1})
                 .getResult();
-  auto B2 = mlir::memref::ReinterpretCastOp::create(b, loc, b2Ty, Bv, 0, {K, N},
-                                                    {N, 1})
+  auto B2 = b.create<mlir::memref::ReinterpretCastOp>(loc, b2Ty, Bv, 0, mlir::ArrayRef<int64_t>{K, N},
+                                                      mlir::ArrayRef<int64_t>{N, 1})
                 .getResult();
-  auto Out2 = mlir::memref::ReinterpretCastOp::create(b, loc, out2Ty, Out, 0,
-                                                      {M, N}, {N, 1})
+  auto Out2 = b.create<mlir::memref::ReinterpretCastOp>(loc, out2Ty, Out, 0,
+                                                        mlir::ArrayRef<int64_t>{M, N}, mlir::ArrayRef<int64_t>{N, 1})
                   .getResult();
 
   // Thread and block ids.
@@ -2081,7 +2081,7 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
   auto bFragTy = mlir::gpu::MMAMatrixType::get({8, 16}, f32, "BOp");
   auto cFragTy = mlir::gpu::MMAMatrixType::get({16, 16}, f32, "COp");
 
-  auto acc = mlir::gpu::SubgroupMmaConstantMatrixOp::create(b, loc, cFragTy, c0f)
+  auto acc = b.create<mlir::gpu::SubgroupMmaConstantMatrixOp>(loc, cFragTy, c0f)
                  .getResult();
 
   std::string kernelKind = "matmul_fused_epilogue_mma_tf32_global_v1";
@@ -2089,13 +2089,13 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
     kernelKind = "matmul_fused_epilogue_mma_tf32_v2";
 
     auto As0 =
-        mlir::memref::GetGlobalOp::create(b, loc, shATy, shA0Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shATy, shA0Name).getResult();
     auto As1 =
-        mlir::memref::GetGlobalOp::create(b, loc, shATy, shA1Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shATy, shA1Name).getResult();
     auto Bs0 =
-        mlir::memref::GetGlobalOp::create(b, loc, shBTy, shB0Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shBTy, shB0Name).getResult();
     auto Bs1 =
-        mlir::memref::GetGlobalOp::create(b, loc, shBTy, shB1Name).getResult();
+        b.create<mlir::memref::GetGlobalOp>(loc, shBTy, shB1Name).getResult();
 
     int64_t aIters = tileA4 / threads;
     int64_t bIters = tileB4 / threads;
@@ -2180,19 +2180,19 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
       for (int64_t kk = 0; kk < bk; kk += 8) {
         auto kkC = makeIndexConst(b, loc, kk);
         auto aFrag =
-            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, curAs,
+            b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(loc, aFragTy, curAs,
                                                       mlir::ValueRange{rowW, kkC}, ldBK,
-                                                      /*transpose=*/{})
+                                                      /*transpose=*/mlir::UnitAttr())
                 .getResult();
         auto bFrag =
-            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, bFragTy, curBs,
+            b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(loc, bFragTy, curBs,
                                                       mlir::ValueRange{kkC, colW}, ldBN,
-                                                      /*transpose=*/{})
+                                                      /*transpose=*/mlir::UnitAttr())
                 .getResult();
-        acc = mlir::gpu::SubgroupMmaComputeOp::create(b, loc, cFragTy, aFrag,
+        acc = b.create<mlir::gpu::SubgroupMmaComputeOp>(loc, cFragTy, aFrag,
                                                      bFrag, acc,
-                                                     /*a_transpose=*/{},
-                                                     /*b_transpose=*/{})
+                                                     /*a_transpose=*/mlir::UnitAttr(),
+                                                     /*b_transpose=*/mlir::UnitAttr())
                   .getResult();
       }
 
@@ -2211,30 +2211,30 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
         auto kkC = makeIndexConst(b, loc, kk);
         auto kIdx = b.create<mlir::arith::AddIOp>(loc, kbC, kkC);
         auto aFrag =
-            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, aFragTy, A2,
+            b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(loc, aFragTy, A2,
                                                       mlir::ValueRange{gm, kIdx}, ldK,
-                                                      /*transpose=*/{})
+                                                      /*transpose=*/mlir::UnitAttr())
                 .getResult();
         auto bFrag =
-            mlir::gpu::SubgroupMmaLoadMatrixOp::create(b, loc, bFragTy, B2,
+            b.create<mlir::gpu::SubgroupMmaLoadMatrixOp>(loc, bFragTy, B2,
                                                       mlir::ValueRange{kIdx, gn}, ldN,
-                                                      /*transpose=*/{})
+                                                      /*transpose=*/mlir::UnitAttr())
                 .getResult();
-        acc = mlir::gpu::SubgroupMmaComputeOp::create(b, loc, cFragTy, aFrag,
+        acc = b.create<mlir::gpu::SubgroupMmaComputeOp>(loc, cFragTy, aFrag,
                                                      bFrag, acc,
-                                                     /*a_transpose=*/{},
-                                                     /*b_transpose=*/{})
+                                                     /*a_transpose=*/mlir::UnitAttr(),
+                                                     /*b_transpose=*/mlir::UnitAttr())
                   .getResult();
       }
     }
   }
 
   // Fused epilogue: acc -> shared Cs -> apply bias + row/col masks -> store Out2.
-  auto Cs = mlir::memref::GetGlobalOp::create(b, loc, shCTy, shCName).getResult();
-  mlir::gpu::SubgroupMmaStoreMatrixOp::create(b, loc, acc, Cs,
+  auto Cs = b.create<mlir::memref::GetGlobalOp>(loc, shCTy, shCName).getResult();
+  b.create<mlir::gpu::SubgroupMmaStoreMatrixOp>(loc, acc, Cs,
                                              mlir::ValueRange{rowW, colW},
                                              b.getIndexAttr(bn),
-                                             /*transpose=*/{});
+                                             /*transpose=*/mlir::UnitAttr());
   b.create<mlir::gpu::BarrierOp>(loc);
 
   int64_t tileC = bm * bn;
@@ -2365,7 +2365,7 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &c
   }
 
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -2393,14 +2393,14 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &c
       mlir::MemRefType::get({KV, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
   auto outTy =
       mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
-  auto Q2 = mlir::memref::ReinterpretCastOp::create(b, loc, qTy, QArg, 0, {Q, HD}, {HD, 1})
+  auto Q2 = b.create<mlir::memref::ReinterpretCastOp>(loc, qTy, QArg, 0, mlir::ArrayRef<int64_t>{Q, HD}, mlir::ArrayRef<int64_t>{HD, 1})
                 .getResult();
-  auto K2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, KArg, 0, {KV, HD}, {HD, 1})
+  auto K2 = b.create<mlir::memref::ReinterpretCastOp>(loc, kvTy, KArg, 0, mlir::ArrayRef<int64_t>{KV, HD}, mlir::ArrayRef<int64_t>{HD, 1})
                 .getResult();
-  auto V2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, VArg, 0, {KV, HD}, {HD, 1})
+  auto V2 = b.create<mlir::memref::ReinterpretCastOp>(loc, kvTy, VArg, 0, mlir::ArrayRef<int64_t>{KV, HD}, mlir::ArrayRef<int64_t>{HD, 1})
                 .getResult();
   auto Out2 =
-      mlir::memref::ReinterpretCastOp::create(b, loc, outTy, OutArg, 0, {Q, HD}, {HD, 1})
+      b.create<mlir::memref::ReinterpretCastOp>(loc, outTy, OutArg, 0, mlir::ArrayRef<int64_t>{Q, HD}, mlir::ArrayRef<int64_t>{HD, 1})
           .getResult();
 
   auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
@@ -2440,7 +2440,7 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &c
   auto q0 = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, d0}).getResult();
   auto k0 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv, d0}).getResult();
   b.create<mlir::scf::YieldOp>(
-      loc, mlir::ValueRange{b.create<mlir::arith::MulFOp>(loc, q0, k0).getResult()});
+      loc, mlir::ValueRange(b.create<mlir::arith::MulFOp>(loc, q0, k0).getResult()));
   b.setInsertionPointToStart(&if0.getElseRegion().front());
   b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
   b.setInsertionPointAfter(if0);
@@ -2451,7 +2451,7 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV1(LoweringContext &c
   auto q1 = b.create<mlir::memref::LoadOp>(loc, Q2, mlir::ValueRange{qRow, d1}).getResult();
   auto k1 = b.create<mlir::memref::LoadOp>(loc, K2, mlir::ValueRange{kv, d1}).getResult();
   b.create<mlir::scf::YieldOp>(
-      loc, mlir::ValueRange{b.create<mlir::arith::MulFOp>(loc, q1, k1).getResult()});
+      loc, mlir::ValueRange(b.create<mlir::arith::MulFOp>(loc, q1, k1).getResult()));
   b.setInsertionPointToStart(&if1.getElseRegion().front());
   b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{c0f});
   b.setInsertionPointAfter(if1);
@@ -2657,7 +2657,7 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV2(LoweringContext &c
   }
 
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -2685,14 +2685,14 @@ static mlir::LogicalResult lowerCudaAttn2dCausalSoftmaxWarpV2(LoweringContext &c
       mlir::MemRefType::get({KV, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
   auto outTy =
       mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
-  auto Q2 = mlir::memref::ReinterpretCastOp::create(b, loc, qTy, QArg, 0, {Q, HD}, {HD, 1})
+  auto Q2 = b.create<mlir::memref::ReinterpretCastOp>(loc, qTy, QArg, 0, mlir::ArrayRef<int64_t>{Q, HD}, mlir::ArrayRef<int64_t>{HD, 1})
                 .getResult();
-  auto K2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, KArg, 0, {KV, HD}, {HD, 1})
+  auto K2 = b.create<mlir::memref::ReinterpretCastOp>(loc, kvTy, KArg, 0, mlir::ArrayRef<int64_t>{KV, HD}, mlir::ArrayRef<int64_t>{HD, 1})
                 .getResult();
-  auto V2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, VArg, 0, {KV, HD}, {HD, 1})
+  auto V2 = b.create<mlir::memref::ReinterpretCastOp>(loc, kvTy, VArg, 0, mlir::ArrayRef<int64_t>{KV, HD}, mlir::ArrayRef<int64_t>{HD, 1})
                 .getResult();
   auto Out2 =
-      mlir::memref::ReinterpretCastOp::create(b, loc, outTy, OutArg, 0, {Q, HD}, {HD, 1})
+      b.create<mlir::memref::ReinterpretCastOp>(loc, outTy, OutArg, 0, mlir::ArrayRef<int64_t>{Q, HD}, mlir::ArrayRef<int64_t>{HD, 1})
           .getResult();
 
   auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
@@ -2967,7 +2967,7 @@ static mlir::LogicalResult lowerCudaMaskedAttention2dHd16KeysV1(LoweringContext 
   }
 
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -2982,8 +2982,8 @@ static mlir::LogicalResult lowerCudaMaskedAttention2dHd16KeysV1(LoweringContext 
   auto shTy = mlir::MemRefType::get({shElems}, f32, mlir::MemRefLayoutAttrInterface{}, sharedMemSpace);
   std::string shName = "__intentir_sh_" + sanitizeSymbolName(ctx.kernelName) + "_hd16";
   auto align16 = b.getI64IntegerAttr(16);
-  (void)mlir::memref::GlobalOp::create(b, loc, shName, b.getStringAttr("private"), shTy,
-                                      /*initial_value=*/{}, /*constant=*/false, align16);
+  (void)b.create<mlir::memref::GlobalOp>(loc, shName, b.getStringAttr("private"), shTy,
+                                      /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
 
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
   if (mlir::failed(fnOr))
@@ -3006,17 +3006,17 @@ static mlir::LogicalResult lowerCudaMaskedAttention2dHd16KeysV1(LoweringContext 
       mlir::MemRefType::get({KV, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
   auto outTy =
       mlir::MemRefType::get({Q, HD}, f32, mlir::MemRefLayoutAttrInterface{}, globalMemSpace);
-  auto Q2 = mlir::memref::ReinterpretCastOp::create(b, loc, qTy, QArg, 0, {Q, HD}, {HD, 1})
+  auto Q2 = b.create<mlir::memref::ReinterpretCastOp>(loc, qTy, QArg, 0, llvm::ArrayRef<int64_t>{Q, HD}, llvm::ArrayRef<int64_t>{HD, 1})
                 .getResult();
-  auto K2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, KArg, 0, {KV, HD}, {HD, 1})
+  auto K2 = b.create<mlir::memref::ReinterpretCastOp>(loc, kvTy, KArg, 0, llvm::ArrayRef<int64_t>{KV, HD}, llvm::ArrayRef<int64_t>{HD, 1})
                 .getResult();
-  auto V2 = mlir::memref::ReinterpretCastOp::create(b, loc, kvTy, VArg, 0, {KV, HD}, {HD, 1})
+  auto V2 = b.create<mlir::memref::ReinterpretCastOp>(loc, kvTy, VArg, 0, llvm::ArrayRef<int64_t>{KV, HD}, llvm::ArrayRef<int64_t>{HD, 1})
                 .getResult();
   auto Out2 =
-      mlir::memref::ReinterpretCastOp::create(b, loc, outTy, OutArg, 0, {Q, HD}, {HD, 1})
+      b.create<mlir::memref::ReinterpretCastOp>(loc, outTy, OutArg, 0, llvm::ArrayRef<int64_t>{Q, HD}, llvm::ArrayRef<int64_t>{HD, 1})
           .getResult();
 
-  auto Sh = mlir::memref::GetGlobalOp::create(b, loc, shTy, shName).getResult();
+  auto Sh = b.create<mlir::memref::GetGlobalOp>(loc, shTy, shName).getResult();
 
   auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
   auto qRow = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
@@ -3275,7 +3275,7 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   }
 
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -3284,8 +3284,8 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   auto shTy = mlir::MemRefType::get({shElems}, f32, mlir::MemRefLayoutAttrInterface{}, sharedMemSpace);
   std::string shName = "__intentir_sh_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
   auto align16 = b.getI64IntegerAttr(16);
-  (void)mlir::memref::GlobalOp::create(b, loc, shName, b.getStringAttr("private"), shTy,
-                                      /*initial_value=*/{}, /*constant=*/false, align16);
+  (void)b.create<mlir::memref::GlobalOp>(loc, shName, b.getStringAttr("private"), shTy,
+                                      /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
 
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
   if (mlir::failed(fnOr))
@@ -3302,7 +3302,7 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     return mlir::failure();
   }
 
-  auto Sh = mlir::memref::GetGlobalOp::create(b, loc, shTy, shName).getResult();
+  auto Sh = b.create<mlir::memref::GetGlobalOp>(loc, shTy, shName).getResult();
 
   auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
   auto bid = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
@@ -3921,7 +3921,7 @@ static mlir::LogicalResult lowerCudaAttnFwdSoftmaxV6(LoweringContext &ctx, llvm:
   }
 
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -3929,8 +3929,8 @@ static mlir::LogicalResult lowerCudaAttnFwdSoftmaxV6(LoweringContext &ctx, llvm:
   auto shTy = mlir::MemRefType::get({shElems}, f32, mlir::MemRefLayoutAttrInterface{}, sharedMemSpace);
   std::string shName = "__intentir_sh_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
   auto align16 = b.getI64IntegerAttr(16);
-  (void)mlir::memref::GlobalOp::create(b, loc, shName, b.getStringAttr("private"), shTy,
-                                      /*initial_value=*/{}, /*constant=*/false, align16);
+  (void)b.create<mlir::memref::GlobalOp>(loc, shName, b.getStringAttr("private"), shTy,
+                                      /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
 
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
   if (mlir::failed(fnOr))
@@ -3947,7 +3947,7 @@ static mlir::LogicalResult lowerCudaAttnFwdSoftmaxV6(LoweringContext &ctx, llvm:
     return mlir::failure();
   }
 
-  auto Sh = mlir::memref::GetGlobalOp::create(b, loc, shTy, shName).getResult();
+  auto Sh = b.create<mlir::memref::GetGlobalOp>(loc, shTy, shName).getResult();
 
   auto tid = b.create<mlir::gpu::ThreadIdOp>(loc, mlir::gpu::Dimension::x);
   auto bid = b.create<mlir::gpu::BlockIdOp>(loc, mlir::gpu::Dimension::x);
@@ -4473,7 +4473,7 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
 
   // GPU module + shared scratch.
   b.setInsertionPointToStart(&ctx.module.getBodyRegion().front());
-  auto gpuModule = mlir::gpu::GPUModuleOp::create(b, loc, "kernels");
+  auto gpuModule = b.create<mlir::gpu::GPUModuleOp>(loc, "kernels");
   b.setInsertionPointToStart(&gpuModule.getBodyRegion().front());
 
   auto f32 = b.getF32Type();
@@ -4486,8 +4486,8 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
                                     sharedMemSpace);
   auto shName = "__intentir_sh_rmsnorm_" + sanitizeSymbolName(ctx.kernelName) + "_f32";
   auto align16 = b.getI64IntegerAttr(16);
-  (void)mlir::memref::GlobalOp::create(b, loc, shName, b.getStringAttr("private"), shTy,
-                                      /*initial_value=*/{}, /*constant=*/false, align16);
+  (void)b.create<mlir::memref::GlobalOp>(loc, shName, b.getStringAttr("private"), shTy,
+                                      /*initial_value=*/mlir::Attribute(), /*constant=*/false, align16);
 
   // Kernel.
   auto fnOr = createCudaKernelWithFlattenedABI(ctx, gpuModule, sanitizeSymbolName(ctx.kernelName));
@@ -4513,9 +4513,9 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
   auto out2Ty = mlir::MemRefType::get({M, N}, f32,
                                       mlir::MemRefLayoutAttrInterface{},
                                       globalMemSpace);
-  auto In2 = mlir::memref::ReinterpretCastOp::create(b, loc, in2Ty, In, 0, {M, N}, {N, 1})
+  auto In2 = b.create<mlir::memref::ReinterpretCastOp>(loc, in2Ty, In, 0, mlir::ArrayRef<int64_t>{M, N}, mlir::ArrayRef<int64_t>{N, 1})
                  .getResult();
-  auto Out2 = mlir::memref::ReinterpretCastOp::create(b, loc, out2Ty, Out, 0, {M, N}, {N, 1})
+  auto Out2 = b.create<mlir::memref::ReinterpretCastOp>(loc, out2Ty, Out, 0, mlir::ArrayRef<int64_t>{M, N}, mlir::ArrayRef<int64_t>{N, 1})
                   .getResult();
 
   // Thread/block ids.
@@ -4563,7 +4563,7 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
   }
 
   // Shared buffer handle.
-  auto Sh = mlir::memref::GetGlobalOp::create(b, loc, shTy, shName).getResult();
+  auto Sh = b.create<mlir::memref::GetGlobalOp>(loc, shTy, shName).getResult();
 
   // Partial sum of squares for this thread.
   auto sumFor = b.create<mlir::scf::ForOp>(loc, tid, cN, cThreads, mlir::ValueRange{c0f});
@@ -4573,7 +4573,7 @@ static mlir::LogicalResult lowerCudaRmsNorm2dRowwiseV1(LoweringContext &ctx) {
   auto x = b.create<mlir::memref::LoadOp>(loc, In2, mlir::ValueRange{row, j}).getResult();
   auto x2 = b.create<mlir::arith::MulFOp>(loc, x, x).getResult();
   auto acc2 = b.create<mlir::arith::AddFOp>(loc, acc, x2).getResult();
-  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{acc2});
+  b.create<mlir::scf::YieldOp>(loc, mlir::ValueRange(acc2));
   b.setInsertionPointAfter(sumFor);
   auto partial = sumFor.getResult(0);
 

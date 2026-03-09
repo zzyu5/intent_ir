@@ -11,6 +11,7 @@ from intent_ir.ir import IntentFunction
 from intent_ir.ir.repair import materialize_missing_op_output_tensors
 from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.module import IntentMLIRModule
+from intent_ir.mlir.toolchain import detect_mlir_toolchain
 
 
 def _rewrite_legacy_memref_assume_alignment(module_text: str) -> str:
@@ -170,6 +171,24 @@ def _ensure_legacy_index_constants(module_text: str) -> str:
     if text.endswith("\n"):
         out += "\n"
     return out
+
+
+def _mlir_toolchain_major() -> int:
+    try:
+        report = detect_mlir_toolchain()
+    except Exception:
+        return 0
+    tools = dict(report.get("tools") or {})
+    for name in ("mlir-opt", "llc"):
+        tool = dict(tools.get(name) or {})
+        version = str(tool.get("version") or "").strip()
+        m = re.search(r"version\s+([0-9]{1,2})", version, re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                return 0
+    return 0
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -21881,11 +21900,13 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("}")
 
     module_text = "\n".join(lines) + "\n"
+    mlir_major = _mlir_toolchain_major()
     module_text = _rewrite_legacy_memref_assume_alignment(module_text)
     module_text = _rewrite_legacy_vector_splat(module_text)
     module_text = _rewrite_legacy_vector_extract_insert(module_text)
-    module_text = _rewrite_legacy_arith_select(module_text)
-    module_text = _rewrite_legacy_arith_maxmin(module_text)
+    if mlir_major and mlir_major < 20:
+        module_text = _rewrite_legacy_arith_select(module_text)
+        module_text = _rewrite_legacy_arith_maxmin(module_text)
     module_text = _rewrite_legacy_llvm_intr_fma(module_text)
     module_text = _ensure_legacy_index_constants(module_text)
 

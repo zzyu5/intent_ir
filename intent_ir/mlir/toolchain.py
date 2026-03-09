@@ -71,6 +71,133 @@ def _intentir_local_bindirs() -> list[Path]:
     return out
 
 
+def _intentir_prefix_roots() -> list[Path]:
+    roots: list[Path] = []
+    env_root = str(os.getenv("INTENTIR_MLIR_TOOLCHAIN_ROOT", "")).strip()
+    if env_root:
+        roots.append(Path(env_root))
+    roots.append(_DEFAULT_TOOLCHAIN_ROOT / "mlir-current")
+    roots.extend(sorted(_DEFAULT_TOOLCHAIN_ROOT.glob("LLVM-*"), reverse=True))
+    roots.extend(sorted(_DEFAULT_TOOLCHAIN_ROOT.glob("mlir-*"), reverse=True))
+    for v in _LLVM_VERSIONS:
+        roots.append(Path(f"/usr/lib/llvm-{int(v)}"))
+    dedup: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except Exception:
+            resolved = root
+        if not resolved.exists():
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(resolved)
+    return dedup
+
+
+def _prefix_bindir(prefix: Path) -> Path | None:
+    for cand in (
+        prefix / "bin",
+        prefix / "usr" / "bin",
+        prefix / "usr" / "lib" / "llvm-20" / "bin",
+        prefix / "usr" / "lib" / "llvm-19" / "bin",
+        prefix / "usr" / "lib" / "llvm-18" / "bin",
+        prefix / "usr" / "lib" / "llvm-17" / "bin",
+        prefix / "usr" / "lib" / "llvm-16" / "bin",
+        prefix / "usr" / "lib" / "llvm-15" / "bin",
+        prefix / "usr" / "lib" / "llvm-14" / "bin",
+    ):
+        if cand.is_dir():
+            return cand
+    return None
+
+
+def _tool_at(bindir: Path, name: str) -> str:
+    path = bindir / name
+    return str(path) if path.is_file() and os.access(str(path), os.X_OK) else ""
+
+
+def _tool_version_from_path(path: str) -> str:
+    if not str(path or "").strip():
+        return ""
+    try:
+        p = subprocess.run([str(path), "--version"], capture_output=True, text=True)
+    except Exception:
+        return ""
+    if p.returncode != 0:
+        return ""
+    return str((p.stdout or p.stderr or "").splitlines()[0]).strip()
+
+
+def _toolchain_probe_from_prefix(prefix: Path) -> dict[str, Any] | None:
+    bindir = _prefix_bindir(prefix)
+    if bindir is None:
+        return None
+    tools: dict[str, dict[str, Any]] = {}
+    for base, env_var in (
+        ("mlir-opt", "INTENTIR_MLIR_OPT"),
+        ("mlir-translate", "INTENTIR_MLIR_TRANSLATE"),
+        ("llvm-as", "INTENTIR_LLVM_AS"),
+        ("opt", "INTENTIR_LLVM_OPT"),
+        ("llc", "INTENTIR_LLC"),
+    ):
+        path = _tool_at(bindir, base)
+        tools[base] = {
+            "available": bool(path),
+            "path": str(path),
+            "version": _tool_version_from_path(path),
+            "resolved_name": str(base),
+            "env_var": str(env_var),
+            "candidates_checked": [str(path)] if path else [],
+        }
+    required = ("mlir-opt", "mlir-translate", "llvm-as", "opt", "llc")
+    if not all(bool((tools.get(name) or {}).get("available")) for name in required):
+        return None
+    return {
+        "prefix": str(prefix),
+        "bindir": str(bindir),
+        "tools": tools,
+    }
+
+
+def _extract_major_version(text: str) -> int:
+    import re
+
+    m = re.search(r"([0-9]{2})\.([0-9]+)\.([0-9]+)", str(text or ""))
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return -1
+    m2 = re.search(r"version\s+([0-9]{2})", str(text or ""), re.IGNORECASE)
+    if m2:
+        try:
+            return int(m2.group(1))
+        except Exception:
+            return -1
+    return -1
+
+
+def _coherent_toolchain_probe() -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    best_key: tuple[int, int] = (-1, -1)
+    for prefix in _intentir_prefix_roots():
+        probe = _toolchain_probe_from_prefix(prefix)
+        if probe is None:
+            continue
+        llc_version = str(((probe.get("tools") or {}).get("llc") or {}).get("version") or "")
+        major = _extract_major_version(llc_version)
+        is_system = 1 if str(prefix).startswith("/usr/lib/llvm-") else 0
+        key = (major, is_system)
+        if key > best_key:
+            best = probe
+            best_key = key
+    return best
+
+
 def _candidate_names(base: str, env_var: str) -> list[str]:
     out: list[str] = []
     env_val = str(os.getenv(env_var, "") or "").strip()
@@ -165,6 +292,69 @@ def _probe_tool_aliases(aliases: list[str], *, env_var: str) -> dict[str, Any]:
 
 
 def detect_mlir_toolchain() -> dict[str, Any]:
+    coherent = _coherent_toolchain_probe()
+    if coherent is not None:
+        tools = dict(coherent.get("tools") or {})
+        ptxas = _probe_tool("ptxas", env_var="INTENTIR_PTXAS")
+        clang = _probe_tool("clang", env_var="INTENTIR_CLANG")
+        rvv_cc = _probe_tool_aliases(
+            ["riscv64-linux-gnu-gcc", "riscv64-unknown-linux-gnu-gcc", "clang"],
+            env_var="INTENTIR_RVV_CC",
+        )
+        rvv_ld = _probe_tool_aliases(
+            ["riscv64-linux-gnu-ld", "ld.lld", "ld"],
+            env_var="INTENTIR_RVV_LD",
+        )
+        tools.update(
+            {
+                "ptxas": ptxas,
+                "clang": clang,
+                "rvv_cc": rvv_cc,
+                "rvv_ld": rvv_ld,
+            }
+        )
+        required_tools = ("mlir-opt", "mlir-translate", "llvm-as", "opt")
+        missing_required = [name for name in required_tools if not bool((tools.get(name) or {}).get("available"))]
+        cuda_required_tools = ("llc",)
+        cuda_optional_tools = ("ptxas",)
+        rvv_required_tools = ("llc", "rvv_cc", "rvv_ld")
+        rvv_optional_tools = ("clang",)
+        missing_cuda_required = [name for name in cuda_required_tools if not bool((tools.get(name) or {}).get("available"))]
+        missing_rvv_required = [name for name in rvv_required_tools if not bool((tools.get(name) or {}).get("available"))]
+        backend_install_hints: dict[str, str] = {}
+        return {
+            "schema_version": "intent_mlir_toolchain_probe_v1",
+            "ok": bool(len(missing_required) == 0),
+            "mlir_core_ok": True,
+            "required_tools": list(required_tools),
+            "missing_required_tools": missing_required,
+            "required_env_vars": {
+                "mlir-opt": "INTENTIR_MLIR_OPT",
+                "mlir-translate": "INTENTIR_MLIR_TRANSLATE",
+                "llvm-as": "INTENTIR_LLVM_AS",
+                "opt": "INTENTIR_LLVM_OPT",
+                "llc": "INTENTIR_LLC",
+                "ptxas": "INTENTIR_PTXAS",
+                "clang": "INTENTIR_CLANG",
+                "rvv_cc": "INTENTIR_RVV_CC",
+                "rvv_ld": "INTENTIR_RVV_LD",
+            },
+            "cuda_required_tools": list(cuda_required_tools),
+            "cuda_optional_tools": list(cuda_optional_tools),
+            "cuda_toolchain_ok": bool(len(missing_cuda_required) == 0),
+            "missing_cuda_required_tools": missing_cuda_required,
+            "rvv_required_tools": list(rvv_required_tools),
+            "rvv_optional_tools": list(rvv_optional_tools),
+            "rvv_toolchain_ok": bool(len(missing_rvv_required) == 0),
+            "missing_rvv_required_tools": missing_rvv_required,
+            "backend_install_hints": backend_install_hints,
+            "local_toolchain_roots": [str(x) for x in _intentir_prefix_roots()],
+            "selected_prefix": str(coherent.get("prefix") or ""),
+            "selected_bindir": str(coherent.get("bindir") or ""),
+            "install_hint": "",
+            "tools": tools,
+        }
+
     mlir_opt = _probe_tool("mlir-opt", env_var="INTENTIR_MLIR_OPT")
     mlir_translate = _probe_tool("mlir-translate", env_var="INTENTIR_MLIR_TRANSLATE")
     llvm_as = _probe_tool("llvm-as", env_var="INTENTIR_LLVM_AS")

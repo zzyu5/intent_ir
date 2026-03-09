@@ -303,14 +303,27 @@ def _extract_intentir_plugin_passes(pass_arg: str) -> list[str]:
     return [str(x) for x in names if str(x).strip()]
 
 
+def _resolve_intentir_mlir_pass_plugin() -> str:
+    plugin_env = str(os.getenv("INTENTIR_MLIR_PASS_PLUGIN", "")).strip()
+    if plugin_env.lower() in {"0", "off", "false", "disable", "disabled"}:
+        return ""
+    if plugin_env:
+        return plugin_env
+    auto_env = str(os.getenv("INTENTIR_AUTO_MLIR_PASS_PLUGIN", "")).strip().lower()
+    if auto_env in {"0", "off", "false", "disable", "disabled"}:
+        return ""
+    default_plugin = ROOT / "artifacts" / "mlir_plugins" / "intentir" / "libIntentIRPasses.so"
+    return str(default_plugin) if default_plugin.is_file() else ""
+
+
 def _maybe_intentir_mlir_opt_python_fallback(
     module: IntentMLIRModule,
     *,
     pass_arg: str,
     backend: str | None,
 ) -> PassExecutionResult | None:
-    plugin_env = str(os.getenv("INTENTIR_MLIR_PASS_PLUGIN", "")).strip()
-    if plugin_env:
+    plugin = _resolve_intentir_mlir_pass_plugin()
+    if plugin:
         return None
     intentir_passes = _extract_intentir_plugin_passes(pass_arg)
     if not intentir_passes:
@@ -347,7 +360,7 @@ def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) ->
     if not arg_tokens:
         raise RuntimeError("mlir-opt pass selector missing pass argument")
     cli_args = [x if str(x).startswith("-") else f"--{x}" for x in arg_tokens]
-    plugin = str(os.getenv("INTENTIR_MLIR_PASS_PLUGIN", "")).strip()
+    plugin = _resolve_intentir_mlir_pass_plugin()
     plugin_arg: list[str] = []
     if plugin:
         if not Path(plugin).is_file():

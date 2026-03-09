@@ -47,6 +47,14 @@ def test_mlir_roundtrip_from_intent() -> None:
     assert [op.op for op in back.ops] == [op.op for op in intent.ops]
 
 
+def test_std_mlir_emits_modern_func_dialect() -> None:
+    module = to_mlir(_sample_intent())
+    text = str(module.module_text or "")
+    assert "func.func @add2d()" in text
+    assert "func.return" in text
+    assert "  func @add2d()" not in text
+
+
 def test_mlir_pass_pipeline_runs(tmp_path: Path) -> None:
     intent = _sample_intent()
     module = to_mlir(intent)
