@@ -69,10 +69,22 @@ def main() -> None:
             print(s.name)
         return
 
-    wanted = set(args.kernel or [])
-    for spec in specs:
-        if wanted and spec.name not in wanted:
-            continue
+    wanted_list = [str(x) for x in list(args.kernel or []) if str(x).strip()]
+    if wanted_list:
+        # User explicitly requested kernels; allow selecting from the full coverage
+        # universe even when --suite=smoke (smoke is a small subset and does not
+        # include many kernels like flash_attention2d).
+        all_specs = list(coverage_kernel_specs())
+        by_name = {str(s.name): s for s in all_specs}
+        missing = [k for k in wanted_list if k not in by_name]
+        if missing:
+            print(f"Unknown kernel(s): {missing}", file=sys.stderr, flush=True)
+            raise SystemExit(2)
+        run_specs = [by_name[k] for k in wanted_list]
+    else:
+        run_specs = list(specs)
+
+    for spec in run_specs:
         print(f"\n=== {spec.name} ===")
         try:
             report = run_pipeline_for_spec(
