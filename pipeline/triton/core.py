@@ -581,6 +581,8 @@ def _downstream_llvm_pipeline(
             kernels = _load_cuda_real_mlir_wave_kernels(wave)
             if spec_name and str(spec_name) in kernels:
                 return "downstream_cuda_std_llvm", "cuda"
+            if _cuda_real_mlir_allow_unknown():
+                return "downstream_cuda_std_llvm", "cuda"
             # In real-MLIR mode, do not fall back to cached LLVM IR implicitly.
             return None, None
         return "downstream_cuda_llvm", "cuda"
@@ -593,6 +595,11 @@ def _downstream_llvm_pipeline(
             return None, None
         return "downstream_rvv_llvm", "rvv"
     return None, None
+
+
+def _cuda_real_mlir_allow_unknown() -> bool:
+    raw = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_ALLOW_UNKNOWN", "0") or "").strip().lower()
+    return raw in {"1", "true", "yes", "y", "on"}
 
 
 def _downstream_llvm_extra_pipelines(backend_target: str | None) -> list[tuple[str, str]]:

@@ -16,6 +16,7 @@ from org.mapping.cuda.module_catalog import (
     layer_norm_persistent_catalog,
     masked_attention2d_catalog,
     matmul_fused_epilogue2d_catalog,
+    rms_norm2d_catalog,
     row_reduction_catalog,
     row_softmax_catalog,
 )
@@ -388,6 +389,10 @@ def _graph_profile(
         if any(tok in role_tokens for tok in {"softmax_max", "softmax_sum", "row_stats", "mean", "rstd", "state", "max_state", "sum_state"}):
             signal_names.add("stateful_recurrence")
             state_ids.append(lifetime_id)
+        if any(tok in role_tokens for tok in {"mean", "row_mean", "mean_state"}):
+            signal_names.add("mean_state")
+        if any(tok in role_tokens for tok in {"rstd", "inv_rms", "rms_state"}):
+            signal_names.add("rms_state")
         if str(getattr(tensor_by_id(org).get(tensor_id, None), "view_of", "")).strip():
             signal_names.add("alias_view")
         if getattr(tensor_by_id(org).get(tensor_id, None), "alias_group", ""):
@@ -450,6 +455,8 @@ def _graph_profile(
         if iv is not None and iv > 0:
             row_width = int(iv)
             break
+    if int(row_width) == 64:
+        signal_names.add("row_width_64")
     head_dim = int(_coerce_int(shape_bindings.get("HEAD_DIM")) or 0)
 
     notes = [
@@ -542,6 +549,81 @@ def _binding_for_role(spec: FamilySpec, bindings: Mapping[str, int], role: str) 
     return None
 
 
+def _shape_keys_present(shape_bindings: Mapping[str, Any], keys: tuple[str, ...]) -> bool:
+    for key in list(keys or ()):
+        if _coerce_int(_lookup_binding(shape_bindings, key)) is None:
+            return False
+    return True
+
+
+def _resolve_family_spec(
+    *,
+    specs: Mapping[str, FamilySpec],
+    kernel_name: str,
+    profile: GraphProfile,
+    shape_bindings: Mapping[str, Any],
+    source_oracle: Mapping[str, Any],
+) -> tuple[FamilySpec, str]:
+    direct = specs.get(str(kernel_name))
+    if direct is not None:
+        return direct, f"family_exact={kernel_name}"
+
+    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
+    source_spec = specs.get(source_kind)
+    if source_spec is not None and _shape_keys_present(shape_bindings, tuple(source_spec.required_shape_keys or ())):
+        return source_spec, f"family_source_oracle={source_kind}"
+
+    scored: list[tuple[float, str, str]] = []
+
+    def _consider(name: str, score: float, reason: str) -> None:
+        spec = specs.get(str(name))
+        if spec is None:
+            return
+        if not _shape_keys_present(shape_bindings, tuple(spec.required_shape_keys or ())):
+            return
+        scored.append((float(score), str(name), str(reason)))
+
+    if profile.has_signal("stream_stage") and profile.has_signal("online_state") and profile.has_signal("resident_state"):
+        if profile.has_signal("mask_path"):
+            _consider("masked_attention2d", 140.0, "graph:resident+stream+online+mask")
+            _consider("_attn_fwd", 132.0, "graph:masked_attn_forward")
+        else:
+            _consider("flash_attention2d", 138.0, "graph:resident+stream+online")
+    if profile.has_signal("mma_path"):
+        if profile.has_signal("fused_epilogue"):
+            _consider("matmul_fused_epilogue2d", 126.0, "graph:mma+epilogue")
+        _consider("ai_bench_matmul", 118.0, "graph:mma")
+    if profile.has_signal("reduction_path") and profile.has_signal("online_state"):
+        if profile.has_signal("mask_path"):
+            _consider("masked_softmax2d", 114.0, "graph:masked_softmax")
+        if profile.has_signal("vector_path"):
+            _consider("ai_bench_softmax", 112.0, "graph:vector_softmax")
+        _consider("softmax_inner", 110.0, "graph:softmax")
+    if profile.has_signal("reduction_path") and profile.has_signal("fused_epilogue"):
+        if _shape_keys_present(shape_bindings, ("N", "GROUP_SIZE")):
+            _consider("group_norm_kernel", 108.0, "graph:group_norm")
+        if profile.has_signal("rms_state") and not profile.has_signal("mean_state"):
+            _consider("rms_norm2d", 107.0, "graph:rms_norm")
+        _consider("layer_norm_persistent", 106.0, "graph:norm")
+    if profile.has_signal("reduction_path"):
+        _consider("row_max", 72.0, "graph:reduction")
+        _consider("row_sum", 70.0, "graph:reduction")
+    if profile.has_signal("vector_path") or profile.has_signal("resident_state") or int(profile.total_work or 0) > 0:
+        _consider("add2d", 40.0, "graph:elementwise")
+        _consider("exp2d", 38.0, "graph:elementwise")
+
+    if not scored:
+        for name, spec in dict(specs or {}).items():
+            if _shape_keys_present(shape_bindings, tuple(spec.required_shape_keys or ())):
+                scored.append((0.0, str(name), "graph:shape_compatible"))
+
+    if not scored:
+        raise ValueError(f"no graph-driven family matches kernel={kernel_name!r}")
+    scored.sort(key=lambda item: (-float(item[0]), str(item[1])))
+    _, family_name, reason = scored[0]
+    return specs[family_name], f"family_inferred={family_name};reason={reason}"
+
+
 def _effective_group_bytes(
     *,
     spec: FamilySpec,
@@ -585,6 +667,11 @@ def _resource_fit(
     bindings: Mapping[str, int],
     hardware_model: HardwareModel,
 ) -> ResourceFit:
+    # Region-graph resource calculus:
+    #   bytes(path pi) = sum_{g in active_groups(pi)} bytes(g)
+    #   resource_cfg = max_{pi in Paths(region_graph)} bytes(path pi)
+    # When no RegionGraph is present, the system collapses to a single static path and
+    # the equations below evaluate that degenerate case directly.
     shared_budget = int(hardware_model.shared_mem_kb) * 1024
     register_budget = int(hardware_model.register_budget or 65536)
     shared_bytes = 0
@@ -1190,6 +1277,30 @@ def _family_specs() -> dict[str, FamilySpec]:
                 ),
             ),
         ),
+        "rms_norm2d": FamilySpec(
+            kernel="rms_norm2d",
+            catalog_builder=rms_norm2d_catalog,
+            required_shape_keys=("M", "N"),
+            base_modules=("rms_norm_row_tile_resident", "rms_norm_warp_statistics", "rms_norm_affine_epilogue"),
+            optional_modules=(),
+            params=(),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="rms_norm_axis1_v3",
+                    module_id="rms_norm_backend_v3",
+                    param_names=(),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "rms_state", "row_width_64"),
+                    signal_weights={"vector_path": 8.0, "row_width_64": 24.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="rms_norm_axis1_v2",
+                    module_id="rms_norm_backend_v2",
+                    param_names=(),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "rms_state"),
+                    signal_weights={"vector_path": 6.0},
+                ),
+            ),
+        ),
         "group_norm_kernel": FamilySpec(
             kernel="group_norm_kernel",
             catalog_builder=group_norm_kernel_catalog,
@@ -1358,14 +1469,18 @@ def plan_cuda_kernel(
 ) -> BackendPlan:
     specs = _family_specs()
     kernel_name = str(kernel).strip()
-    spec = specs.get(kernel_name)
-    if spec is None:
-        raise ValueError(f"unsupported universal cuda planner kernel={kernel_name!r}")
+    profile = _graph_profile(org, shape_bindings=shape_bindings, ttgir_facts=ttgir_facts, ptx_facts=ptx_facts)
+    spec, family_note = _resolve_family_spec(
+        specs=specs,
+        kernel_name=kernel_name,
+        profile=profile,
+        shape_bindings=shape_bindings,
+        source_oracle=source_oracle,
+    )
     del toolchain_model
     for key in list(spec.required_shape_keys or ()):
         _require_dim(shape_bindings, key)
     modules, module_edges, _passes = spec.catalog_builder(hardware_model)
-    profile = _graph_profile(org, shape_bindings=shape_bindings, ttgir_facts=ttgir_facts, ptx_facts=ptx_facts)
     ranked = _generate_candidate_evals(
         spec=spec,
         profile=profile,
@@ -1386,6 +1501,7 @@ def plan_cuda_kernel(
     any_shared_fit = any(item.resource_fit.allowed for item in list(ranked or []) if any(_norm_token(x).endswith("shared_stage") for x in item.enabled_params))
     notes = list(profile.notes)
     notes.append(f"engine=universal_graph_v1")
+    notes.append(str(family_note))
     notes.append(f"graph_signals={','.join(sorted(set(profile.signals)))}")
     notes.append(f"shared_bytes={int(profile.shared_bytes)}")
     notes.append(f"register_bytes={int(profile.register_bytes)}")

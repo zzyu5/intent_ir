@@ -306,6 +306,8 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
                 args.append(_resolve_value(op.attrs["subtract"], env, shape_bindings))
             elif op.op == "mul" and "mul_factor" in op.attrs:
                 args.append(_resolve_value(op.attrs["mul_factor"], env, shape_bindings))
+            elif op.op == "mul" and "scale" in op.attrs:
+                args.append(_resolve_value(op.attrs["scale"], env, shape_bindings))
             elif op.op in {"max", "min"} and "other" in op.attrs:
                 args.append(_resolve_value(op.attrs["other"], env, shape_bindings))
         if len(args) != 2:
@@ -313,7 +315,11 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         a_name = input_names[0] if input_names else None
         b_name = input_names[1] if len(input_names) > 1 else None
         a, b = _align_shapes_for_elemwise_named(intent, a_name, args[0], b_name, args[1], shape_bindings)
-        return NUM_BIN_OPS[op.op](a, b)
+        out = NUM_BIN_OPS[op.op](a, b)
+        if op.op == "mul" and "scale" in op.attrs and len(input_names) >= 2:
+            scale = _resolve_value(op.attrs["scale"], env, shape_bindings)
+            out = np.multiply(out, scale)
+        return out
     if op.op in NUM_UNARY_OPS:
         x = _get(env, op.inputs[0])
         if op.op == "exp":

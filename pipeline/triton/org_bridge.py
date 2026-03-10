@@ -4,7 +4,6 @@ import hashlib
 import importlib
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -17,6 +16,7 @@ from pipeline.triton.core import (
     _compiler_stack_name,
     _compiler_cpp_wave_name,
     _detect_cuda_arch,
+    _emit_mlir_shadow_artifacts,
     _normalize_cuda_arch_key,
     _org_budget,
     _org_candidates_jsonl_path,
@@ -122,6 +122,7 @@ def _toolchain_env_overrides(toolchain_model: Mapping[str, Any] | None) -> dict[
     env: dict[str, str] = {}
     if bool(model.get("requires_real_mlir")):
         env["INTENTIR_REAL_MLIR"] = "1"
+        env["INTENTIR_CUDA_REAL_MLIR_ALLOW_UNKNOWN"] = "1"
     cuda_wave = str(model.get("cuda_real_mlir_wave") or "").strip().lower()
     if cuda_wave:
         env["INTENTIR_CUDA_REAL_MLIR_WAVE"] = cuda_wave
@@ -131,6 +132,72 @@ def _toolchain_env_overrides(toolchain_model: Mapping[str, Any] | None) -> dict[
     return env
 
 
+def _report_contract_exec_meta(report: Mapping[str, Any]) -> tuple[str, str, str, str, str, bool | None, str]:
+    mlir = dict(report.get("mlir") or {})
+    exec_meta = dict(
+        (
+            mlir.get("downstream_cuda_std_llvm_contract_exec_meta")
+            or mlir.get("downstream_cuda_contract_exec_meta")
+            or mlir.get("downstream_cuda_llvm_contract_exec_meta")
+            or {}
+        )
+    )
+    contract_path = str(
+        mlir.get("downstream_cuda_std_llvm_contract_path")
+        or mlir.get("downstream_cuda_contract_path")
+        or mlir.get("downstream_cuda_llvm_contract_path")
+        or mlir.get("downstream_contract_path")
+        or ""
+    )
+    ptx_path = str(exec_meta.get("cuda_ptx_path") or "")
+    entry = str(((exec_meta.get("cuda_ptx_entries") or [None]) or [None])[0] or "")
+    requested_sm = str(exec_meta.get("cuda_requested_sm") or "")
+    effective_sm = str(exec_meta.get("cuda_effective_sm") or "")
+    downleveled = exec_meta.get("cuda_target_downleveled")
+    error = str(mlir.get("error") or "")
+    return contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error
+
+
+def _run_inline_compile_check(
+    *,
+    spec_name: str,
+    cand_dir: Path,
+    backend_target: str | None,
+    intent: IntentFunction,
+    shape_bindings: Mapping[str, int],
+    env_updates: Mapping[str, str],
+) -> tuple[bool, dict[str, Any], str]:
+    report: dict[str, Any] = {"kernel": str(spec_name), "mlir": {}}
+    report_path = cand_dir / f"{spec_name}.json"
+    saved_env = {str(k): os.environ.get(str(k)) for k in dict(env_updates or {}).keys()}
+    try:
+        for key, value in dict(env_updates or {}).items():
+            os.environ[str(key)] = str(value)
+        intent_copy = IntentFunction.from_json_dict(intent.to_json_dict())
+        _emit_mlir_shadow_artifacts(
+            spec_name=str(spec_name),
+            out_dir=Path(cand_dir),
+            intent=intent_copy,
+            report=report,
+            backend_target=backend_target,
+            shape_bindings={str(k): int(v) for k, v in dict(shape_bindings or {}).items()},
+        )
+        ok = True
+        error = ""
+    except Exception as exc:  # noqa: BLE001
+        report["mlir"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        ok = False
+        error = f"{type(exc).__name__}: {exc}"
+    finally:
+        for key, old in saved_env.items():
+            if old is None:
+                os.environ.pop(str(key), None)
+            else:
+                os.environ[str(key)] = str(old)
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return ok, report, error
+
+
 def _run_compile_check_candidates(
     *,
     spec_name: str,
@@ -138,6 +205,8 @@ def _run_compile_check_candidates(
     backend_target: str | None,
     target_arch: str,
     candidates: list[object],
+    intent: IntentFunction,
+    shape_bindings: Mapping[str, int],
     toolchain_model: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     limit = int(_org_compile_topk())
@@ -171,28 +240,13 @@ def _run_compile_check_candidates(
             + "\n",
             encoding="utf-8",
         )
-        env = dict(os.environ)
-        env["INTENTIR_ORG_MODE"] = "off"
-        env["INTENTIR_CUDA_TUNING_DB"] = str(tuning_path)
-        env["INTENTIR_COMPILER_STACK"] = compiler_stack
+        env_updates = {
+            "INTENTIR_ORG_MODE": "off",
+            "INTENTIR_CUDA_TUNING_DB": str(tuning_path),
+            "INTENTIR_COMPILER_STACK": compiler_stack,
+        }
         if compiler_cpp_wave:
-            env["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
-        env.update(_toolchain_env_overrides(toolchain_model))
-        cmd = [
-            sys.executable,
-            str(ROOT / "scripts" / "triton" / "full_pipeline_verify.py"),
-            "--kernel",
-            str(spec_name),
-            "--backend-target",
-            str(backend_target or ""),
-            "--cases-limit",
-            "1",
-            "--no-stage-c",
-            "--no-mutation-kill",
-            "--out-dir",
-            str(cand_dir),
-        ]
-        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, env=env)
+            env_updates["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
         report_path = cand_dir / f"{spec_name}.json"
         contract_path = ""
         ptx_path = ""
@@ -201,30 +255,19 @@ def _run_compile_check_candidates(
         effective_sm = ""
         downleveled: bool | None = None
         error = ""
-        ok = bool(proc.returncode == 0 and report_path.is_file())
-        if report_path.is_file():
-            try:
-                report = json.loads(report_path.read_text(encoding="utf-8"))
-                mlir = dict(report.get("mlir") or {})
-                exec_meta = dict((mlir.get("downstream_cuda_std_llvm_contract_exec_meta") or mlir.get("downstream_cuda_contract_exec_meta") or {}))
-                contract_path = str(
-                    mlir.get("downstream_cuda_std_llvm_contract_path")
-                    or mlir.get("downstream_cuda_contract_path")
-                    or mlir.get("downstream_contract_path")
-                    or ""
-                )
-                ptx_path = str(exec_meta.get("cuda_ptx_path") or "")
-                entry = str(((exec_meta.get("cuda_ptx_entries") or [None]) or [None])[0] or "")
-                requested_sm = str(exec_meta.get("cuda_requested_sm") or "")
-                effective_sm = str(exec_meta.get("cuda_effective_sm") or "")
-                downleveled = exec_meta.get("cuda_target_downleveled")
-                error = str(mlir.get("error") or "")
-                ok = bool(ok and contract_path)
-            except Exception as exc:  # noqa: BLE001
-                error = f"{type(exc).__name__}: {exc}"
-                ok = False
-        else:
-            error = (str(proc.stderr or proc.stdout).strip() or "compile_check_report_missing")
+        env_updates.update(_toolchain_env_overrides(toolchain_model))
+        ok, report, run_error = _run_inline_compile_check(
+            spec_name=str(spec_name),
+            cand_dir=Path(cand_dir),
+            backend_target=backend_target,
+            intent=intent,
+            shape_bindings=shape_bindings,
+            env_updates=env_updates,
+        )
+        contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
+        if not error:
+            error = str(run_error or "")
+        ok = bool(ok and contract_path)
         check = CompileCheck(
             candidate=str(cand_line),
             kernel_kind=str(getattr(candidate, "kernel_kind")),
@@ -544,6 +587,8 @@ def run_org_sidecar(
             backend_target=backend_target,
             target_arch=str(target_arch),
             candidates=list(plan.candidates or []),
+            intent=intent,
+            shape_bindings=dict(shape_bindings),
             toolchain_model=toolchain_model.to_json_dict(),
         )
         plan.compile_checks = list(compile_checks)

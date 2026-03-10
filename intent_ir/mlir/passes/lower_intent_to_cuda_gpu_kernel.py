@@ -375,6 +375,22 @@ def lower_intent_to_cuda_gpu_kernel(
         "per_token_group_quant_fp8_2d",
         "batch_norm2d",
     }
+    if len(outputs) == 2 and not multi_output_ok:
+        out_ranks = sorted(
+            int(len(list(getattr((intent.tensors or {}).get(name), "shape", []) or [])))
+            for name in outputs
+            if str(name).strip()
+        )
+        if out_ranks == [1, 2]:
+            multi_output_ok = True
+    if len(outputs) == 3 and not multi_output_ok:
+        out_ranks = sorted(
+            int(len(list(getattr((intent.tensors or {}).get(name), "shape", []) or [])))
+            for name in outputs
+            if str(name).strip()
+        )
+        if out_ranks == [1, 2, 2]:
+            multi_output_ok = True
     if len(outputs) != 1 and not multi_output_ok:
         raise RuntimeError(f"cuda real-mlir wave supports single-output intents only; outputs={outputs}")
     out_name = outputs[0]
@@ -1882,6 +1898,7 @@ def lower_intent_to_cuda_gpu_kernel(
     row_layer_norm_persistent: dict[str, Any] | None = None
     row_layer_norm_residual2d: dict[str, Any] | None = None
     row_rms_norm2d: dict[str, Any] | None = None
+    row_fused_add_rms_norm2d: dict[str, Any] | None = None
     row_rms_norm_residual2d: dict[str, Any] | None = None
     dropout_v1: dict[str, Any] | None = None
     correlation_v1: dict[str, Any] | None = None
@@ -5835,7 +5852,7 @@ def lower_intent_to_cuda_gpu_kernel(
             inp_name = _first_present("inp", "input", "X")
             w_name = _first_present("weight", "W")
             out_name2 = str(out_name)
-            rstd_name = _first_present("rstd", "INV_RMS", "InvRms")
+            rstd_name = _first_present("rstd", "RSTD", "INV_RMS", "InvRms")
             eps_name = _first_present("eps")
 
             if inp_name is not None and w_name is not None and rstd_name is not None and out_name2 in arg_specs:
@@ -6078,7 +6095,221 @@ def lower_intent_to_cuda_gpu_kernel(
     extra_shared_globals: list[tuple[str, str]] = []
     cuda_real_mlir_attention_cfg: dict[str, Any] | None = None
     cuda_real_mlir_matmul_cfg: dict[str, Any] | None = None
+    elementwise_override_compatible = bool(
+        intent.ops
+        and all(
+            str(getattr(op, "op", "") or "")
+            in {
+                "const",
+                "identity",
+                "cast",
+                "broadcast_in_dim",
+                "reshape",
+                "transpose",
+                "add",
+                "sub",
+                "mul",
+                "div",
+                "max",
+                "min",
+                "relu",
+                "exp",
+                "log",
+                "sigmoid",
+                "tanh",
+                "gelu",
+                "clip",
+                "sqrt",
+                "rsqrt",
+                "neg",
+                "abs",
+                "where",
+            }
+            for op in list(intent.ops or [])
+        )
+    )
     kernel_kind_override = str((module.meta or {}).get("intentir_kernel_kind_override") or "").strip()
+    if row_rms_norm2d is None and out_m is not None and out_n is not None:
+        def _struct_first_present(*names: str) -> str | None:
+            for cand in names:
+                key = str(cand).strip()
+                if key and key in arg_specs:
+                    return key
+            return None
+
+        inp_name = _struct_first_present("inp", "input", "X")
+        w_name = _struct_first_present("weight", "W")
+        rstd_name = _struct_first_present("rstd", "RSTD", "INV_RMS", "InvRms")
+        eps_name = _struct_first_present("eps")
+        offset_name = _struct_first_present("offset")
+        out_name2 = str(out_name)
+        eps_const = _extract_f32_const("eps")
+        outputs_set = {str(x).strip() for x in list(outputs or []) if str(x).strip()}
+        no_mean_output = not any(str(name).strip() in outputs_set for name in ("mean", "Mean", "MEAN"))
+        offset_zero_ok = True
+        if offset_name is not None:
+            offset_const = _extract_f32_const(offset_name)
+            offset_zero_ok = bool(offset_const is not None and abs(float(offset_const)) <= 1.0e-8)
+        if (
+            inp_name is not None
+            and w_name is not None
+            and rstd_name is not None
+            and (eps_name is not None or eps_const is not None)
+            and out_name2 in arg_specs
+            and int(len(list(outputs or []))) == 2
+            and no_mean_output
+            and offset_zero_ok
+        ):
+            ok = (
+                str(arg_specs[inp_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[w_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[out_name2].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[rstd_name].get("memref_elem_ty")) == "f32"
+                and list(arg_specs[inp_name].get("dims") or []) == [int(out_m), int(out_n)]
+                and list(arg_specs[out_name2].get("dims") or []) == [int(out_m), int(out_n)]
+                and list(arg_specs[w_name].get("dims") or []) == [int(out_n)]
+                and list(arg_specs[rstd_name].get("dims") or []) == [int(out_m)]
+            )
+            if ok:
+                if eps_const is not None:
+                    row_rms_norm2d = {
+                        "M": int(out_m),
+                        "N": int(out_n),
+                        "eps_const": float(eps_const),
+                        "inp_name": str(inp_name),
+                        "weight_name": str(w_name),
+                        "out_name": str(out_name2),
+                        "rstd_name": str(rstd_name),
+                    }
+                else:
+                    eps_spec = dict(arg_specs.get(eps_name) or {})
+                    eps_ok = bool(eps_spec.get("scalar")) and str(eps_spec.get("memref_elem_ty") or "") == "f32"
+                    if eps_ok:
+                        row_rms_norm2d = {
+                            "M": int(out_m),
+                            "N": int(out_n),
+                            "eps_tensor_name": str(eps_name),
+                            "inp_name": str(inp_name),
+                            "weight_name": str(w_name),
+                            "out_name": str(out_name2),
+                            "rstd_name": str(rstd_name),
+                        }
+    if row_fused_add_rms_norm2d is None and out_m is not None and out_n is not None:
+        def _struct_dims(name: str) -> list[int]:
+            return [int(x) for x in list((arg_specs.get(name) or {}).get("dims") or [])]
+
+        def _struct_scalar_binding(name: str | None, *, allow_missing: bool = False) -> tuple[bool, str, float]:
+            key = str(name or "").strip()
+            if not key:
+                return (bool(allow_missing), "", 0.0)
+            const_val = _extract_f32_const(key)
+            if const_val is not None:
+                return (True, "", float(const_val))
+            spec = dict(arg_specs.get(key) or {})
+            if bool(spec.get("scalar")) and str(spec.get("memref_elem_ty") or "") == "f32":
+                return (True, key, 0.0)
+            return (False, "", 0.0)
+
+        outputs_rank2 = [
+            str(name)
+            for name in list(outputs or [])
+            if _struct_dims(str(name)) == [int(out_m), int(out_n)]
+        ]
+        outputs_rank1 = [str(name) for name in list(outputs or []) if _struct_dims(str(name)) == [int(out_m)]]
+        if len(outputs_rank2) == 2 and len(outputs_rank1) == 1:
+            def _struct_first_present(*names: str) -> str | None:
+                for cand in names:
+                    key = str(cand).strip()
+                    if key and key in arg_specs:
+                        return key
+                return None
+
+            inp_name = _struct_first_present("inp", "input", "X")
+            residual_name = _struct_first_present("residual", "R")
+            w_name = _struct_first_present("weight", "W")
+            eps_name = _struct_first_present("eps")
+            offset_name = _struct_first_present("offset")
+            out_name2 = str(out_name) if str(out_name).strip() in outputs_rank2 else str(outputs_rank2[0])
+            residual_out_name = next((name for name in outputs_rank2 if str(name) != out_name2), "")
+            rstd_name = str(outputs_rank1[0])
+            eps_ok, eps_tensor_name, eps_const = _struct_scalar_binding(eps_name)
+            offset_ok, offset_tensor_name, offset_const = _struct_scalar_binding(offset_name, allow_missing=True)
+            if not eps_ok:
+                eps_const_fallback = _extract_f32_const("eps")
+                if eps_const_fallback is not None:
+                    eps_ok = True
+                    eps_const = float(eps_const_fallback)
+            if not offset_ok:
+                offset_const_fallback = _extract_f32_const("offset")
+                if offset_const_fallback is not None:
+                    offset_ok = True
+                    offset_const = float(offset_const_fallback)
+
+            ops_list = [op for op in list(intent.ops or []) if op is not None]
+
+            def _op_name(op: Any) -> str:
+                return str(getattr(op, "op", "")).strip()
+
+            def _op_out(op: Any) -> str:
+                return str(getattr(op, "output", "")).strip()
+
+            def _op_inputs(op: Any) -> list[str]:
+                return [str(x).strip() for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+
+            residual_add_ok = any(
+                _op_name(op) == "add"
+                and _op_out(op) == residual_out_name
+                and set(_op_inputs(op)) == {str(inp_name), str(residual_name)}
+                for op in ops_list
+            )
+            square_outputs = {
+                _op_out(op)
+                for op in ops_list
+                if _op_name(op) == "mul" and _op_inputs(op) == [residual_out_name, residual_out_name]
+            }
+            reduce_ok = any(
+                _op_name(op) == "reduce_sum" and any(inp in square_outputs for inp in _op_inputs(op)) for op in ops_list
+            )
+            rstd_ok = any(_op_name(op) == "rsqrt" and _op_out(op) == rstd_name for op in ops_list)
+            final_out_ok = any(_op_out(op) == out_name2 for op in ops_list)
+            if (
+                inp_name is not None
+                and residual_name is not None
+                and w_name is not None
+                and residual_out_name
+                and eps_ok
+                and offset_ok
+                and residual_add_ok
+                and reduce_ok
+                and rstd_ok
+                and final_out_ok
+                and str(arg_specs[inp_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[residual_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[w_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[out_name2].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[residual_out_name].get("memref_elem_ty")) == "f32"
+                and str(arg_specs[rstd_name].get("memref_elem_ty")) == "f32"
+                and list(arg_specs[inp_name].get("dims") or []) == [int(out_m), int(out_n)]
+                and list(arg_specs[residual_name].get("dims") or []) == [int(out_m), int(out_n)]
+                and list(arg_specs[w_name].get("dims") or []) == [int(out_n)]
+                and list(arg_specs[out_name2].get("dims") or []) == [int(out_m), int(out_n)]
+                and list(arg_specs[residual_out_name].get("dims") or []) == [int(out_m), int(out_n)]
+                and list(arg_specs[rstd_name].get("dims") or []) == [int(out_m)]
+            ):
+                row_fused_add_rms_norm2d = {
+                    "M": int(out_m),
+                    "N": int(out_n),
+                    "inp_name": str(inp_name),
+                    "residual_name": str(residual_name),
+                    "weight_name": str(w_name),
+                    "out_name": str(out_name2),
+                    "residual_out_name": str(residual_out_name),
+                    "rstd_name": str(rstd_name),
+                    "eps_tensor_name": str(eps_tensor_name),
+                    "eps_const": float(eps_const),
+                    "offset_tensor_name": str(offset_tensor_name),
+                    "offset_const": float(offset_const),
+                }
     kernel_kind_override_enabled = False
     if kernel_kind_override:
         allowed_by_intent: dict[str, set[str]] = {
@@ -6087,6 +6318,10 @@ def lower_intent_to_cuda_gpu_kernel(
             },
             "exp2d": {
                 "elementwise_v1",
+            },
+            "rms_norm2d": {
+                "rms_norm_axis1_v2",
+                "rms_norm_axis1_v3",
             },
             "_attn_fwd": {"attn_fwd_tiled_v3", "attn_fwd_softmax_v2", "attn_fwd_softmax_v1"},
             "flash_attention2d": {
@@ -6153,6 +6388,12 @@ def lower_intent_to_cuda_gpu_kernel(
             },
         }
         allowed = allowed_by_intent.get(intent_name)
+        if allowed is None and row_rms_norm2d is not None:
+            allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3"}
+        if allowed is None and row_fused_add_rms_norm2d is not None:
+            allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3"}
+        if allowed is None and elementwise_override_compatible:
+            allowed = {"elementwise_v1"}
         if allowed is None:
             supported = ", ".join(sorted(allowed_by_intent))
             raise RuntimeError(
@@ -6393,6 +6634,12 @@ def lower_intent_to_cuda_gpu_kernel(
                     "layer_norm_axis1_v1 requires LAYER_NORM_PERSISTENT_ROW in {0,1}; "
                     f"got {req_persistent}"
                 )
+        if (
+            (row_rms_norm2d is not None or row_fused_add_rms_norm2d is not None)
+            and kernel_kind_override in {"rms_norm_axis1_v2", "rms_norm_axis1_v3"}
+        ):
+            if kernel_kind_override == "rms_norm_axis1_v3" and int(out_n or 0) != 64:
+                raise RuntimeError("rms_norm_axis1_v3 requires N==64")
         if intent_name in {"add2d", "exp2d"}:
             req_threads = int(bindings.get("ELEMENTWISE_BLOCK_THREADS") or 256)
             req_vec = int(bindings.get("ELEMENTWISE_VECTOR_WIDTH") or 1)
@@ -11507,6 +11754,194 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"          %w = memref.load {arg_ssa[w_name]}[%j2] : {w_memref}")
             lines.append(f"          %xn = arith.mulf %x2, %rstd_v{fm} : f32")
             lines.append(f"          %y = arith.mulf %xn, %w{fm} : f32")
+            lines.append(f"          memref.store %y, {arg_ssa[out_name2]}[%idx2] : {out_memref}")
+            lines.append("        }")
+            lines.append("      }")
+    elif row_fused_add_rms_norm2d is not None:
+        kernel_kind = "rms_norm_axis1_v2"
+        assert out_m is not None
+        assert out_n is not None
+
+        in_name = str(row_fused_add_rms_norm2d.get("inp_name") or "inp")
+        residual_name = str(row_fused_add_rms_norm2d.get("residual_name") or "residual")
+        w_name = str(row_fused_add_rms_norm2d.get("weight_name") or "weight")
+        out_name2 = str(row_fused_add_rms_norm2d.get("out_name") or out_name)
+        residual_out_name = str(row_fused_add_rms_norm2d.get("residual_out_name") or "residual_out")
+        rstd_name = str(row_fused_add_rms_norm2d.get("rstd_name") or "rstd")
+        eps_tensor_name = str(row_fused_add_rms_norm2d.get("eps_tensor_name") or "").strip()
+        eps_const = float(row_fused_add_rms_norm2d.get("eps_const") or 0.0)
+        offset_tensor_name = str(row_fused_add_rms_norm2d.get("offset_tensor_name") or "").strip()
+        offset_const = float(row_fused_add_rms_norm2d.get("offset_const") or 0.0)
+
+        in_memref = str(arg_specs[in_name]["memref"])
+        residual_memref = str(arg_specs[residual_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        residual_out_memref = str(arg_specs[residual_out_name]["memref"])
+        rstd_memref = str(arg_specs[rstd_name]["memref"])
+        eps_memref = str(arg_specs[eps_tensor_name]["memref"]) if eps_tensor_name else ""
+        offset_memref = str(arg_specs[offset_tensor_name]["memref"]) if offset_tensor_name else ""
+
+        if int(out_n) == 64:
+            kernel_kind = "rms_norm_axis1_v3"
+            rows_per_block = max(1, min(4, int(out_m)))
+            block_x = int(32 * int(rows_per_block))
+            grid_x = int((int(out_m) + int(rows_per_block) - 1) // int(rows_per_block))
+            launch_override = {"block": [int(block_x), 1, 1], "grid": [int(grid_x), 1, 1]}
+
+            lines.append("      %tid = gpu.thread_id x")
+            lines.append("      %bid_x = gpu.block_id x")
+            lines.append("      %c0 = arith.constant 0 : index")
+            lines.append("      %c1 = arith.constant 1 : index")
+            lines.append("      %c2 = arith.constant 2 : index")
+            lines.append("      %c32_idx = arith.constant 32 : index")
+            lines.append(f"      %cRows = arith.constant {int(rows_per_block)} : index")
+            lines.append(f"      %cGridX = arith.constant {int(grid_x)} : index")
+            lines.append(f"      %cM = arith.constant {int(out_m)} : index")
+            lines.append("      %cN = arith.constant 64 : index")
+            lines.append("      %c32_i32 = arith.constant 32 : i32")
+            lines.append("      %c16_i32 = arith.constant 16 : i32")
+            lines.append("      %c8_i32 = arith.constant 8 : i32")
+            lines.append("      %c4_i32 = arith.constant 4 : i32")
+            lines.append("      %c2_i32 = arith.constant 2 : i32")
+            lines.append("      %c1_i32 = arith.constant 1 : i32")
+            lines.append("      %pred_block = arith.cmpi ult, %bid_x, %cGridX : index")
+            lines.append("      scf.if %pred_block {")
+            lines.append("        %lane = arith.remui %tid, %c32_idx : index")
+            lines.append("        %warp = arith.divui %tid, %c32_idx : index")
+            lines.append("        %row_base = arith.muli %bid_x, %cRows : index")
+            lines.append("        %row = arith.addi %row_base, %warp : index")
+            lines.append("        %pred_row = arith.cmpi ult, %row, %cM : index")
+            lines.append("        scf.if %pred_row {")
+            lines.append("          %base = arith.muli %row, %cN : index")
+            eps_ssa = "%eps"
+            if eps_tensor_name:
+                eps_ssa = _fresh("eps")
+                lines.append(f"          {eps_ssa} = memref.load {arg_ssa[eps_tensor_name]}[%c0] : {eps_memref}")
+            else:
+                lines.append(f"          %eps = arith.constant {_as_f32_const(eps_const)} : f32")
+            offset_ssa = "%offset"
+            if offset_tensor_name:
+                offset_ssa = _fresh("offset")
+                lines.append(f"          {offset_ssa} = memref.load {arg_ssa[offset_tensor_name]}[%c0] : {offset_memref}")
+            else:
+                lines.append(f"          %offset = arith.constant {_as_f32_const(offset_const)} : f32")
+            lines.append("          %j0 = arith.muli %lane, %c2 : index")
+            lines.append("          %idx0 = arith.addi %base, %j0 : index")
+            lines.append("          %idx1 = arith.addi %idx0, %c1 : index")
+            lines.append(f"          %x0 = memref.load {arg_ssa[in_name]}[%idx0] : {in_memref}")
+            lines.append(f"          %x1 = memref.load {arg_ssa[in_name]}[%idx1] : {in_memref}")
+            lines.append(f"          %r0 = memref.load {arg_ssa[residual_name]}[%idx0] : {residual_memref}")
+            lines.append(f"          %r1 = memref.load {arg_ssa[residual_name]}[%idx1] : {residual_memref}")
+            lines.append(f"          %s0 = arith.addf %x0, %r0{fm} : f32")
+            lines.append(f"          %s1 = arith.addf %x1, %r1{fm} : f32")
+            lines.append(f"          memref.store %s0, {arg_ssa[residual_out_name]}[%idx0] : {residual_out_memref}")
+            lines.append(f"          memref.store %s1, {arg_ssa[residual_out_name]}[%idx1] : {residual_out_memref}")
+            lines.append(f"          %s0_sq = arith.mulf %s0, %s0{fm} : f32")
+            lines.append(f"          %s1_sq = arith.mulf %s1, %s1{fm} : f32")
+            lines.append(f"          %sumsq0 = arith.addf %s0_sq, %s1_sq{fm} : f32")
+            cur = "%sumsq0"
+            for off in ("%c16_i32", "%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                nxt = _fresh("sum")
+                lines.append(f"          {sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c32_i32 : f32")
+                lines.append(f"          {nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = str(nxt)
+            lines.append(f"          %n_f = arith.constant {_as_f32_const(64)} : f32")
+            lines.append(f"          %mean_sq = arith.divf {cur}, %n_f{fm} : f32")
+            lines.append(f"          %mean_eps = arith.addf %mean_sq, {eps_ssa}{fm} : f32")
+            lines.append(f"          %rstd_v = math.rsqrt %mean_eps{fm} : f32")
+            lines.append("          %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+            lines.append("          scf.if %is_lane0 {")
+            lines.append(f"            memref.store %rstd_v, {arg_ssa[rstd_name]}[%row] : {rstd_memref}")
+            lines.append("          }")
+            lines.append(f"          %w0 = memref.load {arg_ssa[w_name]}[%j0] : {w_memref}")
+            lines.append("          %j1 = arith.addi %j0, %c1 : index")
+            lines.append(f"          %w1 = memref.load {arg_ssa[w_name]}[%j1] : {w_memref}")
+            lines.append(f"          %w0_shift = arith.addf %w0, {offset_ssa}{fm} : f32")
+            lines.append(f"          %w1_shift = arith.addf %w1, {offset_ssa}{fm} : f32")
+            lines.append(f"          %s0n = arith.mulf %s0, %rstd_v{fm} : f32")
+            lines.append(f"          %s1n = arith.mulf %s1, %rstd_v{fm} : f32")
+            lines.append(f"          %y0 = arith.mulf %s0n, %w0_shift{fm} : f32")
+            lines.append(f"          %y1 = arith.mulf %s1n, %w1_shift{fm} : f32")
+            lines.append(f"          memref.store %y0, {arg_ssa[out_name2]}[%idx0] : {out_memref}")
+            lines.append(f"          memref.store %y1, {arg_ssa[out_name2]}[%idx1] : {out_memref}")
+            lines.append("        }")
+            lines.append("      }")
+        else:
+            kernel_kind = "rms_norm_axis1_v2"
+            launch_override = {"block": [32, 1, 1], "grid": [int(out_m), 1, 1]}
+
+            lines.append("      %tid = gpu.thread_id x")
+            lines.append("      %bid = gpu.block_id x")
+            lines.append("      %c0 = arith.constant 0 : index")
+            lines.append(f"      %cM = arith.constant {int(out_m)} : index")
+            lines.append(f"      %cN = arith.constant {int(out_n)} : index")
+            lines.append("      %c32_idx = arith.constant 32 : index")
+            lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+            lines.append("      scf.if %pred_row {")
+            lines.append("        %base = arith.muli %bid, %cN : index")
+            eps_ssa = "%eps"
+            if eps_tensor_name:
+                eps_ssa = _fresh("eps")
+                lines.append(f"        {eps_ssa} = memref.load {arg_ssa[eps_tensor_name]}[%c0] : {eps_memref}")
+            else:
+                lines.append(f"        %eps = arith.constant {_as_f32_const(eps_const)} : f32")
+            offset_ssa = "%offset"
+            if offset_tensor_name:
+                offset_ssa = _fresh("offset")
+                lines.append(f"        {offset_ssa} = memref.load {arg_ssa[offset_tensor_name]}[%c0] : {offset_memref}")
+            else:
+                lines.append(f"        %offset = arith.constant {_as_f32_const(offset_const)} : f32")
+
+            lines.append("        %c0f = arith.constant 0.0 : f32")
+            lines.append("        %partial_sumsq = scf.for %j = %tid to %cN step %c32_idx iter_args(%acc = %c0f) -> (f32) {")
+            lines.append("          %idx = arith.addi %base, %j : index")
+            lines.append(f"          %x = memref.load {arg_ssa[in_name]}[%idx] : {in_memref}")
+            lines.append(f"          %r = memref.load {arg_ssa[residual_name]}[%idx] : {residual_memref}")
+            lines.append(f"          %s = arith.addf %x, %r{fm} : f32")
+            lines.append(f"          memref.store %s, {arg_ssa[residual_out_name]}[%idx] : {residual_out_memref}")
+            lines.append(f"          %ss = arith.mulf %s, %s{fm} : f32")
+            lines.append(f"          %acc_next = arith.addf %acc, %ss{fm} : f32")
+            lines.append("          scf.yield %acc_next : f32")
+            lines.append("        }")
+
+            lines.append("        %c32_i32 = arith.constant 32 : i32")
+            lines.append("        %c16_i32 = arith.constant 16 : i32")
+            lines.append("        %c8_i32 = arith.constant 8 : i32")
+            lines.append("        %c4_i32 = arith.constant 4 : i32")
+            lines.append("        %c2_i32 = arith.constant 2 : i32")
+            lines.append("        %c1_i32 = arith.constant 1 : i32")
+            cur = "%partial_sumsq"
+            for off in ("%c16_i32", "%c8_i32", "%c4_i32", "%c2_i32", "%c1_i32"):
+                sh = _fresh("sh")
+                ok = _fresh("ok")
+                nxt = _fresh("sum")
+                lines.append(f"        {sh}, {ok} = gpu.shuffle xor {cur}, {off}, %c32_i32 : f32")
+                lines.append(f"        {nxt} = arith.addf {cur}, {sh}{fm} : f32")
+                cur = str(nxt)
+
+            lines.append(f"        %n_f = arith.constant {_as_f32_const(int(out_n))} : f32")
+            lines.append(f"        %mean_sq = arith.divf {cur}, %n_f{fm} : f32")
+            lines.append(f"        %mean_eps = arith.addf %mean_sq, {eps_ssa}{fm} : f32")
+            lines.append(f"        %rstd_v = math.rsqrt %mean_eps{fm} : f32")
+
+            lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
+            lines.append("        scf.if %is0 {")
+            lines.append(f"          memref.store %rstd_v, {arg_ssa[rstd_name]}[%bid] : {rstd_memref}")
+            lines.append("        }")
+
+            lines.append("        scf.for %j2 = %tid to %cN step %c32_idx {")
+            lines.append("          %idx2 = arith.addi %base, %j2 : index")
+            lines.append(f"          %x2 = memref.load {arg_ssa[in_name]}[%idx2] : {in_memref}")
+            lines.append(f"          %r2 = memref.load {arg_ssa[residual_name]}[%idx2] : {residual_memref}")
+            lines.append(f"          %s2 = arith.addf %x2, %r2{fm} : f32")
+            lines.append(f"          memref.store %s2, {arg_ssa[residual_out_name]}[%idx2] : {residual_out_memref}")
+            lines.append(f"          %w = memref.load {arg_ssa[w_name]}[%j2] : {w_memref}")
+            lines.append(f"          %w_shift = arith.addf %w, {offset_ssa}{fm} : f32")
+            lines.append(f"          %sn = arith.mulf %s2, %rstd_v{fm} : f32")
+            lines.append(f"          %y = arith.mulf %sn, %w_shift{fm} : f32")
             lines.append(f"          memref.store %y, {arg_ssa[out_name2]}[%idx2] : {out_memref}")
             lines.append("        }")
             lines.append("      }")
@@ -22837,7 +23272,9 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        memref.store {acc}, {arg_ssa[out_name2]}[%lin] : {out_memref}")
         lines.append("      }")
     else:
-        if kernel_kind_override_enabled and kernel_kind_override == "elementwise_v1" and intent_name in {"add2d", "exp2d"}:
+        if kernel_kind_override_enabled and kernel_kind_override == "elementwise_v1" and (
+            intent_name in {"add2d", "exp2d"} or elementwise_override_compatible
+        ):
             req_threads = int(bindings.get("ELEMENTWISE_BLOCK_THREADS") or 256)
             req_vec = int(bindings.get("ELEMENTWISE_VECTOR_WIDTH") or 1)
             if req_threads not in {64, 128, 256, 512}:

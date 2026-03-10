@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ pytest.importorskip("torch")
 
 from intent_ir.ir import IntentFunction
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor
+import pipeline.triton.org_bridge as org_bridge
 from pipeline.triton.core import _run_org_plugin
 from pipeline.triton.org_bridge import load_org_attr
 
@@ -917,6 +919,93 @@ def test_force_cache_apply_flash_attention2d_records_compile_checks(monkeypatch:
     assert len(plan["compile_checks"]) == 1
     assert plan["realizations"][0]["effective_sm"] == "sm_120"
     assert ((report["org"] or {}).get("compile_checks_count")) == 1
+
+
+def test_compile_check_candidates_unknown_kernel_use_inline_backend_compile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "1")
+    seen: list[str] = []
+
+    def _fake_inline_compile_check(**kwargs):
+        seen.append(str(kwargs["spec_name"]))
+        return (
+            True,
+            {
+                "mlir": {
+                    "downstream_cuda_contract_path": str(tmp_path / "fake.contract.json"),
+                    "downstream_cuda_contract_exec_meta": {
+                        "cuda_ptx_path": str(tmp_path / "fake.kernel.ptx"),
+                        "cuda_ptx_entries": ["liger_swiglu"],
+                        "cuda_requested_sm": "sm_120",
+                        "cuda_effective_sm": "sm_120",
+                        "cuda_target_downleveled": False,
+                    },
+                }
+            },
+            "",
+        )
+
+    monkeypatch.setattr("pipeline.triton.org_bridge._run_inline_compile_check", _fake_inline_compile_check)
+    checks = org_bridge._run_compile_check_candidates(
+        spec_name="liger_swiglu",
+        out_dir=tmp_path,
+        backend_target="cuda_5090d",
+        target_arch="sm120",
+        candidates=[SimpleNamespace(kernel_kind="elementwise_v1", bindings={"ELEMENTWISE_BLOCK_THREADS": 128, "ELEMENTWISE_VECTOR_WIDTH": 4})],
+        intent=_dummy_intent("liger_swiglu"),
+        shape_bindings={"M": 128, "N": 1024},
+        toolchain_model={"requires_real_mlir": False},
+    )
+    assert seen == ["liger_swiglu"]
+    assert len(checks) == 1
+    assert checks[0]["ok"] is True
+    assert checks[0]["ptx_path"].endswith("fake.kernel.ptx")
+
+
+def test_compile_check_candidates_unknown_kernel_real_mlir_allows_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "1")
+    seen_env: list[dict[str, str]] = []
+
+    def _fake_inline_compile_check(**kwargs):
+        seen_env.append(dict(kwargs.get("env_updates") or {}))
+        return (
+            True,
+            {
+                "mlir": {
+                    "downstream_cuda_std_llvm_contract_path": str(tmp_path / "fake.contract.json"),
+                    "downstream_cuda_std_llvm_contract_exec_meta": {
+                        "cuda_ptx_path": str(tmp_path / "fake.kernel.ptx"),
+                        "cuda_ptx_entries": ["liger_rms_norm"],
+                        "cuda_requested_sm": "sm_120",
+                        "cuda_effective_sm": "sm_120",
+                        "cuda_target_downleveled": False,
+                    },
+                }
+            },
+            "",
+        )
+
+    monkeypatch.setattr("pipeline.triton.org_bridge._run_inline_compile_check", _fake_inline_compile_check)
+    checks = org_bridge._run_compile_check_candidates(
+        spec_name="liger_rms_norm",
+        out_dir=tmp_path,
+        backend_target="cuda_5090d",
+        target_arch="sm120",
+        candidates=[SimpleNamespace(kernel_kind="rms_norm_axis1_v2", bindings={})],
+        intent=_dummy_intent("liger_rms_norm"),
+        shape_bindings={"M": 128, "N": 1024},
+        toolchain_model={"requires_real_mlir": True, "cuda_real_mlir_wave": "wave25"},
+    )
+    assert len(seen_env) == 1
+    assert seen_env[0]["INTENTIR_REAL_MLIR"] == "1"
+    assert seen_env[0]["INTENTIR_CUDA_REAL_MLIR_ALLOW_UNKNOWN"] == "1"
+    assert seen_env[0]["INTENTIR_CUDA_REAL_MLIR_WAVE"] == "wave25"
+    assert len(checks) == 1
+    assert checks[0]["ok"] is True
+    assert checks[0]["ptx_path"].endswith("fake.kernel.ptx")
 
 
 def test_force_cache_apply_row_sum_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

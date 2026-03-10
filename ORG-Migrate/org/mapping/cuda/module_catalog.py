@@ -583,6 +583,66 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    _ = hardware_model
+    modules = [
+        BackendModule(
+            id="rms_norm_row_tile_resident",
+            kind="staging",
+            provides=["rms_norm.row_tile_resident"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rms_norm_warp_statistics",
+            kind="communication",
+            provides=["rms_norm.warp_statistics"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rms_norm_affine_epilogue",
+            kind="fusion",
+            provides=["rms_norm.affine_epilogue"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rms_norm_backend_v2",
+            kind="template",
+            provides=["backend.kernel_kind.rms_norm_axis1_v2"],
+            requires=[
+                "rms_norm.row_tile_resident",
+                "rms_norm.warp_statistics",
+                "rms_norm.affine_epilogue",
+            ],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rms_norm_backend_v3",
+            kind="template",
+            provides=["backend.kernel_kind.rms_norm_axis1_v3"],
+            requires=[
+                "rms_norm.row_tile_resident",
+                "rms_norm.warp_statistics",
+                "rms_norm.affine_epilogue",
+            ],
+            params=[],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_warp_statistics", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_warp_statistics", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_affine_epilogue", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 def group_norm_kernel_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
     modules = [
         BackendModule(
@@ -720,6 +780,7 @@ __all__ = [
     "row_reduction_catalog",
     "elementwise2d_catalog",
     "layer_norm_persistent_catalog",
+    "rms_norm2d_catalog",
     "group_norm_kernel_catalog",
     "matmul_fused_epilogue2d_catalog",
 ]

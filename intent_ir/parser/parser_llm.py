@@ -28,6 +28,11 @@ AXIS_ROLE_ALIASES = {
     "red": "reduction",
     "chan": "channel",
 }
+_SCALAR_ROW_ALIAS_TOKENS = ("row", "rows", "nrow", "nrows", "numrow", "numrows", "height")
+_SCALAR_COL_ALIAS_TOKENS = ("col", "cols", "ncol", "ncols", "numcol", "numcols", "width", "stride")
+_OPTIONAL_SCALAR_DEFAULTS = {
+    "offset": 0.0,
+}
 
 
 class LLMJsonParseError(Exception):
@@ -170,6 +175,7 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
     used_names = set(tensors.keys())
     current_ssa: Dict[str, str] = {}
     seen_op_outputs: set[str] = set()
+    const_values: Dict[str, Any] = {}
 
     def _fresh_name(base: str) -> str:
         base = str(base)
@@ -226,6 +232,75 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(x, str) and x in current_ssa:
             return current_ssa[x]
         return x
+
+    def _norm_scalar_token(name: Any) -> str:
+        return "".join(ch for ch in str(name or "").strip().lower() if ch.isalnum())
+
+    def _dominant_axis_symbol(*, leading: bool) -> Optional[str]:
+        counts: Dict[str, int] = {}
+        order: List[str] = []
+        for tensor in tensors.values():
+            if not isinstance(tensor, dict):
+                continue
+            shape = tensor.get("shape")
+            if not isinstance(shape, list) or not shape:
+                continue
+            dim = shape[0] if leading else shape[-1]
+            if not isinstance(dim, str) or not dim:
+                continue
+            if dim not in counts:
+                order.append(dim)
+            counts[dim] = int(counts.get(dim, 0)) + 1
+        if not counts:
+            return None
+        return max(order, key=lambda dim: (int(counts.get(dim, 0)), -order.index(dim)))
+
+    def _infer_scalar_symbol_binding(name: str) -> Optional[str]:
+        if name in shape_symbols:
+            return name
+        token = _norm_scalar_token(name)
+        if not token:
+            return None
+        for symbol in sorted(shape_symbols):
+            if _norm_scalar_token(symbol) == token:
+                return str(symbol)
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        access = meta.get("access_witness") if isinstance(meta.get("access_witness"), dict) else {}
+        axis_contig_len = access.get("axis_contig_len") if isinstance(access.get("axis_contig_len"), dict) else {}
+        if any(_norm_scalar_token(axis_name) == token for axis_name in axis_contig_len.keys()):
+            trailing = _dominant_axis_symbol(leading=False)
+            if trailing:
+                return trailing
+        leading = _dominant_axis_symbol(leading=True)
+        trailing = _dominant_axis_symbol(leading=False)
+        if token == "stride" and trailing:
+            return trailing
+        if any(alias in token for alias in _SCALAR_COL_ALIAS_TOKENS) and trailing:
+            return trailing
+        if any(alias in token for alias in _SCALAR_ROW_ALIAS_TOKENS) and leading:
+            return leading
+        return None
+
+    def _infer_optional_scalar_default(name: str) -> Any:
+        token = _norm_scalar_token(name)
+        if token in _OPTIONAL_SCALAR_DEFAULTS:
+            return _OPTIONAL_SCALAR_DEFAULTS[token]
+        return None
+
+    def _record_const_value(op_dict: Dict[str, Any]) -> None:
+        if op_dict.get("op") != "const":
+            return
+        out_name = op_dict.get("output")
+        attrs = op_dict.get("attrs") or {}
+        if isinstance(out_name, str) and out_name:
+            const_values[out_name] = attrs.get("value")
+
+    def _append_const_op(*, output: str, value: Any, dtype: str) -> None:
+        const_op = {"op": "const", "inputs": [], "output": output, "attrs": {"value": value, "dtype": dtype}}
+        ops.append(const_op)
+        produced_outputs.append(output)
+        _record_const_value(const_op)
+
     for idx, op in enumerate(ops_raw):
         if not isinstance(op, dict):
             raise LLMJsonParseError("op must be object", path=f"ops[{idx}]")
@@ -320,8 +395,7 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 raise LLMJsonParseError("inline const missing value", path=f"ops[{idx}].inputs[{j}].value")
             const_dtype = _normalize_dtype_str(x.get("dtype") or (x.get("attrs") or {}).get("dtype"), fallback=_infer_scalar_dtype(op))
             const_out = _fresh_name(f"{op.get('output') or f'op{idx}'}__const{j}")
-            ops.append({"op": "const", "inputs": [], "output": const_out, "attrs": {"value": val, "dtype": const_dtype}})
-            produced_outputs.append(const_out)
+            _append_const_op(output=const_out, value=val, dtype=const_dtype)
             inps2[j] = const_out
         op["inputs"] = inps2
 
@@ -337,8 +411,7 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 if rhs_val is not None:
                     const_dtype = _infer_scalar_dtype(op)
                     const_out = _fresh_name(f"{op.get('output') or f'op{idx}'}__rhs")
-                    ops.append({"op": "const", "inputs": [], "output": const_out, "attrs": {"value": rhs_val, "dtype": const_dtype}})
-                    produced_outputs.append(const_out)
+                    _append_const_op(output=const_out, value=rhs_val, dtype=const_dtype)
                     op["inputs"] = [inps3[0], const_out]
 
         # Enforce `list[str]` after normalization (avoid late unhashable dict crashes).
@@ -658,6 +731,29 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 elif dd in {"bool", "boolean"}:
                     op["attrs"]["dtype"] = "bool"
 
+        if op.get("op") == "mul":
+            attrs = op["attrs"]
+            if "scale" in attrs and "mul_factor" not in attrs:
+                scale_val = attrs.pop("scale")
+                inps = list(op.get("inputs") or [])
+                unit_idx = None
+                if len(inps) == 2:
+                    for j, inp_name in enumerate(inps):
+                        const_val = const_values.get(str(inp_name))
+                        try:
+                            if float(const_val) == 1.0:
+                                unit_idx = j
+                                break
+                        except Exception:
+                            continue
+                if unit_idx is not None:
+                    const_out = _fresh_name(f"{op.get('output') or f'const_{idx}'}__scale")
+                    _append_const_op(output=const_out, value=scale_val, dtype=_infer_scalar_dtype(op))
+                    inps[unit_idx] = const_out
+                    op["inputs"] = inps
+                else:
+                    attrs["mul_factor"] = scale_val
+
         # Canonicalize scalar shorthand for numeric binary ops into explicit const + binary op.
         # This keeps downstream stages simple/strict (interpreter, C lowering, RVV lowering).
         if op.get("op") in {"add", "sub", "mul", "div", "max", "min"}:
@@ -665,15 +761,17 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(inps, list) and len(inps) == 1:
                 attrs = op["attrs"]
                 scalar_val = None
-                for k in ("scalar", "addend", "subtract", "mul_factor", "divisor", "other", "const", "rhs_const", "rhs"):
+                scalar_keys = ("scalar", "addend", "subtract", "mul_factor", "divisor", "other", "const", "rhs_const", "rhs")
+                if op.get("op") == "mul":
+                    scalar_keys = tuple(list(scalar_keys) + ["scale"])
+                for k in scalar_keys:
                     if k in attrs:
                         scalar_val = attrs.pop(k)
                         break
                 if scalar_val is not None:
                     const_out = _fresh_name(f"{op.get('output') or f'const_{idx}'}__const")
                     const_dtype = _infer_scalar_dtype(op)
-                    ops.append({"op": "const", "inputs": [], "output": const_out, "attrs": {"value": scalar_val, "dtype": const_dtype}})
-                    produced_outputs.append(const_out)
+                    _append_const_op(output=const_out, value=scalar_val, dtype=const_dtype)
                     op["inputs"] = [inps[0], const_out]
         # Fill reshape shape from output tensor shape if missing
         if op.get("op") == "reshape":
@@ -714,6 +812,7 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 op["output"] = out_name
             produced_outputs.append(op["output"])
             used_names.add(op["output"])
+            _record_const_value(op)
         ops.append(op)
     data["ops"] = ops
 
@@ -757,9 +856,14 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             prefix_ops.append({"op": "const", "inputs": [], "output": name, "attrs": {"value": 1e-5, "dtype": t.get("dtype", "f32")}})
             produced_set.add(name)
             continue
-        # Only lift scalars that are clearly "shape symbols" (dims/derived dims).
-        if name in shape_symbols:
-            prefix_ops.append({"op": "const", "inputs": [], "output": name, "attrs": {"value": name, "dtype": t.get("dtype", "i32")}})
+        symbol_binding = _infer_scalar_symbol_binding(str(name))
+        if symbol_binding:
+            prefix_ops.append({"op": "const", "inputs": [], "output": name, "attrs": {"value": symbol_binding, "dtype": t.get("dtype", "i32")}})
+            produced_set.add(name)
+            continue
+        default_value = _infer_optional_scalar_default(str(name))
+        if default_value is not None:
+            prefix_ops.append({"op": "const", "inputs": [], "output": name, "attrs": {"value": default_value, "dtype": t.get("dtype", "f32")}})
             produced_set.add(name)
             continue
     if prefix_ops:

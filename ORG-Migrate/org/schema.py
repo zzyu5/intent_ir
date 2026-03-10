@@ -481,6 +481,121 @@ class OrgScheduleEdge:
 
 
 @dataclass(frozen=True)
+class OrgRegion:
+    id: str
+    kind: str
+    path_id: str = ""
+    predicate: str = ""
+    parent: str = ""
+    attrs: dict[str, Any] = field(default_factory=dict)
+    entry_mechanisms: list[str] = field(default_factory=list)
+    exit_mechanisms: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgRegion":
+        obj = _as_dict(raw, path=path)
+        attrs = dict(obj.get("attrs") or {}) if isinstance(obj.get("attrs"), Mapping) else {}
+        return cls(
+            id=_as_str(obj.get("id"), path=f"{path}.id"),
+            kind=_as_str(obj.get("kind"), path=f"{path}.kind"),
+            path_id=_as_optional_str(obj.get("path_id"), path=f"{path}.path_id"),
+            predicate=_as_optional_str(obj.get("predicate"), path=f"{path}.predicate"),
+            parent=_as_optional_str(obj.get("parent"), path=f"{path}.parent"),
+            attrs=attrs,
+            entry_mechanisms=_as_str_list(obj.get("entry_mechanisms") or [], path=f"{path}.entry_mechanisms"),
+            exit_mechanisms=_as_str_list(obj.get("exit_mechanisms") or [], path=f"{path}.exit_mechanisms"),
+            evidence_refs=_as_str_list(obj.get("evidence_refs") or [], path=f"{path}.evidence_refs"),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "kind": self.kind,
+            "entry_mechanisms": list(self.entry_mechanisms),
+            "exit_mechanisms": list(self.exit_mechanisms),
+            "evidence_refs": list(self.evidence_refs),
+        }
+        if self.path_id:
+            out["path_id"] = self.path_id
+        if self.predicate:
+            out["predicate"] = self.predicate
+        if self.parent:
+            out["parent"] = self.parent
+        if self.attrs:
+            out["attrs"] = dict(self.attrs)
+        return out
+
+
+@dataclass(frozen=True)
+class OrgRegionEdge:
+    id: str
+    src: str
+    dst: str
+    relation: str
+    path_id: str = ""
+    predicate: str = ""
+    lifetimes: list[str] = field(default_factory=list)
+    mechanisms: list[str] = field(default_factory=list)
+    attrs: dict[str, Any] = field(default_factory=dict)
+    evidence_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgRegionEdge":
+        obj = _as_dict(raw, path=path)
+        attrs = dict(obj.get("attrs") or {}) if isinstance(obj.get("attrs"), Mapping) else {}
+        return cls(
+            id=_as_str(obj.get("id"), path=f"{path}.id"),
+            src=_as_str(obj.get("src"), path=f"{path}.src"),
+            dst=_as_str(obj.get("dst"), path=f"{path}.dst"),
+            relation=_as_str(obj.get("relation"), path=f"{path}.relation"),
+            path_id=_as_optional_str(obj.get("path_id"), path=f"{path}.path_id"),
+            predicate=_as_optional_str(obj.get("predicate"), path=f"{path}.predicate"),
+            lifetimes=_as_str_list(obj.get("lifetimes") or [], path=f"{path}.lifetimes"),
+            mechanisms=_as_str_list(obj.get("mechanisms") or [], path=f"{path}.mechanisms"),
+            attrs=attrs,
+            evidence_refs=_as_str_list(obj.get("evidence_refs") or [], path=f"{path}.evidence_refs"),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "src": self.src,
+            "dst": self.dst,
+            "relation": self.relation,
+            "lifetimes": list(self.lifetimes),
+            "mechanisms": list(self.mechanisms),
+            "evidence_refs": list(self.evidence_refs),
+        }
+        if self.path_id:
+            out["path_id"] = self.path_id
+        if self.predicate:
+            out["predicate"] = self.predicate
+        if self.attrs:
+            out["attrs"] = dict(self.attrs)
+        return out
+
+
+@dataclass(frozen=True)
+class OrgRegionGraph:
+    regions: list[OrgRegion] = field(default_factory=list)
+    edges: list[OrgRegionEdge] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgRegionGraph":
+        obj = _as_dict(raw, path=path)
+        regions = [OrgRegion.from_json(x, path=f"{path}.regions[{i}]") for i, x in enumerate(_as_list(obj.get("regions") or [], path=f"{path}.regions"))]
+        edges = [OrgRegionEdge.from_json(x, path=f"{path}.edges[{i}]") for i, x in enumerate(_as_list(obj.get("edges") or [], path=f"{path}.edges"))]
+        return cls(regions=regions, edges=edges)
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "regions": [item.to_json_dict() for item in self.regions],
+            "edges": [item.to_json_dict() for item in self.edges],
+        }
+
+
+@dataclass(frozen=True)
 class SourceOracle:
     kernel_kind: str
     bindings: dict[str, int] = field(default_factory=dict)
@@ -530,6 +645,7 @@ class OrgDoc:
     dataflow_edges: list[OrgDataflowEdge] = field(default_factory=list)
     mechanism_topology: list[OrgMechanismTopologyEdge] = field(default_factory=list)
     schedule_edges: list[OrgScheduleEdge] = field(default_factory=list)
+    region_graph: OrgRegionGraph | None = None
     source_oracle: SourceOracle | None = None
     evidence: list[EvidenceItem] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -547,6 +663,7 @@ class OrgDoc:
             "dataflow_edges": [e.to_json_dict() for e in self.dataflow_edges],
             "mechanism_topology": [e.to_json_dict() for e in self.mechanism_topology],
             "schedule_edges": [e.to_json_dict() for e in self.schedule_edges],
+            "region_graph": (self.region_graph.to_json_dict() if self.region_graph is not None else None),
             "source_oracle": (self.source_oracle.to_json_dict() if self.source_oracle is not None else None),
             "evidence": [e.to_json_dict() for e in self.evidence],
             "notes": list(self.notes),
@@ -614,6 +731,8 @@ class OrgDoc:
             OrgScheduleEdge.from_json(x, path=f"schedule_edges[{i}]")
             for i, x in enumerate(_as_list(obj.get("schedule_edges") or [], path="schedule_edges"))
         ]
+        region_graph_raw = obj.get("region_graph")
+        region_graph = None if region_graph_raw is None else OrgRegionGraph.from_json(region_graph_raw, path="region_graph")
 
         source_oracle_raw = obj.get("source_oracle")
         if source_oracle_raw is None:
@@ -670,6 +789,16 @@ class OrgDoc:
         schedule_edge_ids = [e.id for e in schedule_edges]
         if len(set(schedule_edge_ids)) != len(schedule_edge_ids):
             raise OrgValidationError("duplicate schedule edge ids", path="schedule_edges")
+
+        region_id_set: set[str] = set()
+        if region_graph is not None:
+            region_ids = [r.id for r in list(region_graph.regions or [])]
+            if len(set(region_ids)) != len(region_ids):
+                raise OrgValidationError("duplicate region ids", path="region_graph.regions")
+            region_id_set = set(region_ids)
+            edge_ids = [e.id for e in list(region_graph.edges or [])]
+            if len(set(edge_ids)) != len(edge_ids):
+                raise OrgValidationError("duplicate region edge ids", path="region_graph.edges")
 
         allowed_goal_tags = set(ORG_GOAL_TAGS_BY_KERNEL.get(kernel) or ORG_GOAL_TAGS)
         for idx, goal in enumerate(goals):
@@ -771,6 +900,35 @@ class OrgDoc:
                 if ref not in evidence_id_set:
                     raise OrgValidationError("unknown evidence ref", path=f"schedule_edges[{idx}].evidence_refs")
 
+        if region_graph is not None:
+            for idx, region in enumerate(list(region_graph.regions or [])):
+                if region.parent and region.parent not in region_id_set:
+                    raise OrgValidationError("unknown parent region ref", path=f"region_graph.regions[{idx}].parent")
+                for mech_ref in region.entry_mechanisms:
+                    if mech_ref not in mechanism_id_set:
+                        raise OrgValidationError("unknown mechanism ref", path=f"region_graph.regions[{idx}].entry_mechanisms")
+                for mech_ref in region.exit_mechanisms:
+                    if mech_ref not in mechanism_id_set:
+                        raise OrgValidationError("unknown mechanism ref", path=f"region_graph.regions[{idx}].exit_mechanisms")
+                for ref in region.evidence_refs:
+                    if ref not in evidence_id_set:
+                        raise OrgValidationError("unknown evidence ref", path=f"region_graph.regions[{idx}].evidence_refs")
+
+            for idx, edge in enumerate(list(region_graph.edges or [])):
+                if edge.src not in region_id_set:
+                    raise OrgValidationError("unknown region ref", path=f"region_graph.edges[{idx}].src")
+                if edge.dst not in region_id_set:
+                    raise OrgValidationError("unknown region ref", path=f"region_graph.edges[{idx}].dst")
+                for lifetime_ref in edge.lifetimes:
+                    if lifetime_ref not in lifetime_id_set:
+                        raise OrgValidationError("unknown tensor lifetime ref", path=f"region_graph.edges[{idx}].lifetimes")
+                for mech_ref in edge.mechanisms:
+                    if mech_ref not in mechanism_id_set:
+                        raise OrgValidationError("unknown mechanism ref", path=f"region_graph.edges[{idx}].mechanisms")
+                for ref in edge.evidence_refs:
+                    if ref not in evidence_id_set:
+                        raise OrgValidationError("unknown evidence ref", path=f"region_graph.edges[{idx}].evidence_refs")
+
         for ref in source_oracle_obj.evidence_refs:
             if ref not in evidence_id_set:
                 raise OrgValidationError("unknown evidence ref", path="source_oracle.evidence_refs")
@@ -787,6 +945,7 @@ class OrgDoc:
             dataflow_edges=dataflow_edges,
             mechanism_topology=mechanism_topology,
             schedule_edges=schedule_edges,
+            region_graph=region_graph,
             source_oracle=source_oracle_obj,
             evidence=evidence,
             notes=notes,
@@ -810,6 +969,9 @@ __all__ = [
     "OrgGoal",
     "OrgMechanism",
     "OrgMechanismTopologyEdge",
+    "OrgRegion",
+    "OrgRegionEdge",
+    "OrgRegionGraph",
     "OrgScheduleEdge",
     "OrgTensor",
     "OrgTensorLifetime",
