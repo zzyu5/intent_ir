@@ -124,6 +124,10 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
     obj = dict(raw_json or {})
     dims = [dict(x) for x in list(obj.get("dims") or []) if isinstance(x, Mapping)]
     dim_names = {str(item.get("name") or "").strip() for item in dims if str(item.get("name") or "").strip()}
+    goal_ids = {str(item.get("id") or "").strip() for item in list(obj.get("goals") or []) if isinstance(item, Mapping)}
+    evidence_ids = {
+        str(item.get("id") or "").strip() for item in list(obj.get("evidence") or []) if isinstance(item, Mapping)
+    }
     mechanisms_out: list[dict[str, Any]] = []
     for raw_mech in list(obj.get("mechanisms") or []):
         if not isinstance(raw_mech, Mapping):
@@ -139,6 +143,97 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
         mechanisms_out.append(mech)
     if mechanisms_out:
         obj["mechanisms"] = mechanisms_out
+    mechanism_ids = {
+        str(item.get("id") or "").strip() for item in list(obj.get("mechanisms") or []) if isinstance(item, Mapping)
+    }
+    tensors_out: list[dict[str, Any]] = []
+    for raw_tensor in list(obj.get("tensors") or []):
+        if not isinstance(raw_tensor, Mapping):
+            continue
+        tensor = dict(raw_tensor)
+        tensor["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(tensor.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        tensors_out.append(tensor)
+    if tensors_out or "tensors" in obj:
+        obj["tensors"] = tensors_out
+    tensor_ids = {
+        str(item.get("id") or "").strip() for item in list(obj.get("tensors") or []) if isinstance(item, Mapping)
+    }
+    lifetimes_out: list[dict[str, Any]] = []
+    for raw_lifetime in list(obj.get("tensor_lifetimes") or []):
+        if not isinstance(raw_lifetime, Mapping):
+            continue
+        lifetime = dict(raw_lifetime)
+        tensor_id = str(lifetime.get("tensor") or "").strip()
+        if tensor_id and tensor_id not in tensor_ids:
+            continue
+        lifetime["producer_mechanisms"] = [
+            ref
+            for ref in [str(x).strip() for x in list(lifetime.get("producer_mechanisms") or []) if str(x).strip()]
+            if ref in mechanism_ids
+        ]
+        lifetime["consumer_mechanisms"] = [
+            ref
+            for ref in [str(x).strip() for x in list(lifetime.get("consumer_mechanisms") or []) if str(x).strip()]
+            if ref in mechanism_ids
+        ]
+        lifetime["supports_goals"] = [
+            ref for ref in [str(x).strip() for x in list(lifetime.get("supports_goals") or []) if str(x).strip()] if ref in goal_ids
+        ]
+        lifetime["dims"] = [
+            ref for ref in [str(x).strip() for x in list(lifetime.get("dims") or []) if str(x).strip()] if ref in dim_names
+        ]
+        lifetime["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(lifetime.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        lifetimes_out.append(lifetime)
+    if lifetimes_out or "tensor_lifetimes" in obj:
+        obj["tensor_lifetimes"] = lifetimes_out
+    lifetime_ids = {
+        str(item.get("id") or "").strip() for item in list(obj.get("tensor_lifetimes") or []) if isinstance(item, Mapping)
+    }
+    dataflow_out: list[dict[str, Any]] = []
+    for raw_edge in list(obj.get("dataflow_edges") or []):
+        if not isinstance(raw_edge, Mapping):
+            continue
+        edge = dict(raw_edge)
+        if str(edge.get("src") or "").strip() not in lifetime_ids:
+            continue
+        if str(edge.get("dst") or "").strip() not in lifetime_ids:
+            continue
+        if str(edge.get("tensor") or "").strip() not in tensor_ids:
+            continue
+        edge["mechanisms"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("mechanisms") or []) if str(x).strip()] if ref in mechanism_ids
+        ]
+        edge["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        dataflow_out.append(edge)
+    if dataflow_out or "dataflow_edges" in obj:
+        obj["dataflow_edges"] = dataflow_out
+    topology_out: list[dict[str, Any]] = []
+    for raw_edge in list(obj.get("mechanism_topology") or []):
+        if not isinstance(raw_edge, Mapping):
+            continue
+        edge = dict(raw_edge)
+        if str(edge.get("src") or "").strip() not in mechanism_ids:
+            continue
+        if str(edge.get("dst") or "").strip() not in mechanism_ids:
+            continue
+        edge["tensors"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("tensors") or []) if str(x).strip()] if ref in tensor_ids
+        ]
+        edge["lifetimes"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("lifetimes") or []) if str(x).strip()] if ref in lifetime_ids
+        ]
+        edge["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        topology_out.append(edge)
+    if topology_out or "mechanism_topology" in obj:
+        obj["mechanism_topology"] = topology_out
     return obj
 
 
@@ -175,7 +270,7 @@ class LLMOrgHub:
                 "Evidence appendix (JSON):",
                 evidence,
                 "",
-                "Hard rule: return ONE ORG JSON object with goals/mechanisms/dims/evidence only.",
+                "Hard rule: return ONE ORG JSON object with goals/mechanisms/dims/tensors/tensor_lifetimes/dataflow_edges/mechanism_topology/evidence only.",
                 "Runtime will inject source_context and source_oracle; do not invent backend mappings or target parameter values.",
             ]
         ).strip()
@@ -226,7 +321,7 @@ class LLMOrgHub:
                     "Your previous ORG JSON failed schema validation.\n"
                     f"Error: {exc}\n\n"
                     "Return ONE corrected ORG JSON object only.\n"
-                    "Keep top-level keys: schema_version, kernel, goals, mechanisms, dims, evidence, notes(optional).\n"
+                    "Keep top-level keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, evidence, notes(optional).\n"
                     "Do not emit source_context/source_oracle; runtime injects them.\n"
                 )
                 prev = json.dumps(raw_json, ensure_ascii=False, sort_keys=True) if raw_json is not None else ""

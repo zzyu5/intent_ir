@@ -18,6 +18,30 @@ def test_llm_org_hub_sanitizes_unknown_dim_refs(monkeypatch) -> None:
         "dims": [
             {"name": "resident_bytes", "role": "resident_budget", "candidates": [256], "constraints": [], "evidence_refs": ["e0"]},
         ],
+        "tensors": [
+            {"id": "t0", "name": "Q", "role": "query_state", "evidence_refs": ["e0"]},
+        ],
+        "tensor_lifetimes": [
+            {
+                "id": "lt0",
+                "tensor": "t0",
+                "region": "kv_loop",
+                "storage": "register",
+                "start": "load_q",
+                "end": "softmax",
+                "producer_mechanisms": ["m0", "ghost_mech"],
+                "consumer_mechanisms": ["m0"],
+                "supports_goals": ["g0", "ghost_goal"],
+                "dims": ["resident_bytes", "ghost_dim"],
+                "evidence_refs": ["e0"],
+            }
+        ],
+        "dataflow_edges": [
+            {"id": "df0", "src": "lt0", "dst": "ghost_lt", "tensor": "t0", "kind": "stage", "order": 0, "mechanisms": ["m0"], "evidence_refs": ["e0"]},
+        ],
+        "mechanism_topology": [
+            {"id": "mt0", "src": "m0", "dst": "ghost_mech", "relation": "feeds", "tensors": ["t0"], "lifetimes": ["lt0", "ghost_lt"], "evidence_refs": ["e0"]},
+        ],
         "evidence": [
             {"id": "e0", "kind": "ttgir_line", "path": "flash.ttgir:1", "summary": "evidence"},
         ],
@@ -51,3 +75,7 @@ def test_llm_org_hub_sanitizes_unknown_dim_refs(monkeypatch) -> None:
     )
     mechanism = candidate.org.mechanisms[0]
     assert mechanism.dims == ["resident_bytes"]
+    assert candidate.org.tensor_lifetimes[0].producer_mechanisms == ["m0"]
+    assert candidate.org.tensor_lifetimes[0].supports_goals == ["g0"]
+    assert candidate.org.dataflow_edges == []
+    assert candidate.org.mechanism_topology == []

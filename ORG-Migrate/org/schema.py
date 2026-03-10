@@ -60,6 +60,12 @@ def _coerce_int(x: Any, *, path: str) -> int:
         raise OrgValidationError("expected int", path=path) from exc
 
 
+def _as_optional_int(x: Any, *, path: str) -> int | None:
+    if x is None:
+        return None
+    return _coerce_int(x, path=path)
+
+
 @dataclass(frozen=True)
 class EvidenceItem:
     id: str
@@ -242,6 +248,173 @@ class OrgDim:
 
 
 @dataclass(frozen=True)
+class OrgTensor:
+    id: str
+    name: str
+    role: str
+    dtype: str = ""
+    aliases: list[str] = field(default_factory=list)
+    shape_refs: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgTensor":
+        obj = _as_dict(raw, path=path)
+        return cls(
+            id=_as_str(obj.get("id"), path=f"{path}.id"),
+            name=_as_str(obj.get("name"), path=f"{path}.name"),
+            role=_as_str(obj.get("role"), path=f"{path}.role"),
+            dtype=_as_optional_str(obj.get("dtype"), path=f"{path}.dtype"),
+            aliases=_as_str_list(obj.get("aliases") or [], path=f"{path}.aliases"),
+            shape_refs=_as_str_list(obj.get("shape_refs") or [], path=f"{path}.shape_refs"),
+            evidence_refs=_as_str_list(obj.get("evidence_refs") or [], path=f"{path}.evidence_refs"),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "role": self.role,
+            "aliases": list(self.aliases),
+            "shape_refs": list(self.shape_refs),
+            "evidence_refs": list(self.evidence_refs),
+        }
+        if self.dtype:
+            out["dtype"] = self.dtype
+        return out
+
+
+@dataclass(frozen=True)
+class OrgTensorLifetime:
+    id: str
+    tensor: str
+    region: str
+    storage: str
+    start: str
+    end: str
+    producer_mechanisms: list[str] = field(default_factory=list)
+    consumer_mechanisms: list[str] = field(default_factory=list)
+    supports_goals: list[str] = field(default_factory=list)
+    dims: list[str] = field(default_factory=list)
+    bytes_hint: int | None = None
+    reuse_window: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgTensorLifetime":
+        obj = _as_dict(raw, path=path)
+        return cls(
+            id=_as_str(obj.get("id"), path=f"{path}.id"),
+            tensor=_as_str(obj.get("tensor"), path=f"{path}.tensor"),
+            region=_as_str(obj.get("region"), path=f"{path}.region"),
+            storage=_as_str(obj.get("storage"), path=f"{path}.storage"),
+            start=_as_str(obj.get("start"), path=f"{path}.start"),
+            end=_as_str(obj.get("end"), path=f"{path}.end"),
+            producer_mechanisms=_as_str_list(obj.get("producer_mechanisms") or [], path=f"{path}.producer_mechanisms"),
+            consumer_mechanisms=_as_str_list(obj.get("consumer_mechanisms") or [], path=f"{path}.consumer_mechanisms"),
+            supports_goals=_as_str_list(obj.get("supports_goals") or [], path=f"{path}.supports_goals"),
+            dims=_as_str_list(obj.get("dims") or [], path=f"{path}.dims"),
+            bytes_hint=_as_optional_int(obj.get("bytes_hint"), path=f"{path}.bytes_hint"),
+            reuse_window=_as_optional_str(obj.get("reuse_window"), path=f"{path}.reuse_window"),
+            evidence_refs=_as_str_list(obj.get("evidence_refs") or [], path=f"{path}.evidence_refs"),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "tensor": self.tensor,
+            "region": self.region,
+            "storage": self.storage,
+            "start": self.start,
+            "end": self.end,
+            "producer_mechanisms": list(self.producer_mechanisms),
+            "consumer_mechanisms": list(self.consumer_mechanisms),
+            "supports_goals": list(self.supports_goals),
+            "dims": list(self.dims),
+            "evidence_refs": list(self.evidence_refs),
+        }
+        if self.bytes_hint is not None:
+            out["bytes_hint"] = int(self.bytes_hint)
+        if self.reuse_window:
+            out["reuse_window"] = self.reuse_window
+        return out
+
+
+@dataclass(frozen=True)
+class OrgDataflowEdge:
+    id: str
+    src: str
+    dst: str
+    tensor: str
+    kind: str
+    order: int = 0
+    mechanisms: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgDataflowEdge":
+        obj = _as_dict(raw, path=path)
+        return cls(
+            id=_as_str(obj.get("id"), path=f"{path}.id"),
+            src=_as_str(obj.get("src"), path=f"{path}.src"),
+            dst=_as_str(obj.get("dst"), path=f"{path}.dst"),
+            tensor=_as_str(obj.get("tensor"), path=f"{path}.tensor"),
+            kind=_as_str(obj.get("kind"), path=f"{path}.kind"),
+            order=_coerce_int(obj.get("order", 0), path=f"{path}.order"),
+            mechanisms=_as_str_list(obj.get("mechanisms") or [], path=f"{path}.mechanisms"),
+            evidence_refs=_as_str_list(obj.get("evidence_refs") or [], path=f"{path}.evidence_refs"),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "src": self.src,
+            "dst": self.dst,
+            "tensor": self.tensor,
+            "kind": self.kind,
+            "order": int(self.order),
+            "mechanisms": list(self.mechanisms),
+            "evidence_refs": list(self.evidence_refs),
+        }
+        return out
+
+
+@dataclass(frozen=True)
+class OrgMechanismTopologyEdge:
+    id: str
+    src: str
+    dst: str
+    relation: str
+    tensors: list[str] = field(default_factory=list)
+    lifetimes: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, raw: Any, *, path: str) -> "OrgMechanismTopologyEdge":
+        obj = _as_dict(raw, path=path)
+        return cls(
+            id=_as_str(obj.get("id"), path=f"{path}.id"),
+            src=_as_str(obj.get("src"), path=f"{path}.src"),
+            dst=_as_str(obj.get("dst"), path=f"{path}.dst"),
+            relation=_as_str(obj.get("relation"), path=f"{path}.relation"),
+            tensors=_as_str_list(obj.get("tensors") or [], path=f"{path}.tensors"),
+            lifetimes=_as_str_list(obj.get("lifetimes") or [], path=f"{path}.lifetimes"),
+            evidence_refs=_as_str_list(obj.get("evidence_refs") or [], path=f"{path}.evidence_refs"),
+        )
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "src": self.src,
+            "dst": self.dst,
+            "relation": self.relation,
+            "tensors": list(self.tensors),
+            "lifetimes": list(self.lifetimes),
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
+@dataclass(frozen=True)
 class SourceOracle:
     kernel_kind: str
     bindings: dict[str, int] = field(default_factory=dict)
@@ -286,6 +459,10 @@ class OrgDoc:
     goals: list[OrgGoal] = field(default_factory=list)
     mechanisms: list[OrgMechanism] = field(default_factory=list)
     dims: list[OrgDim] = field(default_factory=list)
+    tensors: list[OrgTensor] = field(default_factory=list)
+    tensor_lifetimes: list[OrgTensorLifetime] = field(default_factory=list)
+    dataflow_edges: list[OrgDataflowEdge] = field(default_factory=list)
+    mechanism_topology: list[OrgMechanismTopologyEdge] = field(default_factory=list)
     source_oracle: SourceOracle | None = None
     evidence: list[EvidenceItem] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -298,6 +475,10 @@ class OrgDoc:
             "goals": [g.to_json_dict() for g in self.goals],
             "mechanisms": [m.to_json_dict() for m in self.mechanisms],
             "dims": [d.to_json_dict() for d in self.dims],
+            "tensors": [t.to_json_dict() for t in self.tensors],
+            "tensor_lifetimes": [t.to_json_dict() for t in self.tensor_lifetimes],
+            "dataflow_edges": [e.to_json_dict() for e in self.dataflow_edges],
+            "mechanism_topology": [e.to_json_dict() for e in self.mechanism_topology],
             "source_oracle": (self.source_oracle.to_json_dict() if self.source_oracle is not None else None),
             "evidence": [e.to_json_dict() for e in self.evidence],
             "notes": list(self.notes),
@@ -345,6 +526,23 @@ class OrgDoc:
             raise OrgValidationError("missing required field", path="dims")
         dims = [OrgDim.from_json(x, path=f"dims[{i}]") for i, x in enumerate(_as_list(dims_raw, path="dims"))]
 
+        tensors = [
+            OrgTensor.from_json(x, path=f"tensors[{i}]")
+            for i, x in enumerate(_as_list(obj.get("tensors") or [], path="tensors"))
+        ]
+        tensor_lifetimes = [
+            OrgTensorLifetime.from_json(x, path=f"tensor_lifetimes[{i}]")
+            for i, x in enumerate(_as_list(obj.get("tensor_lifetimes") or [], path="tensor_lifetimes"))
+        ]
+        dataflow_edges = [
+            OrgDataflowEdge.from_json(x, path=f"dataflow_edges[{i}]")
+            for i, x in enumerate(_as_list(obj.get("dataflow_edges") or [], path="dataflow_edges"))
+        ]
+        mechanism_topology = [
+            OrgMechanismTopologyEdge.from_json(x, path=f"mechanism_topology[{i}]")
+            for i, x in enumerate(_as_list(obj.get("mechanism_topology") or [], path="mechanism_topology"))
+        ]
+
         source_oracle_raw = obj.get("source_oracle")
         if source_oracle_raw is None:
             if source_oracle is None:
@@ -373,6 +571,29 @@ class OrgDoc:
         if len(set(goal_ids)) != len(goal_ids):
             raise OrgValidationError("duplicate goal ids", path="goals")
         goal_id_set = set(goal_ids)
+
+        mechanism_ids = [m.id for m in mechanisms]
+        if len(set(mechanism_ids)) != len(mechanism_ids):
+            raise OrgValidationError("duplicate mechanism ids", path="mechanisms")
+        mechanism_id_set = set(mechanism_ids)
+
+        tensor_ids = [t.id for t in tensors]
+        if len(set(tensor_ids)) != len(tensor_ids):
+            raise OrgValidationError("duplicate tensor ids", path="tensors")
+        tensor_id_set = set(tensor_ids)
+
+        lifetime_ids = [t.id for t in tensor_lifetimes]
+        if len(set(lifetime_ids)) != len(lifetime_ids):
+            raise OrgValidationError("duplicate tensor_lifetime ids", path="tensor_lifetimes")
+        lifetime_id_set = set(lifetime_ids)
+
+        dataflow_ids = [e.id for e in dataflow_edges]
+        if len(set(dataflow_ids)) != len(dataflow_ids):
+            raise OrgValidationError("duplicate dataflow edge ids", path="dataflow_edges")
+
+        mechanism_topology_ids = [e.id for e in mechanism_topology]
+        if len(set(mechanism_topology_ids)) != len(mechanism_topology_ids):
+            raise OrgValidationError("duplicate mechanism topology ids", path="mechanism_topology")
 
         allowed_goal_tags = set(ORG_GOAL_TAGS_BY_KERNEL.get(kernel) or ORG_GOAL_TAGS)
         for idx, goal in enumerate(goals):
@@ -406,6 +627,59 @@ class OrgDoc:
                 if ref not in evidence_id_set:
                     raise OrgValidationError("unknown evidence ref", path=f"dims[{idx}].evidence_refs")
 
+        for idx, tensor in enumerate(tensors):
+            for ref in tensor.evidence_refs:
+                if ref not in evidence_id_set:
+                    raise OrgValidationError("unknown evidence ref", path=f"tensors[{idx}].evidence_refs")
+
+        for idx, lifetime in enumerate(tensor_lifetimes):
+            if lifetime.tensor not in tensor_id_set:
+                raise OrgValidationError("unknown tensor ref", path=f"tensor_lifetimes[{idx}].tensor")
+            for mech_ref in lifetime.producer_mechanisms:
+                if mech_ref not in mechanism_id_set:
+                    raise OrgValidationError("unknown mechanism ref", path=f"tensor_lifetimes[{idx}].producer_mechanisms")
+            for mech_ref in lifetime.consumer_mechanisms:
+                if mech_ref not in mechanism_id_set:
+                    raise OrgValidationError("unknown mechanism ref", path=f"tensor_lifetimes[{idx}].consumer_mechanisms")
+            for goal_ref in lifetime.supports_goals:
+                if goal_ref not in goal_id_set:
+                    raise OrgValidationError("unknown goal ref", path=f"tensor_lifetimes[{idx}].supports_goals")
+            for dim_ref in lifetime.dims:
+                if dim_ref not in dim_name_set:
+                    raise OrgValidationError("unknown dim ref", path=f"tensor_lifetimes[{idx}].dims")
+            for ref in lifetime.evidence_refs:
+                if ref not in evidence_id_set:
+                    raise OrgValidationError("unknown evidence ref", path=f"tensor_lifetimes[{idx}].evidence_refs")
+
+        for idx, edge in enumerate(dataflow_edges):
+            if edge.src not in lifetime_id_set:
+                raise OrgValidationError("unknown tensor lifetime ref", path=f"dataflow_edges[{idx}].src")
+            if edge.dst not in lifetime_id_set:
+                raise OrgValidationError("unknown tensor lifetime ref", path=f"dataflow_edges[{idx}].dst")
+            if edge.tensor not in tensor_id_set:
+                raise OrgValidationError("unknown tensor ref", path=f"dataflow_edges[{idx}].tensor")
+            for mech_ref in edge.mechanisms:
+                if mech_ref not in mechanism_id_set:
+                    raise OrgValidationError("unknown mechanism ref", path=f"dataflow_edges[{idx}].mechanisms")
+            for ref in edge.evidence_refs:
+                if ref not in evidence_id_set:
+                    raise OrgValidationError("unknown evidence ref", path=f"dataflow_edges[{idx}].evidence_refs")
+
+        for idx, edge in enumerate(mechanism_topology):
+            if edge.src not in mechanism_id_set:
+                raise OrgValidationError("unknown mechanism ref", path=f"mechanism_topology[{idx}].src")
+            if edge.dst not in mechanism_id_set:
+                raise OrgValidationError("unknown mechanism ref", path=f"mechanism_topology[{idx}].dst")
+            for tensor_ref in edge.tensors:
+                if tensor_ref not in tensor_id_set:
+                    raise OrgValidationError("unknown tensor ref", path=f"mechanism_topology[{idx}].tensors")
+            for lifetime_ref in edge.lifetimes:
+                if lifetime_ref not in lifetime_id_set:
+                    raise OrgValidationError("unknown tensor lifetime ref", path=f"mechanism_topology[{idx}].lifetimes")
+            for ref in edge.evidence_refs:
+                if ref not in evidence_id_set:
+                    raise OrgValidationError("unknown evidence ref", path=f"mechanism_topology[{idx}].evidence_refs")
+
         for ref in source_oracle_obj.evidence_refs:
             if ref not in evidence_id_set:
                 raise OrgValidationError("unknown evidence ref", path="source_oracle.evidence_refs")
@@ -417,6 +691,10 @@ class OrgDoc:
             goals=goals,
             mechanisms=mechanisms,
             dims=dims,
+            tensors=tensors,
+            tensor_lifetimes=tensor_lifetimes,
+            dataflow_edges=dataflow_edges,
+            mechanism_topology=mechanism_topology,
             source_oracle=source_oracle_obj,
             evidence=evidence,
             notes=notes,
@@ -434,10 +712,14 @@ def validate_org_doc(
 
 __all__ = [
     "EvidenceItem",
+    "OrgDataflowEdge",
     "OrgDim",
     "OrgDoc",
     "OrgGoal",
     "OrgMechanism",
+    "OrgMechanismTopologyEdge",
+    "OrgTensor",
+    "OrgTensorLifetime",
     "OrgValidationError",
     "SourceContext",
     "SourceOracle",

@@ -10971,7 +10971,6 @@ def lower_intent_to_cuda_gpu_kernel(
                     lines.append(f"          %idxv_sum_{group} = arith.addi %base, %j_group_sum_{group} : index")
                     lines.append(f"          %vec_sum_{group} = vector.load {in_ssa}[%idxv_sum_{group}] : {in_memref}, {vty}")
                     lines.append(f"          %next_sum_v{group} = arith.addf %acc_sum_v{group}, %vec_sum_{group}{fm} : {vty}")
-                    lines.append(f"          %vec_sq_{group} = arith.mulf %vec_sum_{group}, %vec_sum_{group}{fm} : {vty}")
                     lines.append(f"          %next_sumsq_v{group} = math.fma %vec_sum_{group}, %vec_sum_{group}, %acc_sumsq_v{group} : {vty}")
                     yield_args.append(f"%next_sum_v{group}")
                     yield_args.append(f"%next_sumsq_v{group}")

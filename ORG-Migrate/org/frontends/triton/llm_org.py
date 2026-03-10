@@ -6,6 +6,10 @@ for the reasoning-bearing sections only:
   - goals
   - mechanisms
   - dims
+  - tensors
+  - tensor_lifetimes
+  - dataflow_edges
+  - mechanism_topology
   - evidence
   - notes (optional list[string])
 """
@@ -28,6 +32,10 @@ Hard rules:
   - goals
   - mechanisms
   - dims
+  - tensors
+  - tensor_lifetimes
+  - dataflow_edges
+  - mechanism_topology
   - evidence
   - notes (optional list[string])
 - Runtime will inject `source_context` and `source_oracle`; do NOT invent or emit hardware mapping decisions.
@@ -60,6 +68,49 @@ Dim objects:
 - constraints: list[string]
 - evidence_refs: list[string]
 
+Tensor objects:
+- id: string
+- name: string
+- role: short semantic role such as input_row, row_stats, kv_tile, output_accumulator
+- dtype (optional): string
+- aliases (optional): list[string]
+- shape_refs (optional): list[string]
+- evidence_refs: list[string]
+
+TensorLifetime objects:
+- id: string
+- tensor: tensor.id
+- region: short phase string such as kv_loop, row_reduce, affine_epilogue
+- storage: one of global, shared, register, local
+- start: short phase/event string
+- end: short phase/event string
+- producer_mechanisms: list[mechanism.id]
+- consumer_mechanisms: list[mechanism.id]
+- supports_goals: list[goal.id]
+- dims: list[dim.name]
+- bytes_hint (optional): int
+- reuse_window (optional): prefer a structured scope label such as cta_tile, row_tile, row_reduce, row_epilogue, full_row
+- evidence_refs: list[string]
+
+DataflowEdge objects:
+- id: string
+- src: tensor_lifetime.id
+- dst: tensor_lifetime.id
+- tensor: tensor.id
+- kind: short edge label such as stage, reduce, normalize, epilogue, store
+- order: integer topological order
+- mechanisms: list[mechanism.id]
+- evidence_refs: list[string]
+
+MechanismTopology objects:
+- id: string
+- src: mechanism.id
+- dst: mechanism.id
+- relation: short label such as feeds, gates, vectorizes, materializes, reduces_for
+- tensors: list[tensor.id]
+- lifetimes: list[tensor_lifetime.id]
+- evidence_refs: list[string]
+
 Evidence objects:
 - id: string
 - kind: string
@@ -69,12 +120,16 @@ Evidence objects:
 
 Important:
 - Separate WHY from HOW from DIMS. Do NOT collapse them into one object.
+- ORG is a topology, not a bag of tags. Always emit the tensor/lifetime/dataflow/mechanism graph for the kernel.
 - Do NOT output backend variant names or target parameter assignments.
 - Do NOT output numeric tuning decisions copied from source oracle. You may output candidate sets for dimensions.
 - Every goal and every mechanism must have at least one evidence ref.
+- Every tensor_lifetime must reference real mechanism ids and goal ids; dataflow_edges must form a valid topological flow.
 - Prefer evidence from TTGIR/PTX/source_oracle facts over TTIR summaries when available.
 - Prefer dims and attrs that directly affect target performance recovery:
   resident_bytes, reuse_window, pipeline_depth, communication_scope, layout_convert_sites.
+- Force yourself to recover the main tensor residency intervals:
+  which tensor stays in register/shared/global, for how long, and which mechanism consumes it next.
 
 Kernel-specific expectations:
 - For flash_attention2d, capture:
@@ -119,6 +174,9 @@ Kernel-specific expectations:
   row_tile_resident, warp_reduction, register_staging, persistent_row_cache, affine_epilogue
   and prefer dims/attrs such as:
   row_width, block_threads, vector_width, resident_bytes, communication_scope
+  and explicitly model tensors/lifetimes such as:
+  input_row -> row_resident_tile -> row_stats -> affine_out
+  with row_stats or row_resident_tile spanning from reduction into affine epilogue when persistence is present
 - For add2d, capture:
   resident_working_set, memory_coalescing, avoid_materialization, latency_hiding
   and prefer mechanism tags such as:
@@ -166,9 +224,10 @@ Kernel-specific expectations:
 
 SYSTEM_PROMPT_COMPACT = """Return ONE strict ORG JSON object.
 
-Required keys: schema_version, kernel, goals, mechanisms, dims, evidence (notes optional list[string]).
+Required keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, evidence (notes optional list[string]).
 Runtime injects source_context/source_oracle; do not output hardware mapping or target numeric assignments.
 Each goal/mechanism/dim must be evidence-backed.
+Emit a real optimization topology: tensors, their residency intervals, dataflow edges, and mechanism dependencies.
 """
 
 
