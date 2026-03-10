@@ -382,6 +382,9 @@ def run_org_sidecar(
         "add2d",
         "exp2d",
         "group_norm_kernel",
+        "ai_bench_softmax",
+        "ai_bench_matmul",
+        "masked_attention2d",
     } and ttgir_facts is None:
         org_report["ok"] = False
         org_report["error"] = "ttgir_missing"
@@ -619,6 +622,42 @@ def run_org_sidecar(
                 hardware_model=hardware_model,
                 ttgir_facts=dict(ttgir_facts or {}),
                 ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "ai_bench_softmax":
+            plan_ai_bench_softmax = load_org_attr("org.mapping.cuda.ai_bench_softmax", "plan_ai_bench_softmax")
+            plan = plan_ai_bench_softmax(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                toolchain_model=toolchain_model.to_json_dict(),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "ai_bench_matmul":
+            plan_ai_bench_matmul = load_org_attr("org.mapping.cuda.ai_bench_matmul", "plan_ai_bench_matmul")
+            plan = plan_ai_bench_matmul(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                toolchain_model=toolchain_model.to_json_dict(),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "masked_attention2d":
+            plan_masked_attention2d = load_org_attr("org.mapping.cuda.masked_attention2d", "plan_masked_attention2d")
+            plan = plan_masked_attention2d(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                toolchain_model=toolchain_model.to_json_dict(),
                 budget=int(budget),
             )
         elif str(spec_name) == "matmul_fused_epilogue2d":

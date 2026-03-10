@@ -17,9 +17,22 @@ def _normalize_oracle_bindings(*, kernel: str, kernel_kind: str, bindings: Mappi
         out.setdefault("ATTN_FWD_BLOCK_KV", 32)
     if kernel_s == "softmax_inner" and kind_s == "row_softmax_axis1_triton_v1":
         out.setdefault("SOFTMAX_BLOCK_THREADS", 64)
+    if kernel_s == "ai_bench_softmax" and kind_s == "row_softmax_axis1_triton_v1":
+        out.setdefault("SOFTMAX_BLOCK_THREADS", 512)
+    if kernel_s == "ai_bench_softmax" and kind_s == "row_softmax_axis1_vec4_v2":
+        out.setdefault("SOFTMAX_BLOCK_THREADS", 256)
+        out.setdefault("SOFTMAX_VEC4", 1)
+    if kernel_s == "masked_attention2d" and kind_s == "attn2d_causal_softmax_v18":
+        out.setdefault("ATTN_SCORE_WARPS", 4)
+        out.setdefault("MASKED_ATTN_SHARED_STAGE", 1)
+        out.setdefault("MASKED_ATTN_VECTOR_WIDTH", 4)
     if kernel_s == "matmul_fused_epilogue2d" and kind_s == "matmul_mma_tf32_v1":
         out.setdefault("MMA_BM", 32)
         out.setdefault("MMA_BN", 32)
+        out.setdefault("MMA_BK", 32)
+    if kernel_s == "ai_bench_matmul" and kind_s in {"matmul_mma_tf32_v1", "matmul_mma_tf32_v2", "matmul_mma_tf32_global_v1"}:
+        out.setdefault("MMA_BM", 64)
+        out.setdefault("MMA_BN", 16)
         out.setdefault("MMA_BK", 32)
     return out
 

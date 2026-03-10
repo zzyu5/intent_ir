@@ -10,7 +10,7 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"masked_attention2d","arch":"sm90","bindings":{},"kernel_kind":"attn2d_causal_softmax_v4","note":"fallback: sm90 v4 good baseline (Q=16,KV=16,HD=16)"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"masked_attention2d","arch":"sm90","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{},"kernel_kind":"attn2d_causal_softmax_v18","note":"autotune: sm90 tiny (Q=16,KV=16,HD=16) v18 parallel softmax near-parity (graph)"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"masked_attention2d","arch":"sm120","when":{"HEAD_DIM":64},"bindings":{"ATTN_BLOCK_M":4,"ATTN_BLOCK_KV":32},"kernel_kind":"attn2d_causal_softmax_v4","note":"sweep: sm120a v4(BM4,BKV32) ratio~0.98 @ Q=64,KV=64,HD=64"}
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"masked_attention2d","arch":"sm120","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{},"kernel_kind":"attn2d_causal_softmax_v18","note":"sweep: sm120 tiny (Q=16,KV=16,HD=16) v18 parallel softmax reached ~0.98-1.00 ratio (graph mode) with better stability than v10/v14"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"masked_attention2d","arch":"sm120","when":{"Q_CTX":16,"KV_CTX":16,"HEAD_DIM":16},"bindings":{"ATTN_SCORE_WARPS":4,"MASKED_ATTN_SHARED_STAGE":1,"MASKED_ATTN_VECTOR_WIDTH":4},"kernel_kind":"attn2d_causal_softmax_v18","note":"sm120 tiny masked-attn: warp4 + ORG-driven vec4 shared stage averaged >1.0x across repeated graph probes"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"_attn_fwd","arch":"sm90","bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32},"kernel_kind":"attn_fwd_tiled_v3","note":"sweep: sm90 BM8 BKV32 ratio~0.93 @ Q=64,KV=64,HD=64"}
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"_attn_fwd","arch":"sm120","bindings":{"ATTN_FWD_BLOCK_M":8,"ATTN_FWD_BLOCK_KV":32},"kernel_kind":"attn_fwd_tiled_v3","note":"sweep: sm120 BM8 BKV32 ratio~0.86 @ Q=64,KV=64,HD=64"}
 
@@ -24,7 +24,7 @@
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"matmul_fused_epilogue2d","arch":"sm120","bindings":{"MMA_BM":32,"MMA_BN":32,"MMA_BK":32,"MMA_ASYNC_COPY":1},"kernel_kind":"matmul_mma_tf32_v1","note":"wmma tf32 shared+async copy + epilogue (M=N=K=32 canonical)"}
 
 # Triton-native softmax (graph perf): vec4 mapping with 256 threads per row (baseline so far).
-{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_softmax","arch":"sm120","bindings":{"SOFTMAX_BLOCK_THREADS":256,"SOFTMAX_VEC4":1},"note":"5090D sm120a graph perf: vec4 load/store + 256 threads"}
+{"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","kernel":"ai_bench_softmax","arch":"sm120","bindings":{"SOFTMAX_BLOCK_THREADS":512},"kernel_kind":"row_softmax_axis1_triton_v1","note":"5090D sm120 graph perf: 512-thread wide-row reduction beats vec4@256 on C=1024"}
 
 # Local sm89 focus overrides (graph perf)
 {"schema_version":"intentir_tuning_db_entry_v1","backend":"cuda","compiler_stack":"python","kernel":"flash_attention2d","arch":"sm89","when":{"HEAD_DIM":64},"bindings":{"ATTN_BLOCK_KV":64},"kernel_kind":"attn2d_causal_softmax_v6","note":"local sm89 focus perf: v6(BKV=64) ratio~0.98 (20260304)"}

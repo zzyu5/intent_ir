@@ -250,6 +250,147 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def ai_bench_softmax_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    modules = [
+        BackendModule(id="ai_softmax_row_tile_resident", kind="staging", provides=["ai_softmax.row_tile_resident"], params=["SOFTMAX_BLOCK_THREADS"], constraints=[]),
+        BackendModule(id="ai_softmax_row_reduction", kind="communication", provides=["ai_softmax.row_reduction"], params=["SOFTMAX_BLOCK_THREADS"], constraints=[]),
+        BackendModule(id="ai_softmax_vector_row_path", kind="mapping", provides=["ai_softmax.vector_row_path"], params=["SOFTMAX_BLOCK_THREADS", "SOFTMAX_VEC4"], constraints=[]),
+        BackendModule(id="ai_softmax_power2_padding", kind="mapping", provides=["ai_softmax.power2_padding"], params=["SOFTMAX_BLOCK_THREADS"], constraints=[]),
+        BackendModule(
+            id="ai_softmax_backend_vec4_v2",
+            kind="template",
+            provides=["backend.kernel_kind.row_softmax_axis1_vec4_v2"],
+            requires=["ai_softmax_row_tile_resident", "ai_softmax_row_reduction", "ai_softmax_vector_row_path"],
+            params=["SOFTMAX_BLOCK_THREADS", "SOFTMAX_VEC4"],
+            constraints=["SOFTMAX_BLOCK_THREADS == 256", "SOFTMAX_VEC4 == 1"],
+        ),
+        BackendModule(
+            id="ai_softmax_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.row_softmax_axis1_v1"],
+            requires=["ai_softmax_row_tile_resident", "ai_softmax_row_reduction", "ai_softmax_power2_padding"],
+            params=[],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="ai_softmax_backend_vec4_v2", dst="ai_softmax_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="ai_softmax_backend_vec4_v2", dst="ai_softmax_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="ai_softmax_backend_vec4_v2", dst="ai_softmax_vector_row_path", edge_type="uses"),
+        BackendModuleEdge(src="ai_softmax_backend_v1", dst="ai_softmax_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="ai_softmax_backend_v1", dst="ai_softmax_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="ai_softmax_backend_v1", dst="ai_softmax_power2_padding", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
+def ai_bench_matmul_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    modules = [
+        BackendModule(id="ai_matmul_operand_tile_stage", kind="staging", provides=["ai_matmul.operand_tile_stage"], params=["MMA_BM", "MMA_BN", "MMA_BK"], constraints=[]),
+        BackendModule(id="ai_matmul_mma_core", kind="primitive", provides=["ai_matmul.mma_core"], params=["MMA_BM", "MMA_BN", "MMA_BK"], constraints=(["supports_mma"] if hardware_model.supports_mma else [])),
+        BackendModule(id="ai_matmul_async_prefetch", kind="pipeline", provides=["ai_matmul.async_prefetch"], params=["MMA_ASYNC_COPY"], constraints=(["supports_async_copy"] if hardware_model.supports_async_copy else [])),
+        BackendModule(id="ai_matmul_tile_fallback", kind="primitive", provides=["ai_matmul.tile_fallback"], params=[], constraints=[]),
+        BackendModule(
+            id="ai_matmul_backend_mma_v2",
+            kind="template",
+            provides=["backend.kernel_kind.matmul_mma_tf32_v2"],
+            requires=["ai_matmul_operand_tile_stage", "ai_matmul_mma_core"],
+            params=["MMA_BM", "MMA_BN", "MMA_BK", "MMA_ASYNC_COPY"],
+            constraints=["MMA_BM%16==0", "MMA_BN%16==0", "MMA_BK%8==0"],
+        ),
+        BackendModule(
+            id="ai_matmul_backend_mma_v1",
+            kind="template",
+            provides=["backend.kernel_kind.matmul_mma_tf32_v1"],
+            requires=["ai_matmul_operand_tile_stage", "ai_matmul_mma_core"],
+            params=["MMA_BM", "MMA_BN", "MMA_BK"],
+            constraints=["MMA_BM%16==0", "MMA_BN%16==0", "MMA_BK%8==0"],
+        ),
+        BackendModule(
+            id="ai_matmul_backend_global_v1",
+            kind="template",
+            provides=["backend.kernel_kind.matmul_mma_tf32_global_v1"],
+            requires=["ai_matmul_operand_tile_stage", "ai_matmul_mma_core"],
+            params=["MMA_BM", "MMA_BN", "MMA_BK"],
+            constraints=["MMA_BM%16==0", "MMA_BN%16==0", "MMA_BK%8==0"],
+        ),
+        BackendModule(
+            id="ai_matmul_backend_tile_v2",
+            kind="template",
+            provides=["backend.kernel_kind.matmul_tile_v2"],
+            requires=["ai_matmul_tile_fallback"],
+            params=[],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="ai_matmul_backend_mma_v2", dst="ai_matmul_operand_tile_stage", edge_type="uses"),
+        BackendModuleEdge(src="ai_matmul_backend_mma_v2", dst="ai_matmul_mma_core", edge_type="uses"),
+        BackendModuleEdge(src="ai_matmul_backend_mma_v2", dst="ai_matmul_async_prefetch", edge_type="optional"),
+        BackendModuleEdge(src="ai_matmul_backend_mma_v1", dst="ai_matmul_operand_tile_stage", edge_type="uses"),
+        BackendModuleEdge(src="ai_matmul_backend_mma_v1", dst="ai_matmul_mma_core", edge_type="uses"),
+        BackendModuleEdge(src="ai_matmul_backend_global_v1", dst="ai_matmul_operand_tile_stage", edge_type="uses"),
+        BackendModuleEdge(src="ai_matmul_backend_global_v1", dst="ai_matmul_mma_core", edge_type="uses"),
+        BackendModuleEdge(src="ai_matmul_backend_tile_v2", dst="ai_matmul_tile_fallback", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
+def masked_attention2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    modules = [
+        BackendModule(id="masked_attn_q_resident_state", kind="staging", provides=["masked_attn.q_resident_state"], params=[], constraints=[]),
+        BackendModule(
+            id="masked_attn_tiny_kv_stage",
+            kind="staging",
+            provides=["masked_attn.tiny_kv_stage"],
+            params=["ATTN_SCORE_WARPS", "MASKED_ATTN_SHARED_STAGE", "MASKED_ATTN_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(id="masked_attn_mask_causal_apply", kind="communication", provides=["masked_attn.mask_causal_apply"], params=[], constraints=[]),
+        BackendModule(id="masked_attn_parallel_softmax", kind="communication", provides=["masked_attn.parallel_softmax"], params=["ATTN_SCORE_WARPS"], constraints=[]),
+        BackendModule(id="masked_attn_vector_dot_fragment", kind="mapping", provides=["masked_attn.vector_dot_fragment"], params=["ATTN_SCORE_WARPS"], constraints=[]),
+        BackendModule(
+            id="masked_attn_backend_v18",
+            kind="template",
+            provides=["backend.kernel_kind.attn2d_causal_softmax_v18"],
+            requires=["masked_attn_q_resident_state", "masked_attn_tiny_kv_stage", "masked_attn_mask_causal_apply", "masked_attn_parallel_softmax"],
+            params=[],
+            constraints=["Q_CTX==16", "KV_CTX==16", "HEAD_DIM==16"],
+        ),
+        BackendModule(
+            id="masked_attn_backend_v14",
+            kind="template",
+            provides=["backend.kernel_kind.attn2d_causal_softmax_v14"],
+            requires=["masked_attn_q_resident_state", "masked_attn_tiny_kv_stage", "masked_attn_mask_causal_apply", "masked_attn_parallel_softmax"],
+            params=[],
+            constraints=["HEAD_DIM==16"],
+        ),
+        BackendModule(
+            id="masked_attn_backend_v10",
+            kind="template",
+            provides=["backend.kernel_kind.attn2d_causal_softmax_v10"],
+            requires=["masked_attn_q_resident_state", "masked_attn_tiny_kv_stage", "masked_attn_mask_causal_apply", "masked_attn_vector_dot_fragment"],
+            params=["ATTN_SCORE_WARPS"],
+            constraints=["HEAD_DIM==16"],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="masked_attn_backend_v18", dst="masked_attn_q_resident_state", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v18", dst="masked_attn_tiny_kv_stage", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v18", dst="masked_attn_mask_causal_apply", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v18", dst="masked_attn_parallel_softmax", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v14", dst="masked_attn_q_resident_state", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v14", dst="masked_attn_tiny_kv_stage", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v14", dst="masked_attn_mask_causal_apply", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v14", dst="masked_attn_parallel_softmax", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v10", dst="masked_attn_q_resident_state", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v10", dst="masked_attn_tiny_kv_stage", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v10", dst="masked_attn_mask_causal_apply", edge_type="uses"),
+        BackendModuleEdge(src="masked_attn_backend_v10", dst="masked_attn_vector_dot_fragment", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 def row_reduction_catalog(
     hardware_model: HardwareModel,
     *,

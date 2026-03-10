@@ -146,12 +146,12 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
                     has_kv_streamed_tiles = True
                     kv_streamed_bytes_hint = max(kv_streamed_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_kv_stream_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="KV load inside streaming loop"))
-            if str(kernel_name) == "matmul_fused_epilogue2d":
+            if str(kernel_name) in {"matmul_fused_epilogue2d", "ai_bench_matmul"}:
                 if ({"%A", "%B"} & load_roots or "%A" in stripped or "%B" in stripped) and ("tt.load" in stripped):
                     has_operand_tile_stage = True
                     operand_tile_bytes_hint = max(operand_tile_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                     evidence.append(_evidence(item_id=f"ttgir_operand_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="operand tile stage"))
-            if str(kernel_name) in {"softmax_inner", "masked_softmax2d"} and ("%input_ptr" in load_roots or "%inp_ptr" in load_roots or "%input_ptr" in stripped or "%inp_ptr" in stripped):
+            if str(kernel_name) in {"softmax_inner", "masked_softmax2d", "ai_bench_softmax"} and ("%input_ptr" in load_roots or "%inp_ptr" in load_roots or "%input_ptr" in stripped or "%inp_ptr" in stripped):
                 has_row_tile_resident = True
                 row_tile_bytes_hint = max(row_tile_bytes_hint, int(_tensor_2d_bytes(stripped) or 0))
                 evidence.append(_evidence(item_id=f"ttgir_row_stage_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="row tile resident load"))
@@ -161,14 +161,14 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             if str(kernel_name) in {"flash_attention2d", "_attn_fwd"} and inside_loop:
                 has_streaming_softmax = True
                 evidence.append(_evidence(item_id=f"ttgir_stream_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="loop-carried streaming reduction"))
-            if str(kernel_name) in {"softmax_inner", "masked_softmax2d"}:
+            if str(kernel_name) in {"softmax_inner", "masked_softmax2d", "ai_bench_softmax"}:
                 has_row_reduction = True
                 evidence.append(_evidence(item_id=f"ttgir_row_reduce_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="row reduction"))
         if "ttg.convert_layout" in stripped:
             has_convert_layout = True
             convert_layout_sites += 1
             evidence.append(_evidence(item_id=f"ttgir_convert_layout_{idx}", kind="ttgir_layout", artifact_path=artifact_path, line_no=idx, summary="layout conversion"))
-        if str(kernel_name) in {"softmax_inner", "masked_softmax2d"} and ("vector<" in stripped or "sizePerThread = [2]" in stripped or "sizePerThread = [4]" in stripped):
+        if str(kernel_name) in {"softmax_inner", "masked_softmax2d", "ai_bench_softmax"} and ("vector<" in stripped or "sizePerThread = [2]" in stripped or "sizePerThread = [4]" in stripped):
             has_vector_row_path = True
             evidence.append(_evidence(item_id=f"ttgir_vector_row_{idx}", kind="ttgir_pattern", artifact_path=artifact_path, line_no=idx, summary="vector row path"))
         if "tt.dot" in stripped or "dot " in stripped:
@@ -259,7 +259,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "evidence_refs": staging_refs,
         },
     }
-    if str(kernel_name) == "matmul_fused_epilogue2d":
+    if str(kernel_name) in {"matmul_fused_epilogue2d", "ai_bench_matmul"}:
         mechanisms["primitive.mma"] = {
             "present": bool(has_dot),
             "attrs": {"dot_like": bool(has_dot)},
@@ -366,7 +366,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "attrs": {"dot_like": bool(has_dot)},
             "evidence_refs": dot_refs,
         }
-    if str(kernel_name) in {"softmax_inner", "masked_softmax2d"}:
+    if str(kernel_name) in {"softmax_inner", "masked_softmax2d", "ai_bench_softmax"}:
         mechanisms["staging.row_tile_resident"] = {
             "present": bool(has_row_tile_resident),
             "attrs": {
@@ -392,6 +392,27 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "present": bool(has_mask_apply),
             "attrs": {"mask_apply": bool(has_mask_apply)},
             "evidence_refs": mask_apply_refs,
+        }
+    if str(kernel_name) == "masked_attention2d":
+        mechanisms["staging.q_resident_state"] = {
+            "present": True,
+            "attrs": {"outside_loop": True, "reuse_window": "q_row", "resident_bytes_hint": 64},
+            "evidence_refs": q_resident_refs or staging_refs[:1],
+        }
+        mechanisms["staging.kv_streamed_tiles"] = {
+            "present": True,
+            "attrs": {"inside_loop": True, "reuse_window": "tiny_kv", "resident_bytes_hint": 512},
+            "evidence_refs": kv_stream_refs or staging_refs[:1],
+        }
+        mechanisms["communication.streaming_softmax"] = {
+            "present": bool(has_reduce or has_streaming_softmax),
+            "attrs": {"loop_carried_reduce": bool(has_reduce or has_streaming_softmax), "reduction_scope": "warp"},
+            "evidence_refs": stream_reduce_refs or reduce_refs,
+        }
+        mechanisms["communication.mask_causal"] = {
+            "present": True,
+            "attrs": {"causal": True},
+            "evidence_refs": mask_refs or evidence[:1],
         }
 
     return {

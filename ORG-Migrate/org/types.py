@@ -15,6 +15,7 @@ ORG_GOAL_TAGS: tuple[str, ...] = (
     "memory_coalescing",
     "persistent_row_state",
     "affine_epilogue_fusion",
+    "mask_causal_pruning",
 )
 
 ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
@@ -78,6 +79,27 @@ ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
         "reduction_tree_balance",
         "memory_coalescing",
         "fused_epilogue_avoid_writeback",
+        "latency_hiding",
+    ),
+    "masked_attention2d": (
+        "resident_working_set",
+        "streaming_softmax_state",
+        "avoid_materialization",
+        "mask_causal_pruning",
+        "latency_hiding",
+    ),
+    "ai_bench_softmax": (
+        "resident_working_set",
+        "streaming_softmax_state",
+        "avoid_materialization",
+        "memory_coalescing",
+        "latency_hiding",
+    ),
+    "ai_bench_matmul": (
+        "operand_reuse",
+        "resident_working_set",
+        "mma_acceleration",
+        "avoid_materialization",
         "latency_hiding",
     ),
     "matmul_fused_epilogue2d": (

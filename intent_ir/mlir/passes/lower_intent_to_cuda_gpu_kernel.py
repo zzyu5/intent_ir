@@ -9541,9 +9541,9 @@ def lower_intent_to_cuda_gpu_kernel(
                 raise RuntimeError(
                     f"{kernel_kind} requires SOFTMAX_BLOCK_THREADS to be a positive multiple of 32; got {req_block_threads}"
                 )
-            if int(req_block_threads) > 256:
+            if int(req_block_threads) > 1024:
                 raise RuntimeError(
-                    f"{kernel_kind} SOFTMAX_BLOCK_THREADS>256 is currently unsupported; got {req_block_threads}"
+                    f"{kernel_kind} SOFTMAX_BLOCK_THREADS>1024 is currently unsupported; got {req_block_threads}"
                 )
             block_threads = int(req_block_threads)
         if (int(pad_n) % int(block_threads)) != 0:
@@ -18493,7 +18493,11 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        %k_base = arith.muli %kv, %cHD : index")
         lines.append("        %k_val = scf.if %pred_d -> (f32) {")
         lines.append("          %k_idx = arith.addi %k_base, %lane : index")
-        lines.append(f"          %k_load = memref.load {arg_ssa[k_name]}[%k_idx] : {k_memref}")
+        if use_shared_stage:
+            lines.append("          %k_sh = arith.addi %c32_idx2, %k_idx : index")
+            lines.append(f"          %k_load = memref.load %sh[%k_sh] : {shared_global_memref_ty}")
+        else:
+            lines.append(f"          %k_load = memref.load {arg_ssa[k_name]}[%k_idx] : {k_memref}")
         lines.append("          scf.yield %k_load : f32")
         lines.append("        } else {")
         lines.append("          scf.yield %c0f : f32")
@@ -19469,10 +19473,18 @@ def lower_intent_to_cuda_gpu_kernel(
 
         if int(hd) != 16 or int(q_ctx) != 16 or int(kv_ctx) != 16:
             raise RuntimeError("attn2d_causal_softmax_v18 requires Q_CTX==16 KV_CTX==16 HEAD_DIM==16")
+        use_shared_stage = int(bindings.get("MASKED_ATTN_SHARED_STAGE") or 0) == 1
+        masked_attn_vec_width = int(bindings.get("MASKED_ATTN_VECTOR_WIDTH") or 1)
+        if masked_attn_vec_width not in {1, 4}:
+            raise RuntimeError(
+                f"attn2d_causal_softmax_v18 requires MASKED_ATTN_VECTOR_WIDTH in {{1,4}}; got {masked_attn_vec_width}"
+            )
 
-        warps = 4
+        warps = int(bindings.get("ATTN_SCORE_WARPS") or 4)
+        if warps not in {2, 4}:
+            raise RuntimeError(f"attn2d_causal_softmax_v18 requires ATTN_SCORE_WARPS in {{2,4}}; got {warps}")
         block_x = int(warps) * 32
-        kv_per_warp = 4
+        kv_per_warp = int(kv_ctx) // int(warps)
         launch_override = {"block": [int(block_x), 1, 1], "grid": [int(q_ctx), 1, 1]}
         cuda_real_mlir_attention_cfg = {
             "block_x": int(block_x),
@@ -19484,7 +19496,8 @@ def lower_intent_to_cuda_gpu_kernel(
         }
 
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
-        shared_global_memref_ty = "memref<16xf32, 3>"
+        shared_global_memref_ty = "memref<544xf32, 3>" if use_shared_stage else "memref<16xf32, 3>"
+        vec4_ty = "vector<4xf32>"
 
         def _subwarp_allreduce_sum_xor_16(val_ssa: str, *, indent: str) -> str:
             cur = str(val_ssa)
@@ -19535,14 +19548,25 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %cHD = arith.constant {int(hd)} : index")
         lines.append(f"      %cKV = arith.constant {int(kv_ctx)} : index")
         lines.append(f"      %cKVPerWarp = arith.constant {int(kv_per_warp)} : index")
+        lines.append("      %c4_idx = arith.constant 4 : index")
+        lines.append("      %c16_idx = arith.constant 16 : index")
+        lines.append("      %c32_idx2 = arith.constant 32 : index")
+        lines.append("      %c64_idx = arith.constant 64 : index")
+        lines.append("      %c128_idx = arith.constant 128 : index")
+        lines.append("      %c288_idx = arith.constant 288 : index")
         lines.append("      %c0f = arith.constant 0.0 : f32")
         lines.append("      %c1f = arith.constant 1.0 : f32")
         lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
         lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
 
         assert shared_global_sym is not None
-        assert shared_global_memref_ty == "memref<16xf32, 3>"
-        lines.append(f"      %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"      %sh0 = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"      %sh = memref.assume_alignment %sh0, 16 : {shared_global_memref_ty}")
+        if use_shared_stage:
+            lines.append(f"      %q_aligned = memref.assume_alignment {arg_ssa[q_name]}, 16 : {q_memref}")
+            lines.append(f"      %k_aligned = memref.assume_alignment {arg_ssa[k_name]}, 16 : {k_memref}")
+            lines.append(f"      %v_aligned = memref.assume_alignment {arg_ssa[v_name]}, 16 : {v_memref}")
+            lines.append(f"      %out_aligned = memref.assume_alignment {arg_ssa[out_name2]}, 16 : {out_memref}")
         lines.append(f"      %sm = memref.load {arg_ssa[sm_scale_name]}[%c0] : {sm_scale_memref}")
         lines.append(f"      %sm2 = arith.mulf %sm, %cLOG2E{fm} : f32")
 
@@ -19551,12 +19575,40 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
         lines.append("      %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
         lines.append("      %pred_d = arith.cmpi ult, %lane, %cHD : index")
+        lines.append("      %base_q = arith.muli %bid, %cHD : index")
+        if use_shared_stage:
+            lines.append("      %pred_stage_q = arith.cmpi ult, %tid, %c4_idx : index")
+            lines.append("      scf.if %pred_stage_q {")
+            lines.append("        %i4q = arith.muli %tid, %c4_idx : index")
+            lines.append("        %qg = arith.addi %base_q, %i4q : index")
+            lines.append(f"        %q_vec = vector.load %q_aligned[%qg] : {q_memref}, {vec4_ty}")
+            lines.append("        %sh_q = arith.addi %c16_idx, %i4q : index")
+            lines.append(f"        vector.store %q_vec, %sh[%sh_q] : {shared_global_memref_ty}, {vec4_ty}")
+            lines.append("      }")
+            lines.append("      %pred_stage_k = arith.cmpi ult, %tid, %c64_idx : index")
+            lines.append("      scf.if %pred_stage_k {")
+            lines.append("        %i4 = arith.muli %tid, %c4_idx : index")
+            lines.append(f"        %k_vec = vector.load %k_aligned[%i4] : {k_memref}, {vec4_ty}")
+            lines.append("        %sh_k = arith.addi %c32_idx2, %i4 : index")
+            lines.append(f"        vector.store %k_vec, %sh[%sh_k] : {shared_global_memref_ty}, {vec4_ty}")
+            lines.append("      }")
+            lines.append("      %pred_stage_v = arith.cmpi ult, %tid, %c64_idx : index")
+            lines.append("      scf.if %pred_stage_v {")
+            lines.append("        %i4v = arith.muli %tid, %c4_idx : index")
+            lines.append(f"        %v_vec = vector.load %v_aligned[%i4v] : {v_memref}, {vec4_ty}")
+            lines.append("        %sh_v = arith.addi %c288_idx, %i4v : index")
+            lines.append(f"        vector.store %v_vec, %sh[%sh_v] : {shared_global_memref_ty}, {vec4_ty}")
+            lines.append("      }")
+            lines.append("      gpu.barrier")
 
         # Load Q vector once per warp (lanes < HD).
-        lines.append("      %base_q = arith.muli %bid, %cHD : index")
         lines.append("      %qv = scf.if %pred_d -> (f32) {")
-        lines.append("        %q_idx = arith.addi %base_q, %lane : index")
-        lines.append(f"        %q_load = memref.load {arg_ssa[q_name]}[%q_idx] : {q_memref}")
+        if use_shared_stage:
+            lines.append("        %q_idx = arith.addi %c16_idx, %lane : index")
+            lines.append(f"        %q_load = memref.load %sh[%q_idx] : {shared_global_memref_ty}")
+        else:
+            lines.append("        %q_idx = arith.addi %base_q, %lane : index")
+            lines.append(f"        %q_load = memref.load {arg_ssa[q_name]}[%q_idx] : {q_memref}")
         lines.append("        scf.yield %q_load : f32")
         lines.append("      } else {")
         lines.append("        scf.yield %c0f : f32")
@@ -19638,7 +19690,11 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          {acc_next} = scf.if %pred_d -> (f32) {{")
         lines.append(f"            {base_v} = arith.muli %kv, %cHD : index")
         lines.append(f"            {v_idx} = arith.addi {base_v}, %lane : index")
-        lines.append(f"            {v_val} = memref.load {arg_ssa[v_name]}[{v_idx}] : {v_memref}")
+        if use_shared_stage:
+            lines.append(f"            %v_sh = arith.addi %c288_idx, {v_idx} : index")
+            lines.append(f"            {v_val} = memref.load %sh[%v_sh] : {shared_global_memref_ty}")
+        else:
+            lines.append(f"            {v_val} = memref.load {arg_ssa[v_name]}[{v_idx}] : {v_memref}")
         acc2 = _fresh("acc2")
         lines.append(
             f"            {acc2} = llvm.intr.fma({p_kv}, {v_val}, %acc) : (f32, f32, f32) -> f32"
@@ -19650,11 +19706,42 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          scf.yield {acc_next} : f32")
         lines.append("        }")
 
-        lines.append("        scf.if %pred_d {")
-        out_idx = _fresh("out_idx")
-        lines.append(f"          {out_idx} = arith.addi %base_q, %lane : index")
-        lines.append(f"          memref.store {acc_out}, {arg_ssa[out_name2]}[{out_idx}] : {out_memref}")
-        lines.append("        }")
+        if use_shared_stage:
+            pred_store = _fresh("pred_store")
+            lane4 = _fresh("lane4")
+            lane4_p1 = _fresh("lane4_p1")
+            lane4_p2 = _fresh("lane4_p2")
+            lane4_p3 = _fresh("lane4_p3")
+            idx0_i32 = _fresh("idx0_i32")
+            idx1_i32 = _fresh("idx1_i32")
+            idx2_i32 = _fresh("idx2_i32")
+            idx3_i32 = _fresh("idx3_i32")
+            lines.append(f"        {pred_store} = arith.cmpi ult, %lane, %c4_idx : index")
+            lines.append(f"        scf.if {pred_store} {{")
+            lines.append(f"          {lane4} = arith.muli %lane, %c4_idx : index")
+            lines.append(f"          {lane4_p1} = arith.addi {lane4}, %c1 : index")
+            lines.append(f"          {lane4_p2} = arith.addi {lane4_p1}, %c1 : index")
+            lines.append(f"          {lane4_p3} = arith.addi {lane4_p2}, %c1 : index")
+            lines.append(f"          {idx0_i32} = arith.index_cast {lane4} : index to i32")
+            lines.append(f"          {idx1_i32} = arith.index_cast {lane4_p1} : index to i32")
+            lines.append(f"          {idx2_i32} = arith.index_cast {lane4_p2} : index to i32")
+            lines.append(f"          {idx3_i32} = arith.index_cast {lane4_p3} : index to i32")
+            out0 = _shuffle_idx(acc_out, idx0_i32, indent="          ")
+            out1 = _shuffle_idx(acc_out, idx1_i32, indent="          ")
+            out2 = _shuffle_idx(acc_out, idx2_i32, indent="          ")
+            out3 = _shuffle_idx(acc_out, idx3_i32, indent="          ")
+            out_vec = _fresh("out_vec")
+            out_idx = _fresh("out_idx")
+            lines.append(f"          {out_vec} = vector.from_elements {out0}, {out1}, {out2}, {out3} : {vec4_ty}")
+            lines.append(f"          {out_idx} = arith.addi %base_q, {lane4} : index")
+            lines.append(f"          vector.store {out_vec}, %out_aligned[{out_idx}] : {out_memref}, {vec4_ty}")
+            lines.append("        }")
+        else:
+            lines.append("        scf.if %pred_d {")
+            out_idx = _fresh("out_idx")
+            lines.append(f"          {out_idx} = arith.addi %base_q, %lane : index")
+            lines.append(f"          memref.store {acc_out}, {arg_ssa[out_name2]}[{out_idx}] : {out_memref}")
+            lines.append("        }")
         lines.append("      }")
     elif (
         attn2d_v1 is not None
