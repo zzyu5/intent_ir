@@ -379,6 +379,9 @@ def run_org_sidecar(
         "row_sum",
         "row_max",
         "layer_norm_persistent",
+        "add2d",
+        "exp2d",
+        "group_norm_kernel",
     } and ttgir_facts is None:
         org_report["ok"] = False
         org_report["error"] = "ttgir_missing"
@@ -577,6 +580,39 @@ def run_org_sidecar(
         elif str(spec_name) == "layer_norm_persistent":
             plan_layer_norm_persistent = load_org_attr("org.mapping.cuda.layer_norm_persistent", "plan_layer_norm_persistent")
             plan = plan_layer_norm_persistent(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "add2d":
+            plan_add2d = load_org_attr("org.mapping.cuda.elementwise2d", "plan_add2d")
+            plan = plan_add2d(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "exp2d":
+            plan_exp2d = load_org_attr("org.mapping.cuda.elementwise2d", "plan_exp2d")
+            plan = plan_exp2d(
+                org_doc,
+                shape_bindings=dict(shape_bindings),
+                source_oracle=dict(source_oracle),
+                hardware_model=hardware_model,
+                ttgir_facts=dict(ttgir_facts or {}),
+                ptx_facts=dict(ptx_facts or {}),
+                budget=int(budget),
+            )
+        elif str(spec_name) == "group_norm_kernel":
+            plan_group_norm_kernel = load_org_attr("org.mapping.cuda.group_norm_kernel", "plan_group_norm_kernel")
+            plan = plan_group_norm_kernel(
                 org_doc,
                 shape_bindings=dict(shape_bindings),
                 source_oracle=dict(source_oracle),

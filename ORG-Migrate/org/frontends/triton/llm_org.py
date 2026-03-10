@@ -36,7 +36,8 @@ Goal objects:
 - id: string
 - tag: one of:
   resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding,
-  operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback
+  operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback,
+  reduction_tree_balance, memory_coalescing, persistent_row_state, affine_epilogue_fusion
 - summary: short explanation of the performance objective
 - scope: short scope string (for example: kv_loop, q_state, epilogue, reduction)
 - tensors: list[string]
@@ -117,6 +118,24 @@ Kernel-specific expectations:
   row_tile_resident, warp_reduction, register_staging, persistent_row_cache, affine_epilogue
   and prefer dims/attrs such as:
   row_width, block_threads, vector_width, resident_bytes, communication_scope
+- For add2d, capture:
+  resident_working_set, memory_coalescing, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  blocked_register_layout, vector_global_io, two_axis_grid_mapping, elementwise_add_primitive, masked_edge_handling
+  and prefer dims/attrs such as:
+  block_threads, vector_width, tile_width_n, communication_scope
+- For exp2d, capture:
+  resident_working_set, memory_coalescing, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  blocked_register_layout, vector_global_io, two_axis_grid_mapping, elementwise_exp_primitive, masked_edge_handling
+  and prefer dims/attrs such as:
+  block_threads, vector_width, tile_width_n, communication_scope
+- For group_norm_kernel, capture:
+  resident_working_set, reduction_tree_balance, memory_coalescing, fused_epilogue_avoid_writeback, latency_hiding
+  and prefer mechanism tags such as:
+  group_tile_resident, warp_reduction, online_normalization, affine_fused_epilogue, vector_group_io
+  and prefer dims/attrs such as:
+  block_threads, vector_width, group_size, communication_scope
 - For matmul_fused_epilogue2d, capture:
   operand_reuse, mma_acceleration, fused_epilogue_avoid_writeback, latency_hiding
   and prefer mechanism tags such as:

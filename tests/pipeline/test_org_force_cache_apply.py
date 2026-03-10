@@ -292,6 +292,124 @@ def _seed_payload(*, kernel: str) -> dict[str, object]:
                 {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
             ],
         }
+    if kernel == "add2d":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "add2d",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 256},
+                "artifacts": {"ttgir_path": "add2d.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "tile resident", "scope": "tile", "tensors": ["A", "B"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "memory_coalescing", "summary": "vector io", "scope": "load_store", "tensors": ["A", "B", "C"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "avoid_materialization", "summary": "register compute", "scope": "compute", "tensors": ["C"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "latency_hiding", "summary": "wide cta", "scope": "grid", "tensors": ["C"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "blocked_register_layout", "category": "tiling", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads", "vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "vector_global_io", "category": "mapping", "supports_goals": ["g1"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "elementwise_add_primitive", "category": "primitive", "supports_goals": ["g2"], "attrs": {}, "dims": [], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "two_axis_grid_mapping", "category": "mapping", "supports_goals": ["g3"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_threads", "role": "thread_block", "candidates": [256, 512, 128], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "vector_width", "role": "vector_width", "candidates": [4, 2, 1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "elementwise_v1",
+                "bindings": {"ELEMENTWISE_BLOCK_THREADS": 256, "ELEMENTWISE_VECTOR_WIDTH": 4},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "add2d.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    if kernel == "exp2d":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "exp2d",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 4, "N": 256},
+                "artifacts": {"ttgir_path": "exp2d.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "tile resident", "scope": "tile", "tensors": ["input"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "memory_coalescing", "summary": "vector io", "scope": "load_store", "tensors": ["input", "output"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "avoid_materialization", "summary": "register compute", "scope": "compute", "tensors": ["output"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "latency_hiding", "summary": "wide cta", "scope": "grid", "tensors": ["output"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "blocked_register_layout", "category": "tiling", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads", "vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "vector_global_io", "category": "mapping", "supports_goals": ["g1"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "elementwise_exp_primitive", "category": "primitive", "supports_goals": ["g2"], "attrs": {}, "dims": [], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "two_axis_grid_mapping", "category": "mapping", "supports_goals": ["g3"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_threads", "role": "thread_block", "candidates": [256, 512, 128], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "vector_width", "role": "vector_width", "candidates": [4, 2, 1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "elementwise_v1",
+                "bindings": {"ELEMENTWISE_BLOCK_THREADS": 256, "ELEMENTWISE_VECTOR_WIDTH": 4},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "exp2d.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
+    if kernel == "group_norm_kernel":
+        return {
+            "schema_version": "intentir_org_v1",
+            "kernel": "group_norm_kernel",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"N": 16, "C": 128, "HW": 256, "num_groups": 128, "group_size": 1},
+                "artifacts": {"ttgir_path": "group_norm_kernel.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep group tile resident", "scope": "tile", "tensors": ["X"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "reduction_tree_balance", "summary": "warp reduction", "scope": "reduce", "tensors": ["Mean", "Rstd"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "memory_coalescing", "summary": "vector group io", "scope": "load_store", "tensors": ["X", "Y"], "evidence_refs": ["e0"]},
+                {"id": "g3", "tag": "fused_epilogue_avoid_writeback", "summary": "fuse affine epilogue", "scope": "epilogue", "tensors": ["W", "B"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "group_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "warp_reduction", "category": "communication", "supports_goals": ["g1"], "attrs": {}, "dims": ["block_threads"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "online_normalization", "category": "fusion", "supports_goals": ["g1"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "affine_fused_epilogue", "category": "fusion", "supports_goals": ["g3"], "attrs": {}, "dims": ["vector_width"], "evidence_refs": ["e0"]},
+                {"id": "m4", "tag": "blocked_layout", "category": "tiling", "supports_goals": ["g0", "g2"], "attrs": {}, "dims": ["block_threads", "vector_width"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "block_threads", "role": "thread_block", "candidates": [256, 128], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "vector_width", "role": "vector_width", "candidates": [4, 2, 1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "source_oracle": {
+                "kernel_kind": "group_norm_v1",
+                "bindings": {"GROUP_NORM_BLOCK_THREADS": 256, "GROUP_NORM_VECTOR_WIDTH": 4},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e1"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "group_norm_kernel.ttgir:1", "summary": "ttgir evidence"},
+                {"id": "e1", "kind": "tuning_db", "path": "cuda.jsonl", "summary": "source oracle"},
+            ],
+        }
     return {
         "schema_version": "intentir_org_v1",
         "kernel": "matmul_fused_epilogue2d",
@@ -699,3 +817,81 @@ def test_force_cache_apply_layer_norm_persistent_uses_ttgir_primary(monkeypatch:
     assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
     assert (tmp_path / "layer_norm_persistent.org_plan.json").is_file()
     assert (tmp_path / "layer_norm_persistent.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "layer_norm_axis1_v1:LAYER_NORM_BLOCK_THREADS=32,LAYER_NORM_PERSISTENT_ROW=1,LAYER_NORM_VECTOR_WIDTH=2"
+
+
+def test_force_cache_apply_add2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
+    _write_seed(out_dir=tmp_path, kernel="add2d")
+    ttgir = tmp_path / "add2d.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [8], order = [0]}>\nmodule attributes {"ttg.num-warps" = 8 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @add2d_kernel(%A_ptr: !tt.ptr<f32>, %B_ptr: !tt.ptr<f32>, %C_ptr: !tt.ptr<f32>) {\n    %a = tt.load %A_ptrs, %mask, %cst : tensor<1024x!tt.ptr<f32>, #blocked>\n    %b = tt.load %B_ptrs, %mask, %cst : tensor<1024x!tt.ptr<f32>, #blocked>\n    %c = arith.addf %a, %b : tensor<1024xf32, #blocked>\n    tt.store %C_ptrs, %c, %mask : tensor<1024x!tt.ptr<f32>, #blocked>\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="add2d",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="add2d", ttgir_path=ttgir),
+        intent=_dummy_intent("add2d"),
+        report=report,
+        shape_bindings={"M": 4, "N": 256},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "add2d.org_plan.json").is_file()
+    assert (tmp_path / "add2d.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "elementwise_v1:ELEMENTWISE_BLOCK_THREADS=256,ELEMENTWISE_VECTOR_WIDTH=4"
+
+
+def test_force_cache_apply_exp2d_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
+    _write_seed(out_dir=tmp_path, kernel="exp2d")
+    ttgir = tmp_path / "exp2d.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [8], order = [0]}>\nmodule attributes {"ttg.num-warps" = 8 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @exp2d_kernel(%A_ptr: !tt.ptr<f32>, %C_ptr: !tt.ptr<f32>) {\n    %a = tt.load %A_ptrs, %mask, %cst : tensor<1024x!tt.ptr<f32>, #blocked>\n    %c = math.exp %a : tensor<1024xf32, #blocked>\n    tt.store %C_ptrs, %c, %mask : tensor<1024x!tt.ptr<f32>, #blocked>\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="exp2d",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="exp2d", ttgir_path=ttgir),
+        intent=_dummy_intent("exp2d"),
+        report=report,
+        shape_bindings={"M": 4, "N": 256},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "exp2d.org_plan.json").is_file()
+    assert (tmp_path / "exp2d.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "elementwise_v1:ELEMENTWISE_BLOCK_THREADS=256,ELEMENTWISE_VECTOR_WIDTH=4"
+
+
+def test_force_cache_apply_group_norm_kernel_uses_ttgir_primary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INTENTIR_ORG_MODE", "apply")
+    monkeypatch.setenv("INTENTIR_ORG_SEED_POLICY", "force_cache")
+    monkeypatch.setenv("INTENTIR_ORG_COMPILE_TOPK", "0")
+    _write_seed(out_dir=tmp_path, kernel="group_norm_kernel")
+    ttgir = tmp_path / "group_norm_kernel.ttgir"
+    ttgir.write_text(
+        '#blocked = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [8], order = [0]}>\nmodule attributes {"ttg.num-warps" = 8 : i32, "ttg.threads-per-warp" = 32 : i32} {\n  tt.func public @group_norm_kernel(%X: !tt.ptr<f32>, %Y: !tt.ptr<f32>) {\n    %x = tt.load %Xptrs, %mask, %cst : tensor<1024x!tt.ptr<f32>, #blocked>\n    %sum = "tt.reduce"(%x) <{axis = 0 : i32}> ({\n    ^bb0(%lhs: f32, %rhs: f32):\n      %acc = arith.addf %lhs, %rhs : f32\n      tt.reduce.return %acc : f32\n    }) : (tensor<1024xf32, #blocked>) -> f32\n    tt.return\n  }\n}\n',
+        encoding="utf-8",
+    )
+    report: dict[str, object] = {"diff": {"ok": True}, "static_validation": {"ok": True}}
+    _run_org_plugin(
+        spec_name="group_norm_kernel",
+        out_dir=tmp_path,
+        desc=_dummy_desc(kernel="group_norm_kernel", ttgir_path=ttgir),
+        intent=_dummy_intent("group_norm_kernel"),
+        report=report,
+        shape_bindings={"N": 16, "C": 128, "HW": 256, "num_groups": 128, "group_size": 1},
+        triton_provider="native",
+        backend_target="cuda_5090d",
+    )
+    assert (report["org"] or {}).get("evidence_source", {}).get("primary") == "ttgir"
+    assert (tmp_path / "group_norm_kernel.org_plan.json").is_file()
+    assert (tmp_path / "group_norm_kernel.org_candidates.txt").read_text(encoding="utf-8").splitlines()[3] == "group_norm_v1:GROUP_NORM_BLOCK_THREADS=256,GROUP_NORM_VECTOR_WIDTH=4"

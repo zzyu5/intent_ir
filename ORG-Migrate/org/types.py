@@ -18,6 +18,18 @@ ORG_GOAL_TAGS: tuple[str, ...] = (
 )
 
 ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
+    "add2d": (
+        "resident_working_set",
+        "memory_coalescing",
+        "avoid_materialization",
+        "latency_hiding",
+    ),
+    "exp2d": (
+        "resident_working_set",
+        "memory_coalescing",
+        "avoid_materialization",
+        "latency_hiding",
+    ),
     "flash_attention2d": (
         "resident_working_set",
         "streaming_softmax_state",
@@ -59,6 +71,13 @@ ORG_GOAL_TAGS_BY_KERNEL: dict[str, tuple[str, ...]] = {
         "persistent_row_state",
         "memory_coalescing",
         "affine_epilogue_fusion",
+        "latency_hiding",
+    ),
+    "group_norm_kernel": (
+        "resident_working_set",
+        "reduction_tree_balance",
+        "memory_coalescing",
+        "fused_epilogue_avoid_writeback",
         "latency_hiding",
     ),
     "matmul_fused_epilogue2d": (

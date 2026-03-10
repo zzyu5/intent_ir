@@ -316,6 +316,72 @@ def row_reduction_catalog(
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def elementwise2d_catalog(
+    hardware_model: HardwareModel,
+    *,
+    op_kind: str,
+) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    prefix = f"elementwise_{str(op_kind).strip()}"
+    primitive_tag = f"{prefix}_primitive"
+    modules = [
+        BackendModule(
+            id=f"{prefix}_tile_resident",
+            kind="staging",
+            provides=[f"{prefix}.tile_resident"],
+            params=["ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_vector_global_io",
+            kind="mapping",
+            provides=[f"{prefix}.vector_global_io"],
+            params=["ELEMENTWISE_VECTOR_WIDTH"],
+            constraints=["ELEMENTWISE_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id=f"{prefix}_two_axis_grid_mapping",
+            kind="mapping",
+            provides=[f"{prefix}.two_axis_grid_mapping"],
+            params=["ELEMENTWISE_BLOCK_THREADS"],
+            constraints=["ELEMENTWISE_BLOCK_THREADS in {64,128,256,512}"],
+        ),
+        BackendModule(
+            id=f"{prefix}_masked_edge_handling",
+            kind="communication",
+            provides=[f"{prefix}.masked_edge_handling"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id=primitive_tag,
+            kind="primitive",
+            provides=[f"{prefix}.{primitive_tag}"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.elementwise_v1"],
+            requires=[
+                f"{prefix}.tile_resident",
+                f"{prefix}.two_axis_grid_mapping",
+                f"{prefix}.{primitive_tag}",
+            ],
+            params=["ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_two_axis_grid_mapping", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=primitive_tag, edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_vector_global_io", edge_type="optional"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_masked_edge_handling", edge_type="optional"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
     modules = [
         BackendModule(
@@ -372,6 +438,67 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_register_stage", edge_type="optional"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_persistent_row_cache", edge_type="optional"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
+def group_norm_kernel_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    modules = [
+        BackendModule(
+            id="group_norm_group_tile_resident",
+            kind="staging",
+            provides=["group_norm.group_tile_resident"],
+            params=["GROUP_NORM_BLOCK_THREADS", "GROUP_NORM_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="group_norm_warp_reduction",
+            kind="communication",
+            provides=["group_norm.warp_reduction"],
+            params=["GROUP_NORM_BLOCK_THREADS"],
+            constraints=["GROUP_NORM_BLOCK_THREADS in {64,128,256}"],
+        ),
+        BackendModule(
+            id="group_norm_online_normalization",
+            kind="fusion",
+            provides=["group_norm.online_normalization"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="group_norm_affine_fused_epilogue",
+            kind="fusion",
+            provides=["group_norm.affine_fused_epilogue"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="group_norm_vector_group_io",
+            kind="mapping",
+            provides=["group_norm.vector_group_io"],
+            params=["GROUP_NORM_VECTOR_WIDTH"],
+            constraints=["GROUP_NORM_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id="group_norm_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.group_norm_v1"],
+            requires=[
+                "group_norm.group_tile_resident",
+                "group_norm.warp_reduction",
+                "group_norm.online_normalization",
+                "group_norm.affine_fused_epilogue",
+            ],
+            params=["GROUP_NORM_BLOCK_THREADS", "GROUP_NORM_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="group_norm_backend_v1", dst="group_norm_group_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="group_norm_backend_v1", dst="group_norm_warp_reduction", edge_type="uses"),
+        BackendModuleEdge(src="group_norm_backend_v1", dst="group_norm_online_normalization", edge_type="uses"),
+        BackendModuleEdge(src="group_norm_backend_v1", dst="group_norm_affine_fused_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="group_norm_backend_v1", dst="group_norm_vector_group_io", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 
@@ -444,4 +571,14 @@ def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list
     return modules, edges, list(PASS_SEQUENCE)
 
 
-__all__ = ["PASS_SEQUENCE", "flash_attention2d_catalog", "attn_fwd_catalog", "row_softmax_catalog", "matmul_fused_epilogue2d_catalog"]
+__all__ = [
+    "PASS_SEQUENCE",
+    "flash_attention2d_catalog",
+    "attn_fwd_catalog",
+    "row_softmax_catalog",
+    "row_reduction_catalog",
+    "elementwise2d_catalog",
+    "layer_norm_persistent_catalog",
+    "group_norm_kernel_catalog",
+    "matmul_fused_epilogue2d_catalog",
+]
