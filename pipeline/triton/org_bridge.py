@@ -513,9 +513,10 @@ def run_org_sidecar(
 
     try:
         budget = int(_org_budget())
-        if str(spec_name) == "flash_attention2d":
-            plan_flash_attention2d = load_org_attr("org.mapping.cuda.flash_attention2d", "plan_flash_attention2d")
-            plan = plan_flash_attention2d(
+        plan_cuda_kernel = load_org_attr("org.mapping.cuda.universal_planner", "plan_cuda_kernel")
+        try:
+            plan = plan_cuda_kernel(
+                str(spec_name),
                 org_doc,
                 shape_bindings=dict(shape_bindings),
                 source_oracle=dict(source_oracle),
@@ -525,155 +526,7 @@ def run_org_sidecar(
                 toolchain_model=toolchain_model.to_json_dict(),
                 budget=int(budget),
             )
-        elif str(spec_name) == "_attn_fwd":
-            plan_attn_fwd = load_org_attr("org.mapping.cuda.attn_fwd", "plan_attn_fwd")
-            plan = plan_attn_fwd(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "masked_softmax2d":
-            plan_masked_softmax2d = load_org_attr("org.mapping.cuda.row_softmax", "plan_masked_softmax2d")
-            plan = plan_masked_softmax2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "softmax_inner":
-            plan_softmax_inner = load_org_attr("org.mapping.cuda.row_softmax", "plan_softmax_inner")
-            plan = plan_softmax_inner(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "row_sum":
-            plan_row_sum = load_org_attr("org.mapping.cuda.row_reduction", "plan_row_sum")
-            plan = plan_row_sum(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "row_max":
-            plan_row_max = load_org_attr("org.mapping.cuda.row_reduction", "plan_row_max")
-            plan = plan_row_max(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "layer_norm_persistent":
-            plan_layer_norm_persistent = load_org_attr("org.mapping.cuda.layer_norm_persistent", "plan_layer_norm_persistent")
-            plan = plan_layer_norm_persistent(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "add2d":
-            plan_add2d = load_org_attr("org.mapping.cuda.elementwise2d", "plan_add2d")
-            plan = plan_add2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "exp2d":
-            plan_exp2d = load_org_attr("org.mapping.cuda.elementwise2d", "plan_exp2d")
-            plan = plan_exp2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "group_norm_kernel":
-            plan_group_norm_kernel = load_org_attr("org.mapping.cuda.group_norm_kernel", "plan_group_norm_kernel")
-            plan = plan_group_norm_kernel(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "ai_bench_softmax":
-            plan_ai_bench_softmax = load_org_attr("org.mapping.cuda.ai_bench_softmax", "plan_ai_bench_softmax")
-            plan = plan_ai_bench_softmax(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                toolchain_model=toolchain_model.to_json_dict(),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "ai_bench_matmul":
-            plan_ai_bench_matmul = load_org_attr("org.mapping.cuda.ai_bench_matmul", "plan_ai_bench_matmul")
-            plan = plan_ai_bench_matmul(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                toolchain_model=toolchain_model.to_json_dict(),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "masked_attention2d":
-            plan_masked_attention2d = load_org_attr("org.mapping.cuda.masked_attention2d", "plan_masked_attention2d")
-            plan = plan_masked_attention2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                toolchain_model=toolchain_model.to_json_dict(),
-                budget=int(budget),
-            )
-        elif str(spec_name) == "matmul_fused_epilogue2d":
-            plan_matmul_fused_epilogue2d = load_org_attr(
-                "org.mapping.cuda.matmul_fused_epilogue2d", "plan_matmul_fused_epilogue2d"
-            )
-            plan = plan_matmul_fused_epilogue2d(
-                org_doc,
-                shape_bindings=dict(shape_bindings),
-                source_oracle=dict(source_oracle),
-                hardware_model=hardware_model,
-                ttgir_facts=dict(ttgir_facts or {}),
-                ptx_facts=dict(ptx_facts or {}),
-                budget=int(budget),
-            )
-        else:
+        except ValueError:
             org_report["apply_skipped"] = True
             org_report["apply_reason"] = "org_kernel_deferred"
             return

@@ -10,6 +10,7 @@ for the reasoning-bearing sections only:
   - tensor_lifetimes
   - dataflow_edges
   - mechanism_topology
+  - schedule_edges
   - evidence
   - notes (optional list[string])
 """
@@ -36,6 +37,7 @@ Hard rules:
   - tensor_lifetimes
   - dataflow_edges
   - mechanism_topology
+  - schedule_edges
   - evidence
   - notes (optional list[string])
 - Runtime will inject `source_context` and `source_oracle`; do NOT invent or emit hardware mapping decisions.
@@ -73,6 +75,9 @@ Tensor objects:
 - name: string
 - role: short semantic role such as input_row, row_stats, kv_tile, output_accumulator
 - dtype (optional): string
+- layout (optional): short layout/view label such as row_major, blocked, swizzled, fragment
+- view_of (optional): tensor.id of the parent representation if this is an alias/view/layout-converted view
+- alias_group (optional): short alias set label when multiple views share the same logical storage
 - aliases (optional): list[string]
 - shape_refs (optional): list[string]
 - evidence_refs: list[string]
@@ -84,11 +89,14 @@ TensorLifetime objects:
 - storage: one of global, shared, register, local
 - start: short phase/event string
 - end: short phase/event string
+- scope (optional): short scope label such as lane, warp, cta, kv_loop
+- layout (optional): short layout/state label if the residency implies a transformed view
 - producer_mechanisms: list[mechanism.id]
 - consumer_mechanisms: list[mechanism.id]
 - supports_goals: list[goal.id]
 - dims: list[dim.name]
 - bytes_hint (optional): int
+- pipeline_stage (optional): int
 - reuse_window (optional): prefer a structured scope label such as cta_tile, row_tile, row_reduce, row_epilogue, full_row
 - evidence_refs: list[string]
 
@@ -111,6 +119,16 @@ MechanismTopology objects:
 - lifetimes: list[tensor_lifetime.id]
 - evidence_refs: list[string]
 
+ScheduleEdge objects:
+- id: string
+- src: mechanism.id or tensor_lifetime.id
+- dst: mechanism.id or tensor_lifetime.id
+- relation: short control/layout label such as async_prefetch, sync_before, wait_group, layout_convert, swizzle, alias_view
+- scope (optional): short scope label such as warp, cta, kv_loop
+- resources (optional): list[tensor_lifetime.id]
+- attrs (optional): object
+- evidence_refs: list[string]
+
 Evidence objects:
 - id: string
 - kind: string
@@ -121,6 +139,7 @@ Evidence objects:
 Important:
 - Separate WHY from HOW from DIMS. Do NOT collapse them into one object.
 - ORG is a topology, not a bag of tags. Always emit the tensor/lifetime/dataflow/mechanism graph for the kernel.
+- When the kernel uses aliasing views, swizzled layouts, wait groups, barriers, or async prefetch, encode them in tensor view metadata and schedule_edges instead of hiding them in prose.
 - Do NOT output backend variant names or target parameter assignments.
 - Do NOT output numeric tuning decisions copied from source oracle. You may output candidate sets for dimensions.
 - Every goal and every mechanism must have at least one evidence ref.
@@ -227,10 +246,10 @@ Kernel-specific expectations:
 
 SYSTEM_PROMPT_COMPACT = """Return ONE strict ORG JSON object.
 
-Required keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, evidence (notes optional list[string]).
+Required keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, schedule_edges, evidence (notes optional list[string]).
 Runtime injects source_context/source_oracle; do not output hardware mapping or target numeric assignments.
 Each goal/mechanism/dim must be evidence-backed.
-Emit a real optimization topology: tensors, their residency intervals, dataflow edges, and mechanism dependencies.
+Emit a real optimization topology: tensors, their residency intervals, dataflow edges, mechanism dependencies, and explicit schedule/control edges for layout or synchronization when present.
 """
 
 

@@ -151,6 +151,9 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
         if not isinstance(raw_tensor, Mapping):
             continue
         tensor = dict(raw_tensor)
+        view_of = str(tensor.get("view_of") or "").strip()
+        if view_of and view_of not in tensor_ids:
+            tensor["view_of"] = ""
         tensor["evidence_refs"] = [
             ref for ref in [str(x).strip() for x in list(tensor.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
         ]
@@ -234,6 +237,25 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
         topology_out.append(edge)
     if topology_out or "mechanism_topology" in obj:
         obj["mechanism_topology"] = topology_out
+    schedule_out: list[dict[str, Any]] = []
+    schedule_node_ids = set(mechanism_ids) | set(lifetime_ids)
+    for raw_edge in list(obj.get("schedule_edges") or []):
+        if not isinstance(raw_edge, Mapping):
+            continue
+        edge = dict(raw_edge)
+        if str(edge.get("src") or "").strip() not in schedule_node_ids:
+            continue
+        if str(edge.get("dst") or "").strip() not in schedule_node_ids:
+            continue
+        edge["resources"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("resources") or []) if str(x).strip()] if ref in lifetime_ids
+        ]
+        edge["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(edge.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        schedule_out.append(edge)
+    if schedule_out or "schedule_edges" in obj:
+        obj["schedule_edges"] = schedule_out
     return obj
 
 
