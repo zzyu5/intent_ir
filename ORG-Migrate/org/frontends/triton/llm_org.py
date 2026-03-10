@@ -138,6 +138,9 @@ Kernel-specific expectations:
   q_resident_state, kv_streamed_tiles, online_softmax_reduce, output_layout_convert
   and prefer dims/attrs such as:
   resident_bytes, pipeline_depth, communication_scope
+  and explicitly model tensors/lifetimes such as:
+  Q resident at CTA/kv_loop scope -> streamed K tile + streamed V tile -> max_state/sum_state -> output_accumulator/store
+  with K/V tile lifetimes marked as streamed inputs, Q lifetime spanning the KV loop, and max/sum state lifetimes carried across online softmax updates
 - For _attn_fwd, capture:
   resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
   and prefer mechanism tags such as:
