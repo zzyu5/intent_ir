@@ -83,6 +83,18 @@ def _build_intent_summary(intent: IntentFunction) -> dict[str, object]:
         "outputs": [str(x) for x in list(intent.outputs or []) if str(x).strip()],
         "parallel_axes": [str(x) for x in list(intent.parallel_axes or []) if str(x).strip()],
         "axis_roles": dict(getattr(intent, "axis_roles", {}) or {}),
+        "regions": [
+            {
+                "id": str(getattr(region, "id", "") or ""),
+                "kind": str(getattr(region, "kind", "") or ""),
+                "predicate": str(getattr(region, "predicate", "") or ""),
+                "path_id": str(getattr(region, "path_id", "") or ""),
+                "inputs": [str(x) for x in list(getattr(region, "inputs", []) or []) if str(x).strip()],
+                "outputs": [str(x) for x in list(getattr(region, "outputs", []) or []) if str(x).strip()],
+                "meta": dict(getattr(region, "meta", {}) or {}),
+            }
+            for region in list(getattr(intent, "regions", []) or [])
+        ],
         "schedule": (intent.schedule.__dict__ if getattr(intent, "schedule", None) is not None else None),
     }
 

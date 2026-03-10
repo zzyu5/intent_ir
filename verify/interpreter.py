@@ -34,6 +34,7 @@ NUM_BIN_OPS = {
 NUM_UNARY_OPS = {
     "relu": lambda x: np.maximum(x, 0),
     "exp": np.exp,
+    "tanh": np.tanh,
     "rsqrt": lambda x: 1.0 / np.sqrt(x),
     "abs": np.abs,
     "floor": np.floor,
@@ -1262,6 +1263,24 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         idxs = [_get(env, n) for n in op.inputs[1:]]
         if not idxs:
             raise ValueError("gather requires at least one index tensor")
+        axis = op.attrs.get("axis")
+        if axis is not None:
+            if len(idxs) != 1:
+                raise ValueError("axis-based gather expects exactly 1 index tensor")
+            axis_i = int(axis)
+            data_a = np.asarray(data)
+            idx = np.asarray(idxs[0], dtype=np.int64)
+            if idx.ndim == data_a.ndim - 1:
+                idx = np.expand_dims(idx, axis=axis_i)
+            if idx.ndim != data_a.ndim:
+                raise ValueError(
+                    f"axis-based gather rank mismatch: data rank={data_a.ndim} indices rank={idx.ndim}"
+                )
+            out = np.take_along_axis(data_a, idx, axis=axis_i)
+            squeeze_result = bool(op.attrs.get("squeeze", False))
+            if squeeze_result or int(out.shape[axis_i]) == 1:
+                out = np.squeeze(out, axis=axis_i)
+            return out
         idxs_b = np.broadcast_arrays(*idxs)
         idxs_b = [np.asarray(ix, dtype=np.int64) for ix in idxs_b]
         return data[tuple(idxs_b)]
@@ -1435,22 +1454,55 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         cos = np.asarray(_get(env, op.inputs[1]), dtype=np.float32, order="C")
         sin = np.asarray(_get(env, op.inputs[2]), dtype=np.float32, order="C")
         if x.ndim != 4:
-            raise ValueError(f"rope expects input rank-4 [SEQ,BATCH,HEAD,HEAD_DIM], got {x.shape}")
-        if cos.ndim != 2 or sin.ndim != 2:
-            raise ValueError(f"rope expects cos/sin rank-2 [SEQ,HEAD_DIM/2], got cos={cos.shape} sin={sin.shape}")
-        SEQ, B, H, D = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]), int(x.shape[3]))
+            raise ValueError(f"rope expects input rank-4, got {x.shape}")
+        if cos.ndim not in {2, 3} or sin.ndim not in {2, 3}:
+            raise ValueError(f"rope expects cos/sin rank-2 or rank-3, got cos={cos.shape} sin={sin.shape}")
+        input_layout = str(op.attrs.get("input_layout") or "").strip().lower()
+        if input_layout == "bhsd":
+            x_phys = np.transpose(x, (0, 2, 1, 3))
+            output_perm = (0, 2, 1, 3)
+        elif input_layout in {"bshd", "bshd_phys"}:
+            x_phys = x
+            output_perm = None
+        elif cos.ndim == 2 and int(x.shape[0]) == int(cos.shape[0]):
+            # Backward-compatible AI-benchmark layout: [SEQ, BATCH, HEAD, DIM].
+            x_phys = np.transpose(x, (1, 0, 2, 3))
+            output_perm = (1, 0, 2, 3)
+        else:
+            x_phys = x
+            output_perm = None
+        B, SEQ, H, D = (int(x_phys.shape[0]), int(x_phys.shape[1]), int(x_phys.shape[2]), int(x_phys.shape[3]))
         if D % 2 != 0:
             raise ValueError("rope expects even HEAD_DIM")
         half = D // 2
-        if cos.shape != (SEQ, half) or sin.shape != (SEQ, half):
-            raise ValueError(f"rope cos/sin shape mismatch: expected ({SEQ},{half}) got cos={cos.shape} sin={sin.shape}")
-        cos_b = cos[:, None, None, :]
-        sin_b = sin[:, None, None, :]
-        x1 = x[..., :half]
-        x2 = x[..., half:]
+        if cos.ndim == 2:
+            if cos.shape[0] != SEQ or sin.shape[0] != SEQ:
+                raise ValueError(f"rope cos/sin seq mismatch: expected SEQ={SEQ} got cos={cos.shape} sin={sin.shape}")
+            if int(cos.shape[1]) not in {half, D} or int(sin.shape[1]) not in {half, D}:
+                raise ValueError(f"rope cos/sin width mismatch: expected half={half} or full={D}, got cos={cos.shape} sin={sin.shape}")
+            cos_row = cos[:, :half]
+            sin_row = sin[:, :half]
+            cos_b = cos_row[None, :, None, :]
+            sin_b = sin_row[None, :, None, :]
+        else:
+            cos_bsz = int(cos.shape[0])
+            sin_bsz = int(sin.shape[0])
+            if cos_bsz not in {1, B} or sin_bsz not in {1, B}:
+                raise ValueError(f"rope cos/sin batch mismatch: expected 1 or {B}, got cos={cos.shape} sin={sin.shape}")
+            if int(cos.shape[1]) != SEQ or int(sin.shape[1]) != SEQ:
+                raise ValueError(f"rope cos/sin seq mismatch: expected SEQ={SEQ}, got cos={cos.shape} sin={sin.shape}")
+            if int(cos.shape[2]) not in {half, D} or int(sin.shape[2]) not in {half, D}:
+                raise ValueError(f"rope cos/sin width mismatch: expected half={half} or full={D}, got cos={cos.shape} sin={sin.shape}")
+            cos_b = cos[..., :half][:, :, None, :]
+            sin_b = sin[..., :half][:, :, None, :]
+        x1 = x_phys[..., :half]
+        x2 = x_phys[..., half:]
         y1 = x1 * cos_b - x2 * sin_b
         y2 = x1 * sin_b + x2 * cos_b
-        return np.concatenate([y1, y2], axis=-1).astype(np.float32, copy=False)
+        out = np.concatenate([y1, y2], axis=-1).astype(np.float32, copy=False)
+        if output_perm is not None:
+            out = np.transpose(out, output_perm)
+        return out
     if op.op == "reduce_sum":
         x = _get(env, op.inputs[0])
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))

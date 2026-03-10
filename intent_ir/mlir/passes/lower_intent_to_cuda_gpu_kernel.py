@@ -374,6 +374,7 @@ def lower_intent_to_cuda_gpu_kernel(
         "max_pool2d_with_indices_nchw",
         "per_token_group_quant_fp8_2d",
         "batch_norm2d",
+        "liger_rope",
     }
     if len(outputs) == 2 and not multi_output_ok:
         out_ranks = sorted(
@@ -1903,6 +1904,8 @@ def lower_intent_to_cuda_gpu_kernel(
     dropout_v1: dict[str, Any] | None = None
     correlation_v1: dict[str, Any] | None = None
     resize_v1: dict[str, Any] | None = None
+    cross_entropy_loss_v1: dict[str, Any] | None = None
+    rope_dual_v1: dict[str, Any] | None = None
     rope_v1: dict[str, Any] | None = None
     warp_v1: dict[str, Any] | None = None
     matmul_v1: dict[str, Any] | None = None
@@ -5098,6 +5101,197 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "BH": 16,
                                     }
 
+        op_names = [str(getattr(op, "op", "")).strip() for op in ops_list]
+
+        def _op_inputs(op: Any) -> list[str]:
+            return [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+
+        def _op_out(op: Any) -> str:
+            return str(getattr(op, "output", "") or "").strip()
+
+        def _dims(name: str) -> list[int] | None:
+            spec = arg_specs.get(str(name))
+            if not isinstance(spec, dict):
+                return None
+            dims = list(spec.get("dims") or [])
+            return [int(x) for x in dims] if dims else []
+
+        def _elem(name: str) -> str:
+            return str((arg_specs.get(str(name)) or {}).get("memref_elem_ty") or "").strip()
+
+        # Pattern: logical-public dual-rope with explicit physical transpose views.
+        if op_names == ["transpose", "transpose", "rope", "rope", "transpose", "transpose"]:
+            op0, op1, op2, op3, op4, op5 = ops_list
+            ins0, out0 = _op_inputs(op0), _op_out(op0)
+            ins1, out1 = _op_inputs(op1), _op_out(op1)
+            ins2, out2 = _op_inputs(op2), _op_out(op2)
+            ins3, out3 = _op_inputs(op3), _op_out(op3)
+            ins4, out4 = _op_inputs(op4), _op_out(op4)
+            ins5, out5 = _op_inputs(op5), _op_out(op5)
+            attrs0 = dict(getattr(op0, "attrs", {}) or {})
+            attrs1 = dict(getattr(op1, "attrs", {}) or {})
+            attrs2 = dict(getattr(op2, "attrs", {}) or {})
+            attrs3 = dict(getattr(op3, "attrs", {}) or {})
+            attrs4 = dict(getattr(op4, "attrs", {}) or {})
+            attrs5 = dict(getattr(op5, "attrs", {}) or {})
+            if (
+                len(ins0) == 1
+                and len(ins1) == 1
+                and len(ins2) == 3
+                and len(ins3) == 3
+                and len(ins4) == 1
+                and len(ins5) == 1
+                and list(attrs0.get("perm") or []) == [0, 2, 1, 3]
+                and list(attrs1.get("perm") or []) == [0, 2, 1, 3]
+                and list(attrs4.get("perm") or []) == [0, 2, 1, 3]
+                and list(attrs5.get("perm") or []) == [0, 2, 1, 3]
+                and str(attrs2.get("input_layout") or "bshd").strip().lower() == "bshd"
+                and str(attrs3.get("input_layout") or "bshd").strip().lower() == "bshd"
+                and str(ins2[0]) == str(out0)
+                and str(ins3[0]) == str(out1)
+                and str(ins4[0]) == str(out2)
+                and str(ins5[0]) == str(out3)
+                and str(ins2[1]) == str(ins3[1])
+                and str(ins2[2]) == str(ins3[2])
+                and str(out4) == "q_out"
+                and str(out5) == "k_out"
+            ):
+                q_name = str(ins0[0])
+                k_name = str(ins1[0])
+                cos_name = str(ins2[1])
+                sin_name = str(ins2[2])
+                q_out_name = str(out4)
+                k_out_name = str(out5)
+                q_dims = _dims(q_name)
+                k_dims = _dims(k_name)
+                q_out_dims = _dims(q_out_name)
+                k_out_dims = _dims(k_out_name)
+                cos_dims = _dims(cos_name)
+                sin_dims = _dims(sin_name)
+                if (
+                    q_dims
+                    and k_dims
+                    and q_out_dims
+                    and k_out_dims
+                    and cos_dims
+                    and sin_dims
+                    and len(q_dims) == 4
+                    and len(k_dims) == 4
+                    and len(q_out_dims) == 4
+                    and len(k_out_dims) == 4
+                    and len(cos_dims) in {2, 3}
+                    and len(sin_dims) in {2, 3}
+                ):
+                    b_dim, qh_dim, s_dim, hd_dim = map(int, q_dims)
+                    bk_dim, kh_dim, sk_dim, hk_dim = map(int, k_dims)
+                    if (
+                        list(map(int, q_out_dims)) == [b_dim, qh_dim, s_dim, hd_dim]
+                        and list(map(int, k_out_dims)) == [bk_dim, kh_dim, sk_dim, hk_dim]
+                        and b_dim == bk_dim
+                        and s_dim == sk_dim
+                        and hd_dim == hk_dim
+                        and hd_dim > 0
+                        and hd_dim % 2 == 0
+                    ):
+                        cos_b = int(cos_dims[0]) if len(cos_dims) == 3 else 1
+                        cos_s = int(cos_dims[-2]) if len(cos_dims) >= 2 else 0
+                        cos_w = int(cos_dims[-1]) if len(cos_dims) >= 1 else 0
+                        sin_b = int(sin_dims[0]) if len(sin_dims) == 3 else 1
+                        sin_s = int(sin_dims[-2]) if len(sin_dims) >= 2 else 0
+                        sin_w = int(sin_dims[-1]) if len(sin_dims) >= 1 else 0
+                        half = hd_dim // 2
+                        if cos_s == s_dim and sin_s == s_dim and cos_w in {half, hd_dim} and sin_w in {half, hd_dim}:
+                            rope_dual_v1 = {
+                                "q": q_name,
+                                "k": k_name,
+                                "cos": cos_name,
+                                "sin": sin_name,
+                                "q_out": q_out_name,
+                                "k_out": k_out_name,
+                                "B": int(b_dim),
+                                "S": int(s_dim),
+                                "QH": int(qh_dim),
+                                "KH": int(kh_dim),
+                                "HD": int(hd_dim),
+                                "HALF": int(half),
+                                "COS_B": int(cos_b),
+                                "COS_W": int(cos_w),
+                            }
+
+        if tuple(op_names) in {
+            (
+                "const",
+                "reduce_max",
+                "broadcast_in_dim",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "reshape",
+                "gather",
+                "reshape",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            ),
+            (
+                "const",
+                "reduce_max",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "gather",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            ),
+        }:
+            try:
+                inp_name = str(_op_inputs(ops_list[1])[0])
+                gather_idx = 9 if len(op_names) == 18 else 7
+                ne_idx = 12 if len(op_names) == 18 else 9
+                target_inputs = _op_inputs(ops_list[gather_idx])
+                target_name = str(target_inputs[1]) if len(target_inputs) >= 2 else ""
+                ignore_name = str(_op_inputs(ops_list[ne_idx])[1])
+                out_name2 = str(_op_out(ops_list[-1]))
+                inp_dims = _dims(inp_name)
+                target_dims = _dims(target_name)
+                out_dims = _dims(out_name2)
+                if (
+                    inp_dims
+                    and target_dims
+                    and len(inp_dims) == 2
+                    and len(target_dims) == 1
+                    and len(out_dims) == 0
+                    and int(inp_dims[0]) == int(target_dims[0])
+                    and str(_elem(inp_name)) == "f32"
+                    and str(_elem(out_name2)) == "f32"
+                    and str(_elem(target_name)) in {"i32", "i64"}
+                    and str(_elem(ignore_name)) in {"i32", "i64"}
+                ):
+                    cross_entropy_loss_v1 = {
+                        "input": inp_name,
+                        "target": target_name,
+                        "ignore_index": ignore_name,
+                        "loss": out_name2,
+                        "BT": int(inp_dims[0]),
+                        "V": int(inp_dims[1]),
+                        "target_dtype": str(_elem(target_name)),
+                    }
+            except Exception:
+                cross_entropy_loss_v1 = None
+
         # Pattern: ai_bench_rope (const + rope) and ai_bench_warp (single warp op).
         # These ops are non-elementwise (inputs may have different numel) and need
         # explicit index math, so we lower them as dedicated kernels.
@@ -6386,12 +6580,21 @@ def lower_intent_to_cuda_gpu_kernel(
                 "matmul_tile_v2",
                 "matmul_tile_v1",
             },
+            "liger_rope": {
+                "rope_dual_v1",
+            },
         }
         allowed = allowed_by_intent.get(intent_name)
         if allowed is None and row_rms_norm2d is not None:
             allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3"}
         if allowed is None and row_fused_add_rms_norm2d is not None:
             allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3"}
+        if allowed is None and rope_dual_v1 is not None:
+            allowed = {"rope_dual_v1"}
+        if allowed is None and cross_entropy_loss_v1 is not None:
+            allowed = {"cross_entropy_loss_v1"}
+        if allowed is None and rope_v1 is not None:
+            allowed = {"rope_v1"}
         if allowed is None and elementwise_override_compatible:
             allowed = {"elementwise_v1"}
         if allowed is None:
@@ -7038,6 +7241,187 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          %out_base = arith.addi %out_off, %out_row : index")
         lines.append("          %out_idx = arith.addi %out_base, %w : index")
         lines.append(f"          memref.store %out_i8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif cross_entropy_loss_v1 is not None:
+        kernel_kind = "cross_entropy_loss_v1"
+        inp_name = str(cross_entropy_loss_v1["input"])
+        target_name = str(cross_entropy_loss_v1["target"])
+        ignore_name = str(cross_entropy_loss_v1["ignore_index"])
+        out_name2 = str(cross_entropy_loss_v1["loss"])
+        bt_dim = int(cross_entropy_loss_v1["BT"])
+        v_dim = int(cross_entropy_loss_v1["V"])
+
+        if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("cross_entropy_loss_v1 expects f32 input tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("cross_entropy_loss_v1 expects f32 scalar output")
+        target_memref = str(arg_specs[target_name]["memref"])
+        target_elem_ty = str(arg_specs[target_name]["memref_elem_ty"])
+        ignore_memref = str(arg_specs[ignore_name]["memref"])
+        ignore_elem_ty = str(arg_specs[ignore_name]["memref_elem_ty"])
+        if target_elem_ty not in {"i32", "i64"} or ignore_elem_ty != target_elem_ty:
+            raise RuntimeError("cross_entropy_loss_v1 expects target/ignore_index integer tensors with matching dtype")
+
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        launch_override = {"block": [1, 1, 1], "grid": [1, 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cBT = arith.constant {int(bt_dim)} : index")
+        lines.append(f"      %cV = arith.constant {int(v_dim)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %tid0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      scf.if %tid0 {")
+        lines.append(f"        %ignore_raw = memref.load {arg_ssa[ignore_name]}[%c0] : {ignore_memref}")
+        lines.append(f"        %neg_large = arith.constant -3.40282347E+38 : f32")
+        lines.append("        %loss_sum, %valid_sum = scf.for %row = %c0 to %cBT step %c1 iter_args(%acc = %c0f, %cnt = %c0f) -> (f32, f32) {")
+        lines.append(f"          %target_raw = memref.load {arg_ssa[target_name]}[%row] : {target_memref}")
+        lines.append(f"          %skip = arith.cmpi eq, %target_raw, %ignore_raw : {target_elem_ty}")
+        lines.append("          %acc_next, %cnt_next = scf.if %skip -> (f32, f32) {")
+        lines.append("            scf.yield %acc, %cnt : f32, f32")
+        lines.append("          } else {")
+        lines.append(f"            %target_idx = arith.index_castui %target_raw : {target_elem_ty} to index")
+        lines.append("            %row_base = arith.muli %row, %cV : index")
+        lines.append("            %idx0 = arith.addi %row_base, %c0 : index")
+        lines.append(f"            %x0 = memref.load {arg_ssa[inp_name]}[%idx0] : {inp_memref}")
+        lines.append("            %row_max = scf.for %col = %c1 to %cV step %c1 iter_args(%mx = %x0) -> (f32) {")
+        lines.append("              %idx = arith.addi %row_base, %col : index")
+        lines.append(f"              %x = memref.load {arg_ssa[inp_name]}[%idx] : {inp_memref}")
+        lines.append("              %gt = arith.cmpf ogt, %x, %mx : f32")
+        lines.append("              %mx_next = arith.select %gt, %x, %mx : f32")
+        lines.append("              scf.yield %mx_next : f32")
+        lines.append("            }")
+        lines.append("            %sum_exp, %picked = scf.for %col = %c0 to %cV step %c1 iter_args(%sumv = %c0f, %pick = %c0f) -> (f32, f32) {")
+        lines.append("              %idx = arith.addi %row_base, %col : index")
+        lines.append(f"              %x = memref.load {arg_ssa[inp_name]}[%idx] : {inp_memref}")
+        lines.append(f"              %centered = arith.subf %x, %row_max{fm} : f32")
+        lines.append(f"              %ex = math.exp %centered{fm} : f32")
+        lines.append(f"              %sum_next = arith.addf %sumv, %ex{fm} : f32")
+        lines.append("              %is_pick = arith.cmpi eq, %col, %target_idx : index")
+        lines.append("              %pick_next = arith.select %is_pick, %x, %pick : f32")
+        lines.append("              scf.yield %sum_next, %pick_next : f32, f32")
+        lines.append("            }")
+        lines.append(f"            %log_sum = math.log %sum_exp{fm} : f32")
+        lines.append(f"            %lse = arith.addf %row_max, %log_sum{fm} : f32")
+        lines.append(f"            %row_loss = arith.subf %lse, %picked{fm} : f32")
+        lines.append(f"            %acc_out = arith.addf %acc, %row_loss{fm} : f32")
+        lines.append(f"            %cnt_out = arith.addf %cnt, %c1f{fm} : f32")
+        lines.append("            scf.yield %acc_out, %cnt_out : f32, f32")
+        lines.append("          }")
+        lines.append("          scf.yield %acc_next, %cnt_next : f32, f32")
+        lines.append("        }")
+        lines.append("        %has_valid = arith.cmpf ogt, %valid_sum, %c0f : f32")
+        lines.append("        %safe_valid = arith.select %has_valid, %valid_sum, %c1f : f32")
+        lines.append(f"        %loss_val = arith.divf %loss_sum, %safe_valid{fm} : f32")
+        lines.append(f"        memref.store %loss_val, {arg_ssa[out_name2]}[%c0] : {out_memref}")
+        lines.append("      }")
+    elif rope_dual_v1 is not None:
+        kernel_kind = "rope_dual_v1"
+        q_name = str(rope_dual_v1["q"])
+        k_name = str(rope_dual_v1["k"])
+        cos_name = str(rope_dual_v1["cos"])
+        sin_name = str(rope_dual_v1["sin"])
+        q_out_name = str(rope_dual_v1["q_out"])
+        k_out_name = str(rope_dual_v1["k_out"])
+        b_dim = int(rope_dual_v1["B"])
+        s_dim = int(rope_dual_v1["S"])
+        qh_dim = int(rope_dual_v1["QH"])
+        kh_dim = int(rope_dual_v1["KH"])
+        hd_dim = int(rope_dual_v1["HD"])
+        half = int(rope_dual_v1["HALF"])
+        cos_b_dim = int(rope_dual_v1["COS_B"])
+        cos_w_dim = int(rope_dual_v1["COS_W"])
+
+        for tensor_name in (q_name, k_name, cos_name, sin_name, q_out_name, k_out_name):
+            if str(arg_specs[tensor_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("rope_dual_v1 expects f32 tensors")
+
+        q_memref = str(arg_specs[q_name]["memref"])
+        k_memref = str(arg_specs[k_name]["memref"])
+        cos_memref = str(arg_specs[cos_name]["memref"])
+        sin_memref = str(arg_specs[sin_name]["memref"])
+        q_out_memref = str(arg_specs[q_out_name]["memref"])
+        k_out_memref = str(arg_specs[k_out_name]["memref"])
+
+        launch_override = {"block": [256, 1, 1], "grid": [int(max(qh_dim, kh_dim)), int(b_dim), int(s_dim)]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid_head = gpu.block_id x")
+        lines.append("      %bid_batch = gpu.block_id y")
+        lines.append("      %bid_seq = gpu.block_id z")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append(f"      %cB = arith.constant {int(b_dim)} : index")
+        lines.append(f"      %cS = arith.constant {int(s_dim)} : index")
+        lines.append(f"      %cQH = arith.constant {int(qh_dim)} : index")
+        lines.append(f"      %cKH = arith.constant {int(kh_dim)} : index")
+        lines.append(f"      %cHD = arith.constant {int(hd_dim)} : index")
+        lines.append(f"      %cHalf = arith.constant {int(half)} : index")
+        lines.append(f"      %cCosB = arith.constant {int(cos_b_dim)} : index")
+        lines.append(f"      %cCosW = arith.constant {int(cos_w_dim)} : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %pred_b = arith.cmpi ult, %bid_batch, %cB : index")
+        lines.append("      %pred_s = arith.cmpi ult, %bid_seq, %cS : index")
+        lines.append("      %pred_bs = arith.andi %pred_b, %pred_s : i1")
+        lines.append("      scf.if %pred_bs {")
+        lines.append("        %pred_cos_single = arith.cmpi eq, %cCosB, %c1 : index")
+        lines.append("        %cos_batch = scf.if %pred_cos_single -> (index) {")
+        lines.append("          scf.yield %c0 : index")
+        lines.append("        } else {")
+        lines.append("          scf.yield %bid_batch : index")
+        lines.append("        }")
+        lines.append("        %cos_t0 = arith.muli %cos_batch, %cS : index")
+        lines.append("        %cos_t1 = arith.addi %cos_t0, %bid_seq : index")
+        lines.append("        %cos_base = arith.muli %cos_t1, %cCosW : index")
+        lines.append("        scf.for %j = %tid to %cHalf step %bdim {")
+        lines.append("          %j2 = arith.addi %j, %cHalf : index")
+        lines.append("          %cidx = arith.addi %cos_base, %j : index")
+        lines.append(f"          %cos_v = memref.load {arg_ssa[cos_name]}[%cidx] : {cos_memref}")
+        lines.append(f"          %sin_v = memref.load {arg_ssa[sin_name]}[%cidx] : {sin_memref}")
+        lines.append("          %pred_q = arith.cmpi ult, %bid_head, %cQH : index")
+        lines.append("          scf.if %pred_q {")
+        lines.append("            %q0 = arith.muli %bid_batch, %cQH : index")
+        lines.append("            %q1 = arith.addi %q0, %bid_head : index")
+        lines.append("            %q2 = arith.muli %q1, %cS : index")
+        lines.append("            %q3 = arith.addi %q2, %bid_seq : index")
+        lines.append("            %qbase = arith.muli %q3, %cHD : index")
+        lines.append("            %qidx1 = arith.addi %qbase, %j : index")
+        lines.append("            %qidx2 = arith.addi %qbase, %j2 : index")
+        lines.append(f"            %qx1 = memref.load {arg_ssa[q_name]}[%qidx1] : {q_memref}")
+        lines.append(f"            %qx2 = memref.load {arg_ssa[q_name]}[%qidx2] : {q_memref}")
+        lines.append(f"            %qx1c = arith.mulf %qx1, %cos_v{fm} : f32")
+        lines.append(f"            %qx2s = arith.mulf %qx2, %sin_v{fm} : f32")
+        lines.append(f"            %qy1 = arith.subf %qx1c, %qx2s{fm} : f32")
+        lines.append(f"            %qx1s = arith.mulf %qx1, %sin_v{fm} : f32")
+        lines.append(f"            %qx2c = arith.mulf %qx2, %cos_v{fm} : f32")
+        lines.append(f"            %qy2 = arith.addf %qx1s, %qx2c{fm} : f32")
+        lines.append(f"            memref.store %qy1, {arg_ssa[q_out_name]}[%qidx1] : {q_out_memref}")
+        lines.append(f"            memref.store %qy2, {arg_ssa[q_out_name]}[%qidx2] : {q_out_memref}")
+        lines.append("          }")
+        lines.append("          %pred_k = arith.cmpi ult, %bid_head, %cKH : index")
+        lines.append("          scf.if %pred_k {")
+        lines.append("            %k0 = arith.muli %bid_batch, %cKH : index")
+        lines.append("            %k1 = arith.addi %k0, %bid_head : index")
+        lines.append("            %k2 = arith.muli %k1, %cS : index")
+        lines.append("            %k3 = arith.addi %k2, %bid_seq : index")
+        lines.append("            %kbase = arith.muli %k3, %cHD : index")
+        lines.append("            %kidx1 = arith.addi %kbase, %j : index")
+        lines.append("            %kidx2 = arith.addi %kbase, %j2 : index")
+        lines.append(f"            %kx1 = memref.load {arg_ssa[k_name]}[%kidx1] : {k_memref}")
+        lines.append(f"            %kx2 = memref.load {arg_ssa[k_name]}[%kidx2] : {k_memref}")
+        lines.append(f"            %kx1c = arith.mulf %kx1, %cos_v{fm} : f32")
+        lines.append(f"            %kx2s = arith.mulf %kx2, %sin_v{fm} : f32")
+        lines.append(f"            %ky1 = arith.subf %kx1c, %kx2s{fm} : f32")
+        lines.append(f"            %kx1s = arith.mulf %kx1, %sin_v{fm} : f32")
+        lines.append(f"            %kx2c = arith.mulf %kx2, %cos_v{fm} : f32")
+        lines.append(f"            %ky2 = arith.addf %kx1s, %kx2c{fm} : f32")
+        lines.append(f"            memref.store %ky1, {arg_ssa[k_out_name]}[%kidx1] : {k_out_memref}")
+        lines.append(f"            memref.store %ky2, {arg_ssa[k_out_name]}[%kidx2] : {k_out_memref}")
+        lines.append("          }")
         lines.append("        }")
         lines.append("      }")
     elif rope_v1 is not None:

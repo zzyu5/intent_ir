@@ -11,6 +11,7 @@ for the reasoning-bearing sections only:
   - dataflow_edges
   - mechanism_topology
   - schedule_edges
+  - region_graph
   - evidence
   - notes (optional list[string])
 """
@@ -38,6 +39,7 @@ Hard rules:
   - dataflow_edges
   - mechanism_topology
   - schedule_edges
+  - region_graph (optional but required whenever the kernel has data-dependent branches or region-level control structure)
   - evidence
   - notes (optional list[string])
 - Runtime will inject `source_context` and `source_oracle`; do NOT invent or emit hardware mapping decisions.
@@ -129,6 +131,33 @@ ScheduleEdge objects:
 - attrs (optional): object
 - evidence_refs: list[string]
 
+RegionGraph object:
+- regions: list[Region]
+- edges: list[RegionEdge]
+
+Region objects:
+- id: string
+- kind: short control kind such as if, else, loop, guard, epilogue
+- path_id (optional): branch path id such as pi_ignore, pi_active
+- predicate (optional): short symbolic predicate such as target == ignore_index
+- parent (optional): region.id for nesting
+- attrs (optional): object
+- entry_mechanisms: list[mechanism.id]
+- exit_mechanisms: list[mechanism.id]
+- evidence_refs: list[string]
+
+RegionEdge objects:
+- id: string
+- src: region.id
+- dst: region.id
+- relation: short control label such as branch_true, branch_false, joins, carries
+- path_id (optional): branch path id
+- predicate (optional): short symbolic predicate
+- lifetimes: list[tensor_lifetime.id]
+- mechanisms: list[mechanism.id]
+- attrs (optional): object
+- evidence_refs: list[string]
+
 Evidence objects:
 - id: string
 - kind: string
@@ -140,13 +169,14 @@ Important:
 - Separate WHY from HOW from DIMS. Do NOT collapse them into one object.
 - ORG is a topology, not a bag of tags. Always emit the tensor/lifetime/dataflow/mechanism graph for the kernel.
 - When the kernel uses aliasing views, swizzled layouts, wait groups, barriers, or async prefetch, encode them in tensor view metadata and schedule_edges instead of hiding them in prose.
+- When the kernel contains data-dependent control flow or masking with a real branch condition, emit a non-empty region_graph and connect branch paths to the affected lifetimes/mechanisms.
 - Do NOT output backend variant names or target parameter assignments.
 - Do NOT output numeric tuning decisions copied from source oracle. You may output candidate sets for dimensions.
 - Every goal and every mechanism must have at least one evidence ref.
 - Every tensor_lifetime must reference real mechanism ids and goal ids; dataflow_edges must form a valid topological flow.
 - Prefer evidence from TTGIR/PTX/source_oracle facts over TTIR summaries when available.
 - Prefer dims and attrs that directly affect target performance recovery:
-  resident_bytes, reuse_window, pipeline_depth, communication_scope, layout_convert_sites.
+  resident_bytes, reuse_window, pipeline_depth, communication_scope, layout_convert_sites, cfg_path_bytes.
 - Force yourself to recover the main tensor residency intervals:
   which tensor stays in register/shared/global, for how long, and which mechanism consumes it next.
 
@@ -241,15 +271,28 @@ Kernel-specific expectations:
   operand_tile_stage, dot_op, mma_core, bias_fused_epilogue, output_layout_convert
   and prefer dims/attrs such as:
   resident_bytes, pipeline_depth, communication_scope
+- For cross-entropy or fused loss kernels with ignore_index-style masking, capture:
+  streaming_softmax_state, reduction_tree_balance, avoid_materialization, latency_hiding
+  and prefer mechanism tags such as:
+  row_tile_resident, row_reduction, label_gather, branch_mask, loss_finalize
+  and prefer a region_graph with:
+  if(target == ignore_index) / else(target != ignore_index)
+  and explicitly attach branch paths to the masked-loss and active-loss lifetimes
+- For RoPE kernels with logical/physical layout mismatch, capture:
+  avoid_materialization, memory_coalescing, latency_hiding
+  and prefer tensor view metadata:
+  logical public tensor -> physical transpose view -> rope rotation -> logical output view
+  and schedule_edges such as:
+  transpose_view, alias_view, layout_convert
 """
 
 
 SYSTEM_PROMPT_COMPACT = """Return ONE strict ORG JSON object.
 
-Required keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, schedule_edges, evidence (notes optional list[string]).
+Required keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, schedule_edges, evidence (region_graph and notes optional, but region_graph is required when branches exist).
 Runtime injects source_context/source_oracle; do not output hardware mapping or target numeric assignments.
 Each goal/mechanism/dim must be evidence-backed.
-Emit a real optimization topology: tensors, their residency intervals, dataflow edges, mechanism dependencies, and explicit schedule/control edges for layout or synchronization when present.
+Emit a real optimization topology: tensors, their residency intervals, dataflow edges, mechanism dependencies, explicit schedule/control edges for layout or synchronization, and a region_graph for branch structure when present.
 """
 
 

@@ -186,6 +186,9 @@ class TensorType:
     dtype: AllowedDType
     shape: List[Dim]
     layout: TensorLayout
+    view_of: str = ""
+    alias_group: str = ""
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -371,15 +374,42 @@ def _tensor_from_json(name: str, data: Dict[str, Any]) -> TensorType:
     shape = [parse_dim(d) for d in shape_raw]
     layout_raw = data.get("layout", "row_major")
     layout = parse_layout(layout_raw)
-    return TensorType(dtype=dtype, shape=shape, layout=layout)
+    view_of = data.get("view_of", "")
+    if view_of is None:
+        view_of = ""
+    if not isinstance(view_of, str):
+        raise IntentIRValidationError(f"tensors.{name}.view_of must be a string when provided")
+    alias_group = data.get("alias_group", "")
+    if alias_group is None:
+        alias_group = ""
+    if not isinstance(alias_group, str):
+        raise IntentIRValidationError(f"tensors.{name}.alias_group must be a string when provided")
+    meta_raw = data.get("meta") or {}
+    if not isinstance(meta_raw, dict):
+        raise IntentIRValidationError(f"tensors.{name}.meta must be an object when provided")
+    return TensorType(
+        dtype=dtype,
+        shape=shape,
+        layout=layout,
+        view_of=str(view_of),
+        alias_group=str(alias_group),
+        meta=dict(meta_raw),
+    )
 
 
 def _tensor_to_json(t: TensorType) -> Dict[str, Any]:
-    return {
+    data = {
         "dtype": t.dtype,
         "shape": [d.value for d in t.shape],
         "layout": _layout_to_json(t.layout),
     }
+    if t.view_of:
+        data["view_of"] = str(t.view_of)
+    if t.alias_group:
+        data["alias_group"] = str(t.alias_group)
+    if t.meta:
+        data["meta"] = dict(t.meta)
+    return data
 
 
 def _layout_to_json(layout: TensorLayout) -> Any:
@@ -548,6 +578,12 @@ def _validate_tensors(tensors: Dict[str, TensorType]) -> None:
                 raise IntentIRValidationError(
                     f"tensors.{name}.layout.params must be object for custom layout"
                 )
+        if t.view_of and t.view_of not in tensors:
+            raise IntentIRValidationError(f"tensors.{name}.view_of unknown tensor ref: {t.view_of}")
+        if not isinstance(t.alias_group, str):
+            raise IntentIRValidationError(f"tensors.{name}.alias_group must be a string")
+        if not isinstance(t.meta, dict):
+            raise IntentIRValidationError(f"tensors.{name}.meta must be an object")
 
 
 def _validate_axis_roles(axis_roles: Dict[str, str], tensors: Dict[str, TensorType], parallel_axes: List[str]) -> None:
@@ -1454,8 +1490,11 @@ def _validate_regions(regions: List[ControlRegion], tensors: Dict[str, TensorTyp
                 raise IntentIRValidationError(f"{rpath}.path_id must be string when provided")
             if not isinstance(region.meta, dict):
                 raise IntentIRValidationError(f"{rpath}.meta must be an object")
-            _validate_ops(region.ops, tensors)
-            _validate_outputs(region.outputs, tensors, region.ops)
+            if region.ops:
+                _validate_ops(region.ops, tensors)
+                _validate_outputs(region.outputs, tensors, region.ops)
+            elif region.outputs:
+                raise IntentIRValidationError(f"{rpath}.outputs requires non-empty ops")
             _walk(region.regions, path=f"{rpath}.regions")
 
     _walk(regions, path="regions")

@@ -146,13 +146,16 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
     mechanism_ids = {
         str(item.get("id") or "").strip() for item in list(obj.get("mechanisms") or []) if isinstance(item, Mapping)
     }
+    raw_tensor_ids = {
+        str(item.get("id") or "").strip() for item in list(obj.get("tensors") or []) if isinstance(item, Mapping)
+    }
     tensors_out: list[dict[str, Any]] = []
     for raw_tensor in list(obj.get("tensors") or []):
         if not isinstance(raw_tensor, Mapping):
             continue
         tensor = dict(raw_tensor)
         view_of = str(tensor.get("view_of") or "").strip()
-        if view_of and view_of not in tensor_ids:
+        if view_of and view_of not in raw_tensor_ids:
             tensor["view_of"] = ""
         tensor["evidence_refs"] = [
             ref for ref in [str(x).strip() for x in list(tensor.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
@@ -256,6 +259,68 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
         schedule_out.append(edge)
     if schedule_out or "schedule_edges" in obj:
         obj["schedule_edges"] = schedule_out
+    region_graph = obj.get("region_graph")
+    if isinstance(region_graph, Mapping):
+        region_graph_obj = dict(region_graph)
+        raw_regions = [dict(x) for x in list(region_graph_obj.get("regions") or []) if isinstance(x, Mapping)]
+        raw_region_ids = {
+            str(item.get("id") or "").strip()
+            for item in raw_regions
+            if str(item.get("id") or "").strip()
+        }
+        regions_out: list[dict[str, Any]] = []
+        for raw_region in raw_regions:
+            region = dict(raw_region)
+            parent = str(region.get("parent") or "").strip()
+            if parent and parent not in raw_region_ids:
+                region["parent"] = ""
+            region["entry_mechanisms"] = [
+                ref
+                for ref in [str(x).strip() for x in list(region.get("entry_mechanisms") or []) if str(x).strip()]
+                if ref in mechanism_ids
+            ]
+            region["exit_mechanisms"] = [
+                ref
+                for ref in [str(x).strip() for x in list(region.get("exit_mechanisms") or []) if str(x).strip()]
+                if ref in mechanism_ids
+            ]
+            region["evidence_refs"] = [
+                ref
+                for ref in [str(x).strip() for x in list(region.get("evidence_refs") or []) if str(x).strip()]
+                if ref in evidence_ids
+            ]
+            regions_out.append(region)
+        region_ids = {
+            str(item.get("id") or "").strip()
+            for item in regions_out
+            if str(item.get("id") or "").strip()
+        }
+        edges_out: list[dict[str, Any]] = []
+        for raw_edge in list(region_graph_obj.get("edges") or []):
+            if not isinstance(raw_edge, Mapping):
+                continue
+            edge = dict(raw_edge)
+            if str(edge.get("src") or "").strip() not in region_ids:
+                continue
+            if str(edge.get("dst") or "").strip() not in region_ids:
+                continue
+            edge["lifetimes"] = [
+                ref
+                for ref in [str(x).strip() for x in list(edge.get("lifetimes") or []) if str(x).strip()]
+                if ref in lifetime_ids
+            ]
+            edge["mechanisms"] = [
+                ref
+                for ref in [str(x).strip() for x in list(edge.get("mechanisms") or []) if str(x).strip()]
+                if ref in mechanism_ids
+            ]
+            edge["evidence_refs"] = [
+                ref
+                for ref in [str(x).strip() for x in list(edge.get("evidence_refs") or []) if str(x).strip()]
+                if ref in evidence_ids
+            ]
+            edges_out.append(edge)
+        obj["region_graph"] = {"regions": regions_out, "edges": edges_out}
     return obj
 
 
@@ -292,7 +357,7 @@ class LLMOrgHub:
                 "Evidence appendix (JSON):",
                 evidence,
                 "",
-                "Hard rule: return ONE ORG JSON object with goals/mechanisms/dims/tensors/tensor_lifetimes/dataflow_edges/mechanism_topology/evidence only.",
+                "Hard rule: return ONE ORG JSON object with goals/mechanisms/dims/tensors/tensor_lifetimes/dataflow_edges/mechanism_topology/schedule_edges/region_graph(optional)/evidence only.",
                 "Runtime will inject source_context and source_oracle; do not invent backend mappings or target parameter values.",
             ]
         ).strip()
@@ -343,7 +408,7 @@ class LLMOrgHub:
                     "Your previous ORG JSON failed schema validation.\n"
                     f"Error: {exc}\n\n"
                     "Return ONE corrected ORG JSON object only.\n"
-                    "Keep top-level keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, evidence, notes(optional).\n"
+                    "Keep top-level keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, schedule_edges, region_graph(optional), evidence, notes(optional).\n"
                     "Do not emit source_context/source_oracle; runtime injects them.\n"
                 )
                 prev = json.dumps(raw_json, ensure_ascii=False, sort_keys=True) if raw_json is not None else ""

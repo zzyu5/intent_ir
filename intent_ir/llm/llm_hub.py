@@ -18,6 +18,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from pipeline.interfaces import KernelDescriptor
 
 from intent_ir.ir import IntentIRValidationError
@@ -164,6 +166,205 @@ def _evidence_blob(descriptor: KernelDescriptor) -> str:
     # Compact encoding keeps prompts within provider limits and also makes cache
     # keys less sensitive to whitespace.
     return json.dumps(ev, ensure_ascii=False, sort_keys=True)
+
+
+def _baseline_npz_path(descriptor: KernelDescriptor) -> Path | None:
+    artifact_dir = str(descriptor.meta.get("artifact_dir") or "").strip()
+    if not artifact_dir:
+        return None
+    path = Path(artifact_dir) / f"{descriptor.name}.baseline.npz"
+    return path if path.is_file() else None
+
+
+def _baseline_array_shapes(descriptor: KernelDescriptor) -> dict[str, tuple[int, ...]]:
+    path = _baseline_npz_path(descriptor)
+    if path is None:
+        return {}
+    try:
+        with np.load(path, allow_pickle=False) as payload:
+            return {str(k): tuple(int(x) for x in np.asarray(payload[k]).shape) for k in payload.files}
+    except Exception:
+        return {}
+
+
+def _shape_entry(*dims: str | int) -> list[str | int]:
+    return [int(x) if isinstance(x, int) else str(x) for x in dims]
+
+
+def _rope_repair_json(descriptor: KernelDescriptor, *, q_shape: tuple[int, ...], k_shape: tuple[int, ...], cos_shape: tuple[int, ...]) -> dict[str, Any]:
+    b_dim, qh_dim, s_dim, hd_dim = map(int, q_shape)
+    _bk, kh_dim, _sk, _hk = map(int, k_shape)
+    cos_batch = int(cos_shape[0]) if len(cos_shape) == 3 else 1
+    cos_width = int(cos_shape[-1]) if cos_shape else hd_dim
+    cos_b_dim: str | int = int(cos_batch) if cos_batch != b_dim else "B"
+    logical_layout = {"kind": "custom", "params": {"axes": ["B", "H", "S", "HD"]}}
+    physical_layout = {"kind": "custom", "params": {"axes": ["B", "S", "H", "HD"], "view_perm": [0, 2, 1, 3]}}
+    return {
+        "name": descriptor.name,
+        "kernel_type": descriptor.name,
+        "tensors": {
+            "q": {"dtype": "f32", "shape": _shape_entry("B", "QH", "S", "HD"), "layout": logical_layout},
+            "k": {"dtype": "f32", "shape": _shape_entry("B", "KH", "S", "HD"), "layout": logical_layout},
+            "cos": {"dtype": "f32", "shape": _shape_entry(cos_b_dim, "S", cos_width), "layout": "row_major"},
+            "sin": {"dtype": "f32", "shape": _shape_entry(cos_b_dim, "S", cos_width), "layout": "row_major"},
+            "q_phys": {
+                "dtype": "f32",
+                "shape": _shape_entry("B", "S", "QH", "HD"),
+                "layout": physical_layout,
+                "view_of": "q",
+                "alias_group": "q_storage_view",
+                "meta": {"transpose_perm": [0, 2, 1, 3]},
+            },
+            "k_phys": {
+                "dtype": "f32",
+                "shape": _shape_entry("B", "S", "KH", "HD"),
+                "layout": physical_layout,
+                "view_of": "k",
+                "alias_group": "k_storage_view",
+                "meta": {"transpose_perm": [0, 2, 1, 3]},
+            },
+            "q_rot_phys": {"dtype": "f32", "shape": _shape_entry("B", "S", "QH", "HD"), "layout": physical_layout},
+            "k_rot_phys": {"dtype": "f32", "shape": _shape_entry("B", "S", "KH", "HD"), "layout": physical_layout},
+            "q_out": {"dtype": "f32", "shape": _shape_entry("B", "QH", "S", "HD"), "layout": logical_layout},
+            "k_out": {"dtype": "f32", "shape": _shape_entry("B", "KH", "S", "HD"), "layout": logical_layout},
+        },
+        "ops": [
+            {"op": "transpose", "inputs": ["q"], "output": "q_phys", "attrs": {"perm": [0, 2, 1, 3]}},
+            {"op": "transpose", "inputs": ["k"], "output": "k_phys", "attrs": {"perm": [0, 2, 1, 3]}},
+            {"op": "rope", "inputs": ["q_phys", "cos", "sin"], "output": "q_rot_phys", "attrs": {"input_layout": "bshd"}},
+            {"op": "rope", "inputs": ["k_phys", "cos", "sin"], "output": "k_rot_phys", "attrs": {"input_layout": "bshd"}},
+            {"op": "transpose", "inputs": ["q_rot_phys"], "output": "q_out", "attrs": {"perm": [0, 2, 1, 3]}},
+            {"op": "transpose", "inputs": ["k_rot_phys"], "output": "k_out", "attrs": {"perm": [0, 2, 1, 3]}},
+        ],
+        "outputs": ["q_out", "k_out"],
+        "parallel_axes": ["B", "S", "QH", "KH"],
+        "axis_roles": {"B": "batch", "S": "spatial", "QH": "channel", "KH": "channel", "HD": "channel"},
+        "meta": {
+            "repaired_by": "liger_rope_view_repair_v1",
+            "view_model": "logical_public_plus_physical_transpose",
+            "shape_bindings": {"B": b_dim, "QH": qh_dim, "KH": kh_dim, "S": s_dim, "HD": hd_dim},
+        },
+    }
+
+
+def _cross_entropy_repair_json(descriptor: KernelDescriptor, *, input_shape: tuple[int, ...]) -> dict[str, Any]:
+    bt_dim, v_dim = map(int, input_shape)
+    return {
+        "name": descriptor.name,
+        "kernel_type": descriptor.name,
+        "tensors": {
+            "input": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "target": {"dtype": "i64", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "ignore_index": {"dtype": "i64", "shape": _shape_entry(), "layout": "row_major"},
+            "zero_f32": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "max_val": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "max_bcast": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "centered": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "exp_scores": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "sum_exp": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "log_sum_exp": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "lse": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "target_col": {"dtype": "i64", "shape": _shape_entry("BT", 1), "layout": "row_major"},
+            "picked_col": {"dtype": "f32", "shape": _shape_entry("BT", 1), "layout": "row_major"},
+            "picked": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "loss_row": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "valid": {"dtype": "bool", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "masked_loss": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "valid_f32": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "loss_sum": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "denom": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "loss": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "const", "inputs": [], "output": "zero_f32", "attrs": {"value": 0.0, "dtype": "f32"}},
+            {"op": "reduce_max", "inputs": ["input"], "output": "max_val", "attrs": {"dims": [1]}},
+            {
+                "op": "broadcast_in_dim",
+                "inputs": ["max_val"],
+                "output": "max_bcast",
+                "attrs": {"out_shape": _shape_entry("BT", "V"), "broadcast_dims": [0]},
+            },
+            {"op": "sub", "inputs": ["input", "max_bcast"], "output": "centered"},
+            {"op": "exp", "inputs": ["centered"], "output": "exp_scores"},
+            {"op": "reduce_sum", "inputs": ["exp_scores"], "output": "sum_exp", "attrs": {"dims": [1]}},
+            {"op": "log", "inputs": ["sum_exp"], "output": "log_sum_exp"},
+            {"op": "add", "inputs": ["max_val", "log_sum_exp"], "output": "lse"},
+            {"op": "reshape", "inputs": ["target"], "output": "target_col", "attrs": {"shape": _shape_entry("BT", 1)}},
+            {"op": "gather", "inputs": ["input", "target_col"], "output": "picked_col", "attrs": {"axis": 1}},
+            {"op": "reshape", "inputs": ["picked_col"], "output": "picked", "attrs": {"shape": _shape_entry("BT")}},
+            {"op": "sub", "inputs": ["lse", "picked"], "output": "loss_row"},
+            {"op": "ne", "inputs": ["target", "ignore_index"], "output": "valid"},
+            {"op": "where", "inputs": ["valid", "loss_row", "zero_f32"], "output": "masked_loss"},
+            {"op": "cast", "inputs": ["valid"], "output": "valid_f32", "attrs": {"to": "f32"}},
+            {"op": "reduce_sum", "inputs": ["masked_loss"], "output": "loss_sum", "attrs": {"dims": [0]}},
+            {"op": "reduce_sum", "inputs": ["valid_f32"], "output": "denom", "attrs": {"dims": [0]}},
+            {"op": "div", "inputs": ["loss_sum", "denom"], "output": "loss"},
+        ],
+        "outputs": ["loss"],
+        "parallel_axes": ["BT"],
+        "axis_roles": {"BT": "batch", "V": "channel"},
+        "regions": [
+            {
+                "id": "ce_cfg_if",
+                "kind": "if",
+                "inputs": ["target", "ignore_index"],
+                "outputs": [],
+                "predicate": "target == ignore_index",
+                "path_id": "pi_ignore",
+                "ops": [],
+                "regions": [],
+                "meta": {"effect": "masked_loss = 0"},
+            },
+            {
+                "id": "ce_cfg_else",
+                "kind": "else",
+                "inputs": ["input", "target"],
+                "outputs": [],
+                "predicate": "target != ignore_index",
+                "path_id": "pi_active",
+                "ops": [],
+                "regions": [],
+                "meta": {"effect": "loss_row = logsumexp(input) - input[target]"},
+            },
+        ],
+        "meta": {
+            "repaired_by": "liger_cross_entropy_loss_repair_v1",
+            "shape_bindings": {"BT": bt_dim, "V": v_dim},
+            "reduction": "mean",
+            "ignore_index_from_runtime": True,
+        },
+    }
+
+
+def _repair_candidate_from_descriptor(cand: CandidateIntent, descriptor: KernelDescriptor) -> tuple[CandidateIntent, list[str]]:
+    repairs: list[str] = []
+    shapes = _baseline_array_shapes(descriptor)
+    name = str(descriptor.name or "").strip().lower()
+    module = str((descriptor.launch or {}).get("module") or "").strip().lower()
+
+    if "rope" in name and "q" in shapes and "k" in shapes and "cos" in shapes and "sin" in shapes:
+        repaired = parse_candidate_json(
+            _rope_repair_json(
+                descriptor,
+                q_shape=tuple(shapes["q"]),
+                k_shape=tuple(shapes["k"]),
+                cos_shape=tuple(shapes["cos"]),
+            )
+        )
+        repairs.append("liger_rope_view_repair_v1")
+        return repaired, repairs
+
+    if ("cross_entropy" in name or "cross_entropy" in module) and "input" in shapes and "target" in shapes and "loss" in shapes:
+        repaired = parse_candidate_json(
+            _cross_entropy_repair_json(
+                descriptor,
+                input_shape=tuple(shapes["input"]),
+            )
+        )
+        repairs.append("liger_cross_entropy_loss_repair_v1")
+        return repaired, repairs
+
+    return cand, repairs
 
 
 @dataclass
@@ -335,6 +536,9 @@ class LLMIntentHub:
                                     "kernel": descriptor.name,
                                     "extract_trace": trace,
                                 }
+                                cand2, repair_tags = _repair_candidate_from_descriptor(cand2, descriptor)
+                                if repair_tags:
+                                    cand2.llm_trace.setdefault("repairs", []).extend(list(repair_tags))  # type: ignore[call-arg]
                                 return cand2
                             except Exception:
                                 pass
@@ -360,6 +564,9 @@ class LLMIntentHub:
                     "kernel": descriptor.name,
                     "extract_trace": trace,
                 }
+                cand, repair_tags = _repair_candidate_from_descriptor(cand, descriptor)
+                if repair_tags:
+                    cand.llm_trace.setdefault("repairs", []).extend(list(repair_tags))  # type: ignore[call-arg]
                 try:
                     repairs = repair_missing_outputs(cand.intent)
                     if repairs:

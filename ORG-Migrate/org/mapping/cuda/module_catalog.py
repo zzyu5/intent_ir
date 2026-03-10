@@ -772,6 +772,96 @@ def matmul_fused_epilogue2d_catalog(hardware_model: HardwareModel) -> tuple[list
     return modules, edges, list(PASS_SEQUENCE)
 
 
+def rope_view_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    del hardware_model
+    modules = [
+        BackendModule(
+            id="rope_logical_view",
+            kind="layout",
+            provides=["rope.logical_view"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rope_rotation",
+            kind="primitive",
+            provides=["rope.rotation"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rope_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.rope_dual_v1"],
+            requires=["rope.logical_view", "rope.rotation"],
+            params=[],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="rope_backend_v1", dst="rope_logical_view", edge_type="uses"),
+        BackendModuleEdge(src="rope_backend_v1", dst="rope_rotation", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
+def cross_entropy_loss_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    del hardware_model
+    modules = [
+        BackendModule(
+            id="ce_row_tile_resident",
+            kind="staging",
+            provides=["ce.row_tile_resident"],
+            params=["CE_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="ce_row_reduction",
+            kind="communication",
+            provides=["ce.row_reduction"],
+            params=["CE_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="ce_label_gather",
+            kind="primitive",
+            provides=["ce.label_gather"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="ce_branch_mask",
+            kind="communication",
+            provides=["ce.branch_mask"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="ce_loss_finalize",
+            kind="fusion",
+            provides=["ce.loss_finalize"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="ce_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.cross_entropy_loss_v1"],
+            requires=["ce.row_reduction", "ce.label_gather", "ce.branch_mask", "ce.loss_finalize"],
+            params=["CE_BLOCK_THREADS"],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="ce_backend_v1", dst="ce_row_tile_resident", edge_type="optional"),
+        BackendModuleEdge(src="ce_backend_v1", dst="ce_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="ce_backend_v1", dst="ce_label_gather", edge_type="uses"),
+        BackendModuleEdge(src="ce_backend_v1", dst="ce_branch_mask", edge_type="uses"),
+        BackendModuleEdge(src="ce_backend_v1", dst="ce_loss_finalize", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 __all__ = [
     "PASS_SEQUENCE",
     "flash_attention2d_catalog",
@@ -783,4 +873,6 @@ __all__ = [
     "rms_norm2d_catalog",
     "group_norm_kernel_catalog",
     "matmul_fused_epilogue2d_catalog",
+    "rope_view_catalog",
+    "cross_entropy_loss_catalog",
 ]

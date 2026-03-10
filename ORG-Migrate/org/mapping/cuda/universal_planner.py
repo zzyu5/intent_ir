@@ -10,6 +10,7 @@ from org.mapping.cuda.module_catalog import (
     ai_bench_matmul_catalog,
     ai_bench_softmax_catalog,
     attn_fwd_catalog,
+    cross_entropy_loss_catalog,
     elementwise2d_catalog,
     flash_attention2d_catalog,
     group_norm_kernel_catalog,
@@ -17,6 +18,7 @@ from org.mapping.cuda.module_catalog import (
     masked_attention2d_catalog,
     matmul_fused_epilogue2d_catalog,
     rms_norm2d_catalog,
+    rope_view_catalog,
     row_reduction_catalog,
     row_softmax_catalog,
 )
@@ -162,6 +164,9 @@ class GraphProfile:
     pipeline_depth: int = 1
     shared_bytes: int = 0
     register_bytes: int = 0
+    cfg_shared_bytes: int = 0
+    cfg_register_bytes: int = 0
+    cfg_path_bytes: dict[str, int] = field(default_factory=dict)
     resource_groups: dict[str, ResourceGroup] = field(default_factory=dict)
     resident_window_scope: str = ""
     total_work: int = 0
@@ -270,6 +275,7 @@ def _graph_profile(
         for edge in list(getattr(org, "schedule_edges", []) or [])
         if _norm_token(getattr(edge, "relation", ""))
     }
+    region_graph = getattr(org, "region_graph", None)
     pipeline_depth = 1
     for mechanism in list(getattr(org, "mechanisms", []) or []):
         attrs = dict(getattr(mechanism, "attrs", {}) or {})
@@ -289,6 +295,9 @@ def _graph_profile(
     resource_groups: dict[str, ResourceGroup] = {}
     shared_bytes = 0
     register_bytes = 0
+    cfg_shared_bytes = 0
+    cfg_register_bytes = 0
+    cfg_path_bytes: dict[str, int] = {}
     resident_window_scope = ""
     stream_shared_ids: list[str] = []
     row_shared_ids: list[str] = []
@@ -330,6 +339,11 @@ def _graph_profile(
         signal_names.add("resident_state")
     if mechanism_tags & {"mma_core", "dot_op"}:
         signal_names.add("mma_path")
+    if mechanism_tags & {"label_gather", "index_gather"}:
+        signal_names.add("gather_path")
+    if mechanism_tags & {"branch_mask", "ignore_mask"}:
+        signal_names.add("cfg_path")
+        signal_names.add("branch_mask")
 
     def _ensure_group(name: str, *, lifetimes: list[OrgTensorLifetime], storage: str = "", reuse_scope: str = "") -> None:
         nonlocal resource_groups
@@ -393,6 +407,8 @@ def _graph_profile(
             signal_names.add("mean_state")
         if any(tok in role_tokens for tok in {"rstd", "inv_rms", "rms_state"}):
             signal_names.add("rms_state")
+        if any(tok in role_tokens for tok in {"target", "target_col", "picked", "picked_col", "label"}):
+            signal_names.add("gather_path")
         if str(getattr(tensor_by_id(org).get(tensor_id, None), "view_of", "")).strip():
             signal_names.add("alias_view")
         if getattr(tensor_by_id(org).get(tensor_id, None), "alias_group", ""):
@@ -431,6 +447,41 @@ def _graph_profile(
         for item in list(getattr(org, "tensor_lifetimes", []) or [])
         if str(getattr(item, "id", "")).strip()
     }
+    if region_graph is not None:
+        signal_names.add("cfg_path")
+        path_shared: dict[str, int] = {}
+        path_register: dict[str, int] = {}
+        for region in list(getattr(region_graph, "regions", []) or []):
+            if str(getattr(region, "predicate", "") or "").strip():
+                signal_names.add("branch_mask")
+        for edge in list(getattr(region_graph, "edges", []) or []):
+            path_id = (
+                str(getattr(edge, "path_id", "") or "").strip()
+                or str(getattr(edge, "relation", "") or "").strip()
+                or str(getattr(edge, "id", "") or "").strip()
+            )
+            if str(getattr(edge, "predicate", "") or "").strip():
+                signal_names.add("branch_mask")
+            shared_acc = int(path_shared.get(path_id, 0))
+            register_acc = int(path_register.get(path_id, 0))
+            for lifetime_id in list(getattr(edge, "lifetimes", []) or []):
+                lifetime = lifetimes_by_id.get(str(lifetime_id))
+                if lifetime is None:
+                    continue
+                bytes_hint = max(0, int(getattr(lifetime, "bytes_hint", 0) or 0))
+                storage = _norm_token(getattr(lifetime, "storage", ""))
+                if storage == "shared":
+                    shared_acc += int(bytes_hint)
+                elif storage == "register":
+                    register_acc += int(bytes_hint)
+            path_shared[path_id] = int(shared_acc)
+            path_register[path_id] = int(register_acc)
+        cfg_shared_bytes = max([0, *path_shared.values()])
+        cfg_register_bytes = max([0, *path_register.values()])
+        cfg_path_bytes = {
+            str(path_id): int(path_shared.get(path_id, 0)) + int(path_register.get(path_id, 0))
+            for path_id in sorted(set(path_shared) | set(path_register))
+        }
     _ensure_group("stream_shared", lifetimes=[lifetimes_by_id[x] for x in stream_shared_ids if x in lifetimes_by_id], storage="shared", reuse_scope="tile")
     _ensure_group("row_shared", lifetimes=[lifetimes_by_id[x] for x in row_shared_ids if x in lifetimes_by_id], storage="shared", reuse_scope=resident_window_scope or "tile")
     _ensure_group("operand_stage", lifetimes=[lifetimes_by_id[x] for x in operand_ids if x in lifetimes_by_id], storage="shared", reuse_scope="tile")
@@ -467,6 +518,12 @@ def _graph_profile(
     ]
     if resident_window_scope:
         notes.append(f"topology_resident_window_scope={resident_window_scope}")
+    if cfg_path_bytes:
+        notes.append(f"topology_cfg_max_path_bytes={int(max(cfg_path_bytes.values()))}")
+        notes.append(
+            "topology_cfg_paths="
+            + ";".join(f"{path_id}:{int(bytes_hint)}" for path_id, bytes_hint in sorted(cfg_path_bytes.items()))
+        )
 
     return GraphProfile(
         goal_tags=frozenset(goal_tags),
@@ -479,6 +536,9 @@ def _graph_profile(
         pipeline_depth=max(1, int(pipeline_depth)),
         shared_bytes=int(shared_bytes),
         register_bytes=int(register_bytes),
+        cfg_shared_bytes=int(cfg_shared_bytes),
+        cfg_register_bytes=int(cfg_register_bytes),
+        cfg_path_bytes={str(k): int(v) for k, v in dict(cfg_path_bytes or {}).items()},
         resource_groups=resource_groups,
         resident_window_scope=str(resident_window_scope),
         total_work=int(total_work),
@@ -599,6 +659,8 @@ def _resolve_family_spec(
         if profile.has_signal("vector_path"):
             _consider("ai_bench_softmax", 112.0, "graph:vector_softmax")
         _consider("softmax_inner", 110.0, "graph:softmax")
+    if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.has_signal("reduction_path"):
+        _consider("cross_entropy_loss2d", 116.0, "graph:cfg+gather+reduction")
     if profile.has_signal("reduction_path") and profile.has_signal("fused_epilogue"):
         if _shape_keys_present(shape_bindings, ("N", "GROUP_SIZE")):
             _consider("group_norm_kernel", 108.0, "graph:group_norm")
@@ -686,7 +748,8 @@ def _resource_fit(
         shared_bytes *= max(1, int(profile.pipeline_depth))
     if any(_norm_token(x).endswith("shared_stage") for x in enabled_flag_names) and not profile.has_signal("async_evidence") and profile.has_signal("async_pipeline"):
         shared_bytes = max(shared_bytes, _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="stream_shared", hardware_model=hardware_model))
-    register_bytes = int(profile.register_bytes or 0)
+    shared_bytes = max(shared_bytes, int(profile.cfg_shared_bytes or 0))
+    register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
     shared_ratio = float(shared_bytes) / float(max(1, shared_budget))
     register_ratio = float(register_bytes) / float(max(1, register_budget))
     allowed = True
@@ -1250,6 +1313,44 @@ def _family_specs() -> dict[str, FamilySpec]:
                     param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
                     required_signals=("resident_state", "vector_path"),
                     signal_weights={"vector_path": 20.0},
+                ),
+            ),
+        ),
+        "liger_rope": FamilySpec(
+            kernel="liger_rope",
+            catalog_builder=rope_view_catalog,
+            required_shape_keys=("B", "S", "HD"),
+            base_modules=("rope_logical_view", "rope_rotation", "rope_backend_v1"),
+            optional_modules=(),
+            params=(),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="rope_dual_v1",
+                    module_id="rope_backend_v1",
+                    param_names=(),
+                    required_signals=("layout_path", "alias_view"),
+                    signal_weights={"vector_path": 2.0},
+                ),
+            ),
+        ),
+        "cross_entropy_loss2d": FamilySpec(
+            kernel="cross_entropy_loss2d",
+            catalog_builder=cross_entropy_loss_catalog,
+            required_shape_keys=("BT", "V"),
+            base_modules=("ce_row_reduction", "ce_label_gather", "ce_branch_mask", "ce_loss_finalize", "ce_backend_v1"),
+            optional_modules=(
+                OptionalModuleSpec(module_id="ce_row_tile_resident", signals=("resident_state",)),
+            ),
+            params=(
+                ParamSpec(name="CE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(64, 128, 256), allowed_values=(32, 64, 128, 256)),
+            ),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="cross_entropy_loss_v1",
+                    module_id="ce_backend_v1",
+                    param_names=("CE_BLOCK_THREADS",),
+                    required_signals=("cfg_path", "gather_path", "reduction_path"),
+                    signal_weights={"online_state": 8.0, "branch_mask": 10.0, "resident_state": 4.0},
                 ),
             ),
         ),
