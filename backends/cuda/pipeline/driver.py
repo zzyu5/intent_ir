@@ -1090,13 +1090,14 @@ def lower_cuda_contract_to_kernel(
         launch = dict(contract.launch or {})
         if (not launch) and isinstance(invocation.get("launch"), Mapping):
             launch = dict(invocation.get("launch") or {})
+        explicit_launch = _looks_like_explicit_launch_override(launch)
         launch = _ensure_launch_grid_block_defaults(
             launch=launch,
             ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
             entry=str(exe_entry or contract.kernel_name or "intent"),
         )
         explicit_launch_override = (contract.artifacts or {}).get("cuda_real_mlir_launch_override")
-        if not _looks_like_explicit_launch_override(explicit_launch_override):
+        if (not explicit_launch) and (not _looks_like_explicit_launch_override(explicit_launch_override)):
             launch = _infer_launch_grid_x_from_ptx(
                 launch=launch,
                 io_spec=io_spec,

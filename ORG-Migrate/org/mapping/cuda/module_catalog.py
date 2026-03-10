@@ -590,21 +590,35 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             id="rms_norm_row_tile_resident",
             kind="staging",
             provides=["rms_norm.row_tile_resident"],
-            params=[],
+            params=["RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"],
             constraints=[],
         ),
         BackendModule(
             id="rms_norm_warp_statistics",
             kind="communication",
             provides=["rms_norm.warp_statistics"],
-            params=[],
+            params=["RMS_NORM_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rms_norm_cta_statistics",
+            kind="communication",
+            provides=["rms_norm.cta_statistics"],
+            params=["RMS_NORM_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="rms_norm_vector_row_io",
+            kind="primitive",
+            provides=["rms_norm.vector_row_io"],
+            params=["RMS_NORM_VECTOR_WIDTH"],
             constraints=[],
         ),
         BackendModule(
             id="rms_norm_affine_epilogue",
             kind="fusion",
             provides=["rms_norm.affine_epilogue"],
-            params=[],
+            params=["RMS_NORM_VECTOR_WIDTH"],
             constraints=[],
         ),
         BackendModule(
@@ -613,10 +627,10 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             provides=["backend.kernel_kind.rms_norm_axis1_v2"],
             requires=[
                 "rms_norm.row_tile_resident",
-                "rms_norm.warp_statistics",
+                "rms_norm.cta_statistics",
                 "rms_norm.affine_epilogue",
             ],
-            params=[],
+            params=["RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"],
             constraints=[],
         ),
         BackendModule(
@@ -634,8 +648,9 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
     ]
     edges = [
         BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_row_tile_resident", edge_type="uses"),
-        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_warp_statistics", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_cta_statistics", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_vector_row_io", edge_type="optional"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_warp_statistics", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_affine_epilogue", edge_type="uses"),

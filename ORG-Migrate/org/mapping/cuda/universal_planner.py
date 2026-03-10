@@ -1382,9 +1382,12 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="rms_norm2d",
             catalog_builder=rms_norm2d_catalog,
             required_shape_keys=("M", "N"),
-            base_modules=("rms_norm_row_tile_resident", "rms_norm_warp_statistics", "rms_norm_affine_epilogue"),
-            optional_modules=(),
-            params=(),
+            base_modules=("rms_norm_row_tile_resident", "rms_norm_cta_statistics", "rms_norm_affine_epilogue"),
+            optional_modules=(OptionalModuleSpec(module_id="rms_norm_vector_row_io", signals=("vector_path",)),),
+            params=(
+                ParamSpec(name="RMS_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(256, 128, 64, 32), allowed_values=(32, 64, 128, 256)),
+                ParamSpec(name="RMS_NORM_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(4, 2, 1), allowed_values=(1, 2, 4)),
+            ),
             templates=(
                 TemplateSpec(
                     kernel_kind="rms_norm_axis1_v3",
@@ -1396,9 +1399,9 @@ def _family_specs() -> dict[str, FamilySpec]:
                 TemplateSpec(
                     kernel_kind="rms_norm_axis1_v2",
                     module_id="rms_norm_backend_v2",
-                    param_names=(),
+                    param_names=("RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"),
                     required_signals=("resident_state", "reduction_path", "fused_epilogue", "rms_state"),
-                    signal_weights={"vector_path": 6.0},
+                    signal_weights={"vector_path": 10.0, "sync_path": 18.0},
                 ),
             ),
         ),
