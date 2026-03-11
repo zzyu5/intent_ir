@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = ROOT / "scripts" / "flaggems" / "run_gpu_perf_graph.py"
 
 

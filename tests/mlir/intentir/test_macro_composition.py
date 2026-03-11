@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _run(registry_payload: dict, out_dir: Path) -> subprocess.CompletedProcess[str]:

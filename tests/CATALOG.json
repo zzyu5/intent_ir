@@ -3,27 +3,27 @@
   "updated_at": "2026-02-18T00:00:00+00:00",
   "entries": [
     {
-      "path": "tests/test_ir_types.py",
+      "path": "tests/core/test_ir_types.py",
       "track": "core_ir",
       "purpose": "IntentIR schema/type validation and structural invariants"
     },
     {
-      "path": "tests/test_interpreter_extended_ops.py",
+      "path": "tests/core/test_interpreter_extended_ops.py",
       "track": "core_ir",
       "purpose": "Interpreter semantics for extended op coverage"
     },
     {
-      "path": "tests/test_tolerances.py",
+      "path": "tests/core/test_tolerances.py",
       "track": "core_ir",
       "purpose": "Numerical tolerance policy checks for diff comparison"
     },
     {
-      "path": "tests/test_parser_llm.py",
+      "path": "tests/core/test_parser_llm.py",
       "track": "core_ir",
       "purpose": "LLM JSON parsing, merge, and validation behavior"
     },
     {
-      "path": "tests/test_backend_capability.py",
+      "path": "tests/core/test_backend_capability.py",
       "track": "backend_contract",
       "purpose": "Backend capability query and dual-target support checks"
     },
@@ -33,7 +33,7 @@
       "purpose": "Batch runner error-continuation contract"
     },
     {
-      "path": "tests/test_backend_codegen_smoke_timings.py",
+      "path": "tests/mlir/test_backend_codegen_smoke_timings.py",
       "track": "backend_contract",
       "purpose": "Smoke timing fields and codegen temp-output behavior"
     },
@@ -98,42 +98,42 @@
       "purpose": "Coverage integrity recomputation from artifact evidence"
     },
     {
-      "path": "tests/intentir/test_primitive_catalog.py",
+      "path": "tests/mlir/intentir/test_primitive_catalog.py",
       "track": "ir_arch_quality",
       "purpose": "Primitive catalog baseline and primitive reuse check"
     },
     {
-      "path": "tests/intentir/test_composition_policy.py",
+      "path": "tests/mlir/intentir/test_composition_policy.py",
       "track": "ir_arch_quality",
       "purpose": "IR composition policy targets and gating rules"
     },
     {
-      "path": "tests/intentir/test_macro_composition.py",
+      "path": "tests/mlir/intentir/test_macro_composition.py",
       "track": "ir_arch_quality",
       "purpose": "Macro composition validity and provider-specific rejection checks"
     },
     {
-      "path": "tests/intentir/test_mapping_complexity_report.py",
+      "path": "tests/mlir/intentir/test_mapping_complexity_report.py",
       "track": "ir_arch_quality",
       "purpose": "Mapping complexity ratios/threshold checks"
     },
     {
-      "path": "tests/backends/cuda/test_cuda_pipeline_driver.py",
+      "path": "tests/mlir/backends/cuda/test_cuda_pipeline_driver.py",
       "track": "backend_compiler",
       "purpose": "CUDA backend pipeline stage artifacts and schedule profile contract"
     },
     {
-      "path": "tests/backends/cuda/test_cuda_backend_smoke.py",
+      "path": "tests/mlir/backends/cuda/test_cuda_backend_smoke.py",
       "track": "backend_compiler",
       "purpose": "CUDA backend correctness smoke for key op families"
     },
     {
-      "path": "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py",
+      "path": "tests/mlir/backends/spmd_rvv/test_rvv_pipeline_driver.py",
       "track": "backend_compiler",
       "purpose": "RVV backend pipeline stage artifacts and scheduling contract"
     },
     {
-      "path": "tests/backends/spmd_rvv/test_rvv_remote_run_bytes.py",
+      "path": "tests/mlir/backends/spmd_rvv/test_rvv_remote_run_bytes.py",
       "track": "backend_compiler",
       "purpose": "RVV remote byte serialization dtype correctness"
     }

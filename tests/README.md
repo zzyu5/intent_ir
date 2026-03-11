@@ -14,14 +14,15 @@
 - File-to-purpose mapping lives in `tests/CATALOG.json`.
 - Use it when you want to know "which test protects which contract" without reading all files.
 
-What stays in `tests/`:
+Top-level layout now splits the active suite by responsibility:
 
-- Workflow/gate contracts (`ci_gate`, `check_batch_gate`, workflow state/session scripts)
-- Provider boundary contracts (Triton provider plugin hooks/boundary)
-- IntentIR core correctness (types/interpreter/tolerances/parser)
-- Backend compiler stage contracts (CUDA/RVV pipeline and smoke timing schema)
+- `tests/core/`: IntentIR semantic core, parser, interpreter, strict policy.
+- `tests/mlir/`: Python/C++ MLIR lowering, backend contracts, CUDA/RVV compiler path tests.
+- `tests/frontends/`: frontend/provider contracts and workflow-facing adapters.
+- `tests/pipeline/`: end-to-end pipeline behavior that is not ORG-specific.
+- `ORG-Migrate/tests/`: ORG plugin tests only.
 
-What moved to `archive/tests/`:
+What stays archived under `archive/tests/`:
 
 - Paper/experiment evidence tests
 - Deprecated entrypoint tests

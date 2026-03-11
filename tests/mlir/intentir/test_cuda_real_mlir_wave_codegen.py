@@ -234,7 +234,7 @@ def _polar2d_intent() -> IntentFunction:
 
 
 def test_cuda_real_mlir_support_report_has_no_unsupported_kernels() -> None:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     report_path = root / "workflow" / "flaggems" / "state" / "cuda_real_mlir_support_report.json"
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert int(payload.get("kernels_total") or 0) > 0

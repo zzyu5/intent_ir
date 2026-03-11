@@ -44,6 +44,7 @@ from verify.tolerances import infer_tolerances
 from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from pipeline.common.evidence_mode import evidence_enabled, evidence_mode
+from pipeline.mlir_backends import emit_route_log, select_mlir_backend_route
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
@@ -718,6 +719,7 @@ def _emit_mlir_shadow_artifacts(
         mlir_report["llvm_emit_ms"] = 0.0
         mlir_report["llvm_ir_path"] = ""
         mlir_report["llvm_skip_reason"] = ""
+        mlir_report["backend_route"] = {}
 
         down = _downstream_pipeline_name(backend_target)
         lower_ms_total = 0.0
@@ -744,29 +746,14 @@ def _emit_mlir_shadow_artifacts(
 
         llvm_mod = None
         llvm_variants: list[tuple[str, IntentMLIRModule]] = []
-        llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(backend_target, spec_name=str(spec_name))
+        route = select_mlir_backend_route(backend_target, spec_name=str(spec_name), root=ROOT)
+        mlir_report["backend_route"] = route.to_json_dict()
+        emit_route_log("triton-core", route)
+        llvm_pipeline, llvm_backend = route.llvm_pipeline, route.llvm_backend
         if llvm_pipeline is None:
             mlir_report["llvm_emit_ok"] = False
             mlir_report["llvm_ir_path"] = ""
-            if _compiler_stack_name() in {"cpp", "cpp_plugin", "c++"} and _compiler_cpp_wave_name() and str(
-                backend_target or ""
-            ).strip().lower().startswith(("cuda", "rvv")):
-                cpp_wave = _compiler_cpp_wave_name()
-                cpp_kernels = _load_compiler_cpp_wave_kernels(cpp_wave) if cpp_wave else set()
-                if spec_name and str(spec_name) in cpp_kernels and str(backend_target or "").strip().lower().startswith("cuda"):
-                    mlir_report["llvm_skip_reason"] = "compiler_cpp_cuda_unimplemented"
-                else:
-                    mlir_report["llvm_skip_reason"] = "compiler_cpp_wave_excludes_kernel"
-            elif _cuda_real_mlir_wave_name() and _real_mlir_enabled() and str(backend_target or "").strip().lower().startswith(
-                "cuda"
-            ):
-                mlir_report["llvm_skip_reason"] = "cuda_real_mlir_wave_excludes_kernel"
-            elif _rvv_real_mlir_wave_name() and _real_mlir_enabled() and str(backend_target or "").strip().lower().startswith(
-                "rvv"
-            ):
-                mlir_report["llvm_skip_reason"] = "rvv_real_mlir_wave_excludes_kernel"
-            else:
-                mlir_report["llvm_skip_reason"] = "llvm_pipeline_not_configured"
+            mlir_report["llvm_skip_reason"] = str(route.route_reason or "llvm_pipeline_not_configured")
         else:
             mlir_report["llvm_pipeline"] = str(llvm_pipeline)
             mlir_report["llvm_backend"] = str(llvm_backend or "")

@@ -8,7 +8,7 @@ from pathlib import Path
 from intent_ir.ops.primitive_catalog import catalog_summary, is_allowed_primitive, primitive_names
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_primitive_catalog_has_core_ops() -> None:

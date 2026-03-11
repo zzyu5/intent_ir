@@ -21,6 +21,13 @@ python scripts/intentir.py env
 
 This repo uses `scripts/CATALOG.json` as the single source of truth for script ownership and lifecycle.
 
+Directory guide:
+
+- `scripts/intentir/`: toolchain/bootstrap and IR architecture utilities.
+- `scripts/flaggems/`: active workflow orchestration only.
+- `scripts/triton/`, `scripts/cuda/`, `scripts/tilelang/`: frontend/backend specific helpers.
+- historical or paper-only scripts belong in `archive/scripts/`.
+
 Validate catalog:
 
 ```bash

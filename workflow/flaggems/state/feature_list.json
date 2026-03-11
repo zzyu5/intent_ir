@@ -5912,10 +5912,10 @@
         "backend_compiler::rvv_pipeline_modularization"
       ],
       "evidence_paths": [
-        "tests/backends/cuda/test_cuda_pipeline_driver.py",
-        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py",
-        "tests/backends/cuda/test_cuda_codegen_shim.py",
-        "tests/backends/spmd_rvv/test_rvv_codegen_shim.py"
+        "tests/mlir/backends/cuda/test_cuda_pipeline_driver.py",
+        "tests/mlir/backends/spmd_rvv/test_rvv_pipeline_driver.py",
+        "tests/mlir/backends/cuda/test_cuda_pipeline_driver.py",
+        "tests/mlir/backends/spmd_rvv/test_rvv_pipeline_driver.py"
       ],
       "description": "Promote CUDA/RVV pipeline drivers from no-op shims to staged contract validators."
     },
@@ -6914,8 +6914,8 @@
         "intent_ir/mlir/convert_from_intent.py",
         "intent_ir/mlir/convert_to_intent.py",
         "intent_ir/mlir/pass_manager.py",
-        "tests/intentir/test_mlir_migration.py",
-        "tests/backends/test_mlir_bridge.py"
+        "tests/mlir/intentir/test_mlir_migration.py",
+        "tests/mlir/backends/test_mlir_contract_cutover.py"
       ],
       "description": "Bootstrap IntentIR <-> MLIR dual-track bridge and pass orchestration."
     },
@@ -6945,7 +6945,7 @@
         "pipeline/triton/core.py",
         "pipeline/tilelang/core.py",
         "pipeline/cuda/core.py",
-        "tests/intentir/test_mlir_migration.py"
+        "tests/mlir/intentir/test_mlir_migration.py"
       ],
       "description": "Enable MLIR shadow mode across all frontends with pass trace and timing outputs."
     },
@@ -6975,9 +6975,9 @@
         "backends/common/mlir_bridge.py",
         "backends/cuda/pipeline/driver.py",
         "backends/spmd_rvv/pipeline/driver.py",
-        "tests/backends/test_mlir_bridge.py",
-        "tests/backends/cuda/test_cuda_pipeline_driver.py",
-        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py"
+        "tests/mlir/backends/test_mlir_contract_cutover.py",
+        "tests/mlir/backends/cuda/test_cuda_pipeline_driver.py",
+        "tests/mlir/backends/spmd_rvv/test_rvv_pipeline_driver.py"
       ],
       "description": "Bridge MLIR modules into backend pipeline contracts before full MLIR default switch."
     },

@@ -63,7 +63,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--intentir-semantics-cmd",
-        default=f"{sys.executable} -m pytest -q tests/test_ir_types.py tests/test_opset_matrix.py",
+        default=f"{sys.executable} -m pytest -q tests/core/test_ir_types.py tests/test_opset_matrix.py",
     )
     ap.add_argument(
         "--macro-composition-cmd",

@@ -83,6 +83,26 @@
       "tests": ["tests/frontends/triton/test_flaggems_coverage_batches.py"]
     },
     {
+      "path": "scripts/flaggems/build_cuda_real_mlir_support_report.py",
+      "owner_lane": "mlir_migration",
+      "purpose": "emit auditable CUDA real-MLIR support coverage from workflow seeds",
+      "inputs": ["workflow/flaggems/state/coverage_batches.json", "artifacts/flaggems_seed_cache/*.intent_seed.json"],
+      "outputs": ["workflow/flaggems/state/cuda_real_mlir_support_report.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/flaggems/build_kernel_denominators.py",
+      "owner_lane": "workflow",
+      "purpose": "rebuild semantic and executable kernel denominator snapshots",
+      "inputs": ["workflow/flaggems/state/coverage_batches.json", "artifacts/flaggems_matrix/**/run_summary.json"],
+      "outputs": ["workflow/flaggems/state/kernel_denominators.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
       "path": "scripts/flaggems/run_coverage_batches.py",
       "owner_lane": "coverage_integrity",
       "purpose": "run coverage categories with resume and aggregate handoff",
@@ -278,7 +298,7 @@
       "outputs": ["artifacts/intentir/primitive_reuse_report.json"],
       "status": "active",
       "replacement": "",
-      "tests": ["tests/intentir/test_primitive_catalog.py"]
+      "tests": ["tests/mlir/intentir/test_primitive_catalog.py"]
     },
     {
       "path": "scripts/intentir/check_macro_composition.py",
@@ -288,7 +308,7 @@
       "outputs": ["artifacts/intentir/macro_composition_report.json"],
       "status": "active",
       "replacement": "",
-      "tests": ["tests/intentir/test_macro_composition.py"]
+      "tests": ["tests/mlir/intentir/test_macro_composition.py"]
     },
     {
       "path": "scripts/intentir/report_mapping_complexity.py",
@@ -298,7 +318,7 @@
       "outputs": ["artifacts/intentir/mapping_complexity_report.json"],
       "status": "active",
       "replacement": "",
-      "tests": ["tests/intentir/test_mapping_complexity_report.py"]
+      "tests": ["tests/mlir/intentir/test_mapping_complexity_report.py"]
     },
     {
       "path": "scripts/intentir/provision_mlir_toolchain.py",
@@ -306,6 +326,26 @@
       "purpose": "provision repository-local MLIR toolchain (apt download + extract) without sudo",
       "inputs": ["apt package index", "dpkg-deb"],
       "outputs": ["artifacts/toolchains/mlir-*/", "artifacts/toolchains/mlir-current", "artifacts/toolchains/mlir-current/env.sh"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/intentir/build_intentir_mlir_plugin.py",
+      "owner_lane": "mlir_migration",
+      "purpose": "build the out-of-tree IntentIR MLIR pass plugin for the cpp_plugin stack",
+      "inputs": ["compiler/intentir_mlir_plugin", "artifacts/toolchains/mlir-current"],
+      "outputs": ["artifacts/mlir_plugins/intentir/libIntentIRPasses.so", "artifacts/mlir_plugins/intentir/plugin_manifest.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/intentir/build_llvm_mlir_from_source.py",
+      "owner_lane": "mlir_migration",
+      "purpose": "build and install a repository-local LLVM/MLIR toolchain from source",
+      "inputs": ["llvm-project git source", "cmake", "ninja"],
+      "outputs": ["artifacts/toolchains/llvm-*/", "artifacts/toolchains/mlir-current"],
       "status": "active",
       "replacement": "",
       "tests": []
@@ -321,7 +361,7 @@
       "outputs": [],
       "status": "active",
       "replacement": "",
-      "tests": ["tests/intentir/test_mlir_source_scripts.py"]
+      "tests": ["tests/mlir/intentir/test_mlir_source_scripts.py"]
     },
     {
       "path": "scripts/intentir.py",
@@ -347,6 +387,26 @@
       "status": "active",
       "replacement": "",
       "tests": ["tests/frontends/triton/test_flaggems_full_pipeline_script.py"]
+    },
+    {
+      "path": "scripts/triton/full_pipeline_verify.py",
+      "owner_lane": "workflow",
+      "purpose": "native Triton frontend pipeline verification entrypoint",
+      "inputs": ["pipeline/triton/core.py"],
+      "outputs": ["artifacts/triton_full_pipeline/*.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/triton/liger_remote_source_oracle_runner.py",
+      "owner_lane": "org_migrate",
+      "purpose": "capture source-oracle TTIR/TTGIR/PTX artifacts for Liger kernels on a remote GPU host",
+      "inputs": ["Liger-Kernel sources", "remote Triton runtime"],
+      "outputs": ["artifacts/**/remote_source_oracle/**/manifest.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
     },
     {
       "path": "scripts/tilelang/full_pipeline_verify.py",
@@ -386,7 +446,7 @@
       "outputs": ["artifacts/flaggems_matrix/**/rvv_local.json"],
       "status": "active",
       "replacement": "",
-      "tests": ["tests/test_backend_codegen_smoke_timings.py"]
+      "tests": ["tests/mlir/test_backend_codegen_smoke_timings.py"]
     },
     {
       "path": "scripts/cuda_backend_smoke.py",
@@ -396,7 +456,7 @@
       "outputs": ["artifacts/flaggems_matrix/**/cuda_local.json"],
       "status": "active",
       "replacement": "",
-      "tests": ["tests/backends/cuda/test_cuda_backend_smoke.py"]
+      "tests": ["tests/mlir/backends/cuda/test_cuda_backend_smoke.py"]
     },
     {
       "path": "scripts/rvv_remote_suite.py",
@@ -424,6 +484,16 @@
       "purpose": "RVV remote device probe helper (used by device_query/query_remote_device)",
       "inputs": ["ssh access to RVV host"],
       "outputs": ["JSON RVVHardwareProfile on stdout"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/liger_true_migration.py",
+      "owner_lane": "org_migrate",
+      "purpose": "benchmark true H100-to-5090D migration runs for Liger kernels under the ORG pipeline",
+      "inputs": ["pipeline/triton/core.py", "artifacts/**/remote_source_oracle/**/manifest.json"],
+      "outputs": ["artifacts/liger_true_migration/**"],
       "status": "active",
       "replacement": "",
       "tests": []

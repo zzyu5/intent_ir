@@ -32,6 +32,7 @@ from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
 from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
+from pipeline.mlir_backends import emit_route_log, select_mlir_backend_route
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from verify.diff_runner import run_diff
 from verify.gen_cases import TestCase, generate_cases_split
@@ -2105,17 +2106,21 @@ def run_pipeline_for_spec(
             report["mlir"]["llvm_emit_ms"] = 0.0
             report["mlir"]["llvm_ir_path"] = ""
             report["mlir"]["llvm_skip_reason"] = ""
+            report["mlir"]["backend_route"] = {}
             report["mlir"]["mlir_parse_ms"] = 0.0
             report["mlir"]["mlir_pass_ms"] = float(
                 sum(float(p.get("ms") or 0.0) for p in list(up_trace.get("passes") or []))
                 + sum(float(p.get("ms") or 0.0) for p in list(mid_trace.get("passes") or []))
             )
             llvm_mod = None
-            llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(effective_backend_target, spec_name=str(spec.name))
+            route = select_mlir_backend_route(effective_backend_target, spec_name=str(spec.name), root=ROOT)
+            report["mlir"]["backend_route"] = route.to_json_dict()
+            emit_route_log("cuda-core", route)
+            llvm_pipeline, llvm_backend = route.llvm_pipeline, route.llvm_backend
             if llvm_pipeline is None:
                 report["mlir"]["llvm_emit_ok"] = False
                 report["mlir"]["llvm_ir_path"] = ""
-                report["mlir"]["llvm_skip_reason"] = "llvm_pipeline_not_configured"
+                report["mlir"]["llvm_skip_reason"] = str(route.route_reason or "llvm_pipeline_not_configured")
             else:
                 report["mlir"]["llvm_pipeline"] = str(llvm_pipeline)
                 report["mlir"]["llvm_backend"] = str(llvm_backend or "")
@@ -2135,7 +2140,7 @@ def run_pipeline_for_spec(
                             current_out_dir=out_dir,
                         )
                         if cached_llvm_path:
-                        mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
+                            mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
                     llvm_mod, llvm_trace = run_mlir_pipeline(
                         mid_mod,
                         str(llvm_pipeline),

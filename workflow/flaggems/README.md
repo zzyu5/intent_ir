@@ -36,7 +36,6 @@ bash workflow/flaggems/init.sh
 
 This will:
 - sync mixed-track `state/feature_list.json` from registry + `state/task_templates.json`
-- freeze baseline snapshot under `state/baselines/`
 - build `state/current_status.json` + `state/session_context.json`
 - plan lane batches into:
   - `state/active_batch_coverage.json`
@@ -191,9 +190,9 @@ python scripts/flaggems/install_systemd_nightly.py --dry-run
 - `state/coverage_batches.json`: fixed 7-family coverage batch plan.
 - `state/progress_log.jsonl`: append-only session history.
 - `state/handoff.md`: latest human-readable handoff.
-- `state/baselines/*.json`: frozen baseline snapshots.
 - `state/metrics_history.jsonl`: status time series.
 - `state/roadmap.json`: milestone tracker.
+- historical baselines, one-off cleanup reports, and dated agent handoffs now live under `archive/workflow/flaggems/state/`.
 
 ## Notes
 

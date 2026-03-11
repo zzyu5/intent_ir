@@ -18,7 +18,7 @@ from intent_ir.mlir.passes.ensure_llvm_ir_text import ensure_llvm_ir_text
 
 _LOWER_LLVM_PASS = importlib.import_module("intent_ir.mlir.passes.lower_intent_to_llvm_dialect")
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _sample_intent() -> IntentFunction:

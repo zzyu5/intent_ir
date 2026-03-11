@@ -8,7 +8,7 @@ from pathlib import Path
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import to_mlir
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _intent_add() -> IntentFunction:
