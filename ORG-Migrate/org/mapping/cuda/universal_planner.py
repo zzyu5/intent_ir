@@ -169,6 +169,7 @@ class GraphProfile:
     cfg_path_bytes: dict[str, int] = field(default_factory=dict)
     resource_groups: dict[str, ResourceGroup] = field(default_factory=dict)
     resident_window_scope: str = ""
+    full_row_bytes: int = 0
     total_work: int = 0
     row_width: int = 0
     head_dim: int = 0
@@ -305,6 +306,7 @@ def _graph_profile(
     persistent_ids: list[str] = []
     output_ids: list[str] = []
     state_ids: list[str] = []
+    full_row_ids: list[str] = []
 
     if "resident_working_set" in goal_tags:
         signal_names.add("resident_state")
@@ -365,6 +367,7 @@ def _graph_profile(
         mech_tokens = lifetime_mechanism_tags(org, lifetime)
         all_tokens = set(role_tokens) | set(mech_tokens)
         reuse_scope = _normalize_scope(getattr(lifetime, "reuse_window", "") or getattr(lifetime, "scope", "") or getattr(lifetime, "region", ""))
+        raw_reuse_window = _norm_token(getattr(lifetime, "reuse_window", "") or "")
         storage = _norm_token(getattr(lifetime, "storage", ""))
         bytes_hint = max(0, int(getattr(lifetime, "bytes_hint", 0) or 0))
         if storage == "shared":
@@ -393,6 +396,8 @@ def _graph_profile(
             signal_names.add("fused_epilogue")
         if any(tok in all_tokens for tok in {"persistent_row_cache", "row_stats"}) or "persistent_row_state" in goal_tags:
             signal_names.add("persistent_path")
+        if storage == "register" and raw_reuse_window == "full_row":
+            signal_names.add("full_row_path")
         if any(tok in all_tokens for tok in {"blocked_register_layout", "output_layout_convert"}) or _norm_token(getattr(lifetime, "layout", "")):
             signal_names.add("layout_path")
         if any(tok in all_tokens for tok in {"block_synchronization", "shared_staging"}):
@@ -427,6 +432,8 @@ def _graph_profile(
             and any(tok in all_tokens for tok in {"input_row", "row_tile_resident", "group_tile_resident", "tile_resident"})
         ):
             persistent_ids.append(lifetime_id)
+        if storage == "register" and raw_reuse_window == "full_row":
+            full_row_ids.append(lifetime_id)
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
     if _fact_present(ptx_facts, "pipeline.async_copy") and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False)):
@@ -488,6 +495,7 @@ def _graph_profile(
     _ensure_group("persistent", lifetimes=[lifetimes_by_id[x] for x in persistent_ids if x in lifetimes_by_id], storage="shared", reuse_scope=resident_window_scope or "loop")
     _ensure_group("output_accumulator", lifetimes=[lifetimes_by_id[x] for x in output_ids if x in lifetimes_by_id], storage="register", reuse_scope="loop")
     _ensure_group("state", lifetimes=[lifetimes_by_id[x] for x in state_ids if x in lifetimes_by_id], storage="register", reuse_scope="loop")
+    _ensure_group("full_row_register", lifetimes=[lifetimes_by_id[x] for x in full_row_ids if x in lifetimes_by_id], storage="register", reuse_scope="loop")
     if stream_shared_ids:
         signal_names.add("stream_shared")
         signal_names.add("shared_stage_path")
@@ -518,6 +526,9 @@ def _graph_profile(
     ]
     if resident_window_scope:
         notes.append(f"topology_resident_window_scope={resident_window_scope}")
+    full_row_bytes = int(resource_groups.get("full_row_register", ResourceGroup(name="")).bytes_hint or 0)
+    if full_row_bytes > 0:
+        notes.append(f"topology_full_row_bytes={full_row_bytes}")
     if cfg_path_bytes:
         notes.append(f"topology_cfg_max_path_bytes={int(max(cfg_path_bytes.values()))}")
         notes.append(
@@ -541,6 +552,7 @@ def _graph_profile(
         cfg_path_bytes={str(k): int(v) for k, v in dict(cfg_path_bytes or {}).items()},
         resource_groups=resource_groups,
         resident_window_scope=str(resident_window_scope),
+        full_row_bytes=int(full_row_bytes),
         total_work=int(total_work),
         row_width=int(row_width),
         head_dim=int(head_dim),
@@ -721,6 +733,28 @@ def _effective_group_bytes(
     return int(bytes_hint)
 
 
+def _full_row_register_bytes(
+    *,
+    spec: FamilySpec,
+    profile: GraphProfile,
+    bindings: Mapping[str, int],
+) -> tuple[int, int, bool]:
+    threads = int(_binding_for_role(spec, bindings, "threads") or 0)
+    vector_width = int(_binding_for_role(spec, bindings, "vector_width") or 0)
+    row_width = int(profile.row_width or 0)
+    if threads <= 0 or vector_width <= 0 or row_width <= 0:
+        return 0, 0, False
+    lane_width = int(threads * vector_width)
+    if lane_width <= 0 or (row_width % lane_width) != 0:
+        return 0, 0, False
+    chunk_count = int(row_width // lane_width)
+    live_values_per_thread = int(chunk_count * vector_width)
+    # The resident program keeps one full normalized row distributed across the CTA.
+    # Weight/epilogue values are streamed after the reduction and do not stay live.
+    register_bytes = int(row_width * 4 + threads * (vector_width * 4 + 32))
+    return register_bytes, live_values_per_thread, True
+
+
 def _resource_fit(
     *,
     spec: FamilySpec,
@@ -736,6 +770,7 @@ def _resource_fit(
     # the equations below evaluate that degenerate case directly.
     shared_budget = int(hardware_model.shared_mem_kb) * 1024
     register_budget = int(hardware_model.register_budget or 65536)
+    register_budget_bytes = int(register_budget * 4)
     shared_bytes = 0
     enabled_flag_names = set(_active_flag_params(spec, template, bindings))
     if any(_norm_token(x).endswith("shared_stage") for x in enabled_flag_names):
@@ -746,18 +781,50 @@ def _resource_fit(
     if any(_norm_token(x) == "mma_async_copy" for x in enabled_flag_names):
         shared_bytes += _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="operand_stage", hardware_model=hardware_model)
         shared_bytes *= max(1, int(profile.pipeline_depth))
+    if any(_norm_token(x) == "rms_norm_full_row_vector" for x in enabled_flag_names):
+        if int(profile.row_width or 0) < 1024:
+            return ResourceFit(
+                allowed=False,
+                reason=f"full_row_small_row:{int(profile.row_width or 0)}",
+                shared_bytes=int(shared_bytes),
+                shared_ratio=float(shared_bytes) / float(max(1, shared_budget)),
+                register_ratio=0.0,
+            )
+        full_row_register_bytes, live_values_per_thread, full_row_fit = _full_row_register_bytes(
+            spec=spec,
+            profile=profile,
+            bindings=bindings,
+        )
+        if not full_row_fit:
+            return ResourceFit(
+                allowed=False,
+                reason="full_row_shape_mismatch",
+                shared_bytes=int(shared_bytes),
+                shared_ratio=float(shared_bytes) / float(max(1, shared_budget)),
+                register_ratio=0.0,
+            )
+        if live_values_per_thread > 128:
+            return ResourceFit(
+                allowed=False,
+                reason=f"full_row_thread_pressure:{live_values_per_thread}",
+                shared_bytes=int(shared_bytes),
+                shared_ratio=float(shared_bytes) / float(max(1, shared_budget)),
+                register_ratio=float(full_row_register_bytes) / float(max(1, register_budget_bytes)),
+            )
+        register_bytes = max(int(profile.register_bytes or 0), int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
+    else:
+        register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
     if any(_norm_token(x).endswith("shared_stage") for x in enabled_flag_names) and not profile.has_signal("async_evidence") and profile.has_signal("async_pipeline"):
         shared_bytes = max(shared_bytes, _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="stream_shared", hardware_model=hardware_model))
     shared_bytes = max(shared_bytes, int(profile.cfg_shared_bytes or 0))
-    register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
     shared_ratio = float(shared_bytes) / float(max(1, shared_budget))
-    register_ratio = float(register_bytes) / float(max(1, register_budget))
+    register_ratio = float(register_bytes) / float(max(1, register_budget_bytes))
     allowed = True
     reason = "ok"
     if shared_bytes > shared_budget:
         allowed = False
         reason = f"shared_budget_exceeded:{shared_bytes}>{shared_budget}"
-    elif register_ratio > 1.0:
+    elif register_bytes > register_budget_bytes:
         allowed = False
         reason = f"register_budget_exceeded:{register_ratio:.3f}"
     return ResourceFit(
@@ -792,6 +859,17 @@ def _score_param(
         if profile.total_work >= 1_000_000 and iv in {256, 512}:
             score += 8.0
             reasons.append("large_work_threads")
+        if profile.has_signal("full_row_path") and profile.row_width >= 1024:
+            live_values_per_thread = int(profile.row_width // max(1, iv))
+            if live_values_per_thread <= 128 and iv == 256:
+                score += 26.0
+                reasons.append("full_row_threads")
+            elif live_values_per_thread <= 128:
+                score += 8.0
+                reasons.append("full_row_threads_ok")
+            elif live_values_per_thread > 128:
+                score -= 56.0
+                reasons.append("full_row_threads_oversubscribed")
         if profile.row_width > 0 and "streaming_softmax_state" in set(profile.goal_tags):
             ideal = min(128, _next_power_of_two(max(1, profile.row_width)))
             if iv == ideal:
@@ -810,6 +888,13 @@ def _score_param(
         if profile.has_signal("vector_path") and iv > 1:
             score += 12.0
             reasons.append("vector_path")
+        if profile.has_signal("full_row_path") and profile.row_width >= 1024:
+            if iv == 4:
+                score += 24.0
+                reasons.append("full_row_vec4")
+            elif iv != 1:
+                score -= 8.0
+                reasons.append("full_row_nonvec4")
         if profile.total_work >= 1_000_000:
             score += {4: 16.0, 2: 8.0}.get(iv, 0.0)
             if iv > 1:
@@ -846,6 +931,10 @@ def _score_param(
         if iv == 1 and profile.has_signal("async_pipeline"):
             score += 24.0
             reasons.append("async_pipeline")
+    elif param.role == "full_row_stage":
+        if iv == 1 and profile.has_signal("full_row_path"):
+            score += 42.0
+            reasons.append("full_row_path")
     elif param.role in {"tile_m", "tile_n", "tile_k"}:
         if profile.has_signal("mma_path"):
             score += 6.0
@@ -1383,10 +1472,14 @@ def _family_specs() -> dict[str, FamilySpec]:
             catalog_builder=rms_norm2d_catalog,
             required_shape_keys=("M", "N"),
             base_modules=("rms_norm_row_tile_resident", "rms_norm_cta_statistics", "rms_norm_affine_epilogue"),
-            optional_modules=(OptionalModuleSpec(module_id="rms_norm_vector_row_io", signals=("vector_path",)),),
+            optional_modules=(
+                OptionalModuleSpec(module_id="rms_norm_vector_row_io", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="rms_norm_full_row_vector_resident", signals=("full_row_path",), gate_param="RMS_NORM_FULL_ROW_VECTOR"),
+            ),
             params=(
                 ParamSpec(name="RMS_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(256, 128, 64, 32), allowed_values=(32, 64, 128, 256)),
                 ParamSpec(name="RMS_NORM_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(4, 2, 1), allowed_values=(1, 2, 4)),
+                ParamSpec(name="RMS_NORM_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
             ),
             templates=(
                 TemplateSpec(
@@ -1394,7 +1487,7 @@ def _family_specs() -> dict[str, FamilySpec]:
                     module_id="rms_norm_backend_v3",
                     param_names=(),
                     required_signals=("resident_state", "reduction_path", "fused_epilogue", "rms_state", "row_width_64"),
-                    signal_weights={"vector_path": 8.0, "row_width_64": 24.0},
+                    signal_weights={"vector_path": 8.0, "row_width_64": 48.0},
                 ),
                 TemplateSpec(
                     kernel_kind="rms_norm_axis1_v2",
@@ -1402,6 +1495,14 @@ def _family_specs() -> dict[str, FamilySpec]:
                     param_names=("RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"),
                     required_signals=("resident_state", "reduction_path", "fused_epilogue", "rms_state"),
                     signal_weights={"vector_path": 10.0, "sync_path": 18.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="rms_norm_axis1_v4",
+                    module_id="rms_norm_backend_v4",
+                    param_names=("RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH", "RMS_NORM_FULL_ROW_VECTOR"),
+                    enabled_flags=("RMS_NORM_FULL_ROW_VECTOR",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "rms_state", "full_row_path"),
+                    signal_weights={"vector_path": 14.0, "sync_path": 18.0, "full_row_path": 36.0},
                 ),
             ),
         ),

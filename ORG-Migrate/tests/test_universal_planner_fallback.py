@@ -163,6 +163,128 @@ def test_universal_planner_unknown_rms_norm_uses_graph_fallback() -> None:
     assert any("family_inferred=rms_norm2d" in str(note) for note in list(plan.notes or []))
 
 
+def test_universal_planner_full_row_rms_norm_prefers_vector_resident_candidate() -> None:
+    org = validate_org_doc(
+        {
+            "schema_version": "intentir_org_v1",
+            "kernel": "liger_rms_norm",
+            "source_context": {
+                "frontend": "triton",
+                "source_arch": "sm90",
+                "target_arch": "sm120",
+                "shape_bindings": {"M": 2048, "N": 32768},
+                "artifacts": {"ttgir_path": "liger_rms_norm.ttgir"},
+            },
+            "goals": [
+                {"id": "g0", "tag": "resident_working_set", "summary": "keep the full row live in registers", "scope": "row", "tensors": ["X", "Y"], "evidence_refs": ["e0"]},
+                {"id": "g1", "tag": "affine_epilogue_fusion", "summary": "fuse scaling into writeback", "scope": "epilogue", "tensors": ["Y"], "evidence_refs": ["e0"]},
+                {"id": "g2", "tag": "memory_coalescing", "summary": "vector row io", "scope": "load_store", "tensors": ["X", "W", "Y"], "evidence_refs": ["e0"]},
+            ],
+            "mechanisms": [
+                {"id": "m0", "tag": "row_tile_resident", "category": "staging", "supports_goals": ["g0"], "attrs": {}, "dims": ["RMS_NORM_BLOCK_THREADS"], "evidence_refs": ["e0"]},
+                {"id": "m1", "tag": "warp_statistics", "category": "communication", "supports_goals": ["g0"], "attrs": {}, "dims": ["RMS_NORM_BLOCK_THREADS"], "evidence_refs": ["e0"]},
+                {"id": "m2", "tag": "register_staging", "category": "primitive", "supports_goals": ["g0"], "attrs": {}, "dims": ["RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"], "evidence_refs": ["e0"]},
+                {"id": "m3", "tag": "affine_epilogue", "category": "fusion", "supports_goals": ["g1"], "attrs": {}, "dims": ["RMS_NORM_VECTOR_WIDTH"], "evidence_refs": ["e0"]},
+                {"id": "m4", "tag": "vector_row_path", "category": "mapping", "supports_goals": ["g2"], "attrs": {}, "dims": ["RMS_NORM_VECTOR_WIDTH"], "evidence_refs": ["e0"]},
+            ],
+            "dims": [
+                {"name": "RMS_NORM_BLOCK_THREADS", "role": "threads", "candidates": [256, 128, 64], "constraints": [], "evidence_refs": ["e0"]},
+                {"name": "RMS_NORM_VECTOR_WIDTH", "role": "vector_width", "candidates": [4, 2, 1], "constraints": [], "evidence_refs": ["e0"]},
+            ],
+            "tensors": [
+                {"id": "t0", "name": "X", "role": "input_row", "shape_refs": ["M", "N"], "layout": "blocked", "evidence_refs": ["e0"]},
+                {"id": "t1", "name": "W", "role": "weight_row", "shape_refs": ["N"], "layout": "blocked", "evidence_refs": ["e0"]},
+                {"id": "t2", "name": "RSTD", "role": "rstd", "shape_refs": ["M"], "layout": "scalar", "evidence_refs": ["e0"]},
+                {"id": "t3", "name": "Y", "role": "affine_out", "shape_refs": ["M", "N"], "layout": "blocked", "evidence_refs": ["e0"]},
+            ],
+            "tensor_lifetimes": [
+                {
+                    "id": "lt0",
+                    "tensor": "t0",
+                    "region": "row_reduce",
+                    "storage": "register",
+                    "start": "load_x",
+                    "end": "epilogue",
+                    "producer_mechanisms": ["m0"],
+                    "consumer_mechanisms": ["m1", "m2", "m3"],
+                    "supports_goals": ["g0", "g2"],
+                    "dims": ["RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"],
+                    "bytes_hint": 16384,
+                    "reuse_window": "full_row",
+                    "evidence_refs": ["e0"],
+                },
+                {
+                    "id": "lt1",
+                    "tensor": "t1",
+                    "region": "affine_epilogue",
+                    "storage": "register",
+                    "start": "load_w",
+                    "end": "epilogue",
+                    "producer_mechanisms": ["m0"],
+                    "consumer_mechanisms": ["m3"],
+                    "supports_goals": ["g1", "g2"],
+                    "dims": ["RMS_NORM_VECTOR_WIDTH"],
+                    "bytes_hint": 16384,
+                    "reuse_window": "row_epilogue",
+                    "evidence_refs": ["e0"],
+                },
+                {
+                    "id": "lt2",
+                    "tensor": "t2",
+                    "region": "row_reduce",
+                    "storage": "register",
+                    "start": "rsqrt",
+                    "end": "store_rstd",
+                    "producer_mechanisms": ["m1"],
+                    "consumer_mechanisms": ["m3"],
+                    "supports_goals": ["g0"],
+                    "bytes_hint": 4,
+                    "reuse_window": "row_epilogue",
+                    "evidence_refs": ["e0"],
+                },
+                {
+                    "id": "lt3",
+                    "tensor": "t3",
+                    "region": "affine_epilogue",
+                    "storage": "register",
+                    "start": "mul_weight",
+                    "end": "store",
+                    "producer_mechanisms": ["m3"],
+                    "consumer_mechanisms": ["m4"],
+                    "supports_goals": ["g1", "g2"],
+                    "dims": ["RMS_NORM_VECTOR_WIDTH"],
+                    "bytes_hint": 16384,
+                    "reuse_window": "row_epilogue",
+                    "evidence_refs": ["e0"],
+                },
+            ],
+            "source_oracle": {
+                "kernel_kind": "",
+                "bindings": {},
+                "arch": "sm90",
+                "compiler_stack": "python",
+                "evidence_refs": ["e0"],
+            },
+            "evidence": [
+                {"id": "e0", "kind": "ttgir_line", "path": "liger_rms_norm.ttgir:1", "summary": "full-row rms norm graph"},
+            ],
+        }
+    )
+    plan = plan_cuda_kernel(
+        "liger_rms_norm",
+        org,
+        shape_bindings={"M": 2048, "N": 32768},
+        source_oracle={"kernel_kind": "", "bindings": {}},
+        hardware_model=build_hardware_model(target="cuda_5090d", arch="sm120"),
+        ttgir_facts={},
+        budget=8,
+    )
+    assert plan.candidates
+    assert plan.candidates[0].kernel_kind == "rms_norm_axis1_v4"
+    assert int(plan.candidates[0].bindings.get("RMS_NORM_FULL_ROW_VECTOR") or 0) == 1
+    assert int(plan.candidates[0].bindings.get("RMS_NORM_BLOCK_THREADS") or 0) == 256
+
+
 def test_universal_planner_cfg_cross_entropy_uses_region_max_path() -> None:
     org = validate_org_doc(
         {

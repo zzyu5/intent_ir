@@ -168,3 +168,43 @@ def test_cuda_real_mlir_unknown_fused_add_rms_norm_accepts_kernel_override(monke
     assert "memref.store %s0" in out.module_text
     assert "memref.store %rstd_v" in out.module_text
     _verify_with_mlir_opt(out.module_text)
+
+
+def test_cuda_real_mlir_unknown_rms_norm_accepts_full_row_kernel_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    intent = _liger_rms_norm_intent()
+    mod = to_mlir(intent)
+    mod.meta["shape_bindings"] = {
+        "M": 4,
+        "N": 256,
+        "RMS_NORM_BLOCK_THREADS": 64,
+        "RMS_NORM_VECTOR_WIDTH": 4,
+        "RMS_NORM_FULL_ROW_VECTOR": 1,
+    }
+    mod.meta["intentir_kernel_kind_override"] = "rms_norm_axis1_v4"
+    out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "rms_norm_axis1_v4"
+    assert "vector.load" in out.module_text
+    assert "full_row_x_" in out.module_text
+    assert "scf.for %jb =" not in out.module_text
+    _verify_with_mlir_opt(out.module_text)
+
+
+def test_cuda_real_mlir_unknown_fused_add_rms_norm_accepts_full_row_kernel_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    intent = _liger_fused_add_rms_norm_intent()
+    mod = to_mlir(intent)
+    mod.meta["shape_bindings"] = {
+        "M": 4,
+        "N": 256,
+        "RMS_NORM_BLOCK_THREADS": 64,
+        "RMS_NORM_VECTOR_WIDTH": 4,
+        "RMS_NORM_FULL_ROW_VECTOR": 1,
+    }
+    mod.meta["intentir_kernel_kind_override"] = "rms_norm_axis1_v4"
+    out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "rms_norm_axis1_v4"
+    assert "full_row_s_" in out.module_text
+    assert "offsetv = vector.broadcast %offset" in out.module_text
+    assert "scf.for %jb =" not in out.module_text
+    _verify_with_mlir_opt(out.module_text)

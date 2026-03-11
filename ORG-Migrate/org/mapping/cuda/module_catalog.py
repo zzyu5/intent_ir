@@ -615,6 +615,13 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             constraints=[],
         ),
         BackendModule(
+            id="rms_norm_full_row_vector_resident",
+            kind="primitive",
+            provides=["rms_norm.full_row_vector_resident"],
+            params=["RMS_NORM_FULL_ROW_VECTOR", "RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"],
+            constraints=["RMS_NORM_FULL_ROW_VECTOR in {1}"],
+        ),
+        BackendModule(
             id="rms_norm_affine_epilogue",
             kind="fusion",
             provides=["rms_norm.affine_epilogue"],
@@ -645,6 +652,19 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             params=[],
             constraints=[],
         ),
+        BackendModule(
+            id="rms_norm_backend_v4",
+            kind="template",
+            provides=["backend.kernel_kind.rms_norm_axis1_v4"],
+            requires=[
+                "rms_norm.row_tile_resident",
+                "rms_norm.cta_statistics",
+                "rms_norm.full_row_vector_resident",
+                "rms_norm.affine_epilogue",
+            ],
+            params=["RMS_NORM_FULL_ROW_VECTOR", "RMS_NORM_BLOCK_THREADS", "RMS_NORM_VECTOR_WIDTH"],
+            constraints=["RMS_NORM_FULL_ROW_VECTOR in {1}"],
+        ),
     ]
     edges = [
         BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_row_tile_resident", edge_type="uses"),
@@ -654,6 +674,11 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_warp_statistics", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_cta_statistics", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_full_row_vector_resident", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_vector_row_io", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 
