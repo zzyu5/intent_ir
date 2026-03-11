@@ -19,12 +19,15 @@ if LIGER_SRC_ROOT.is_dir():
         sys.path.insert(0, liger_src)
 
 from liger_kernel.ops.cross_entropy import liger_cross_entropy_kernel, cross_entropy_forward  # noqa: E402
+from liger_kernel.ops.geglu import _geglu_tanh_forward_kernel, geglu_forward  # noqa: E402
 from liger_kernel.ops.fused_add_rms_norm import (  # noqa: E402
     _fused_add_rms_norm_forward_kernel,
     fused_add_rms_norm_forward,
 )
+from liger_kernel.ops.layer_norm import _layer_norm_forward_kernel, layer_norm_forward  # noqa: E402
 from liger_kernel.ops.rms_norm import _rms_norm_forward_kernel, rms_norm_forward  # noqa: E402
 from liger_kernel.ops.rope import _triton_rope, rope_forward  # noqa: E402
+from liger_kernel.ops.softmax import _softmax_single_block_forward_kernel, _softmax_forward  # noqa: E402
 from liger_kernel.ops.swiglu import _swiglu_forward_kernel, swiglu_forward  # noqa: E402
 
 
@@ -172,6 +175,53 @@ def _cross_entropy_runner(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _geglu_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    a = _torch_randn((m, n), seed=int(case.seed) + 14)
+    b = _torch_randn((m, n), seed=int(case.seed) + 15)
+    a_in = a.clone()
+    b_in = b.clone()
+    _a, _b, c = geglu_forward(a, b)
+    torch.cuda.synchronize()
+    return {"a": _to_np(a_in), "b": _to_np(b_in), "c": _to_np(c)}
+
+
+def _layer_norm_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    x = _torch_randn((m, n), seed=int(case.seed) + 16)
+    w = _torch_randn((n,), seed=int(case.seed) + 17)
+    b = _torch_randn((n,), seed=int(case.seed) + 18)
+    x_in = x.clone()
+    w_in = w.clone()
+    b_in = b.clone()
+    y, _x2, mean, rstd, _block_size, _num_warps = layer_norm_forward(x, w, b, 1.0e-5)
+    torch.cuda.synchronize()
+    return {
+        "X": _to_np(x_in),
+        "W": _to_np(w_in),
+        "B": _to_np(b_in),
+        "eps": np.array(1.0e-5, dtype=np.float32),
+        "Y": _to_np(y),
+        "Mean": _to_np(mean),
+        "RSTD": _to_np(rstd),
+    }
+
+
+def _softmax_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    x = _torch_randn((m, n), seed=int(case.seed) + 19)
+    x_in = x.clone()
+    y, _block_size, _num_warps, _multi = _softmax_forward(x)
+    torch.cuda.synchronize()
+    return {
+        "X": _to_np(x_in),
+        "Y": _to_np(y),
+    }
+
+
 def liger_kernel_specs() -> List[KernelSpec]:
     module = "pipeline.triton.providers.liger.specs"
     return [
@@ -222,6 +272,36 @@ def liger_kernel_specs() -> List[KernelSpec]:
             runner=_cross_entropy_runner,
             canonical_shapes={"BT": 2048, "V": 4096},
             vary_axes=["BT", "V"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_geglu",
+            module=module,
+            attr="_geglu_tanh_forward_kernel.src",
+            runner=_geglu_runner,
+            canonical_shapes={"M": 65536, "N": 256},
+            vary_axes=["M", "N"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_layer_norm",
+            module=module,
+            attr="_layer_norm_forward_kernel.src",
+            runner=_layer_norm_runner,
+            canonical_shapes={"M": 2048, "N": 4096},
+            vary_axes=["M", "N"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_softmax",
+            module=module,
+            attr="_softmax_single_block_forward_kernel.src",
+            runner=_softmax_runner,
+            canonical_shapes={"M": 2048, "N": 4096},
+            vary_axes=["M", "N"],
             enable_stage_c=False,
             enable_mutation_kill=False,
         ),

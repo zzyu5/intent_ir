@@ -3753,7 +3753,7 @@ def run_pipeline_for_spec(
             )
             exp_txt = _intent_to_mlir_text(expanded_intent)
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
-    elif cand is None:
+    if cand is None:
         if should_try_llm:
             for attempt in range(2):
                 try:

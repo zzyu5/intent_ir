@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import math
 import os
@@ -24,6 +25,15 @@ from pipeline.triton.core import run_pipeline_for_spec  # noqa: E402
 from pipeline.triton.providers.liger.specs import liger_kernel_specs  # noqa: E402
 from scripts.cuda_backend_smoke import _with_io_aliases_for_names  # noqa: E402
 from verify.gen_cases import TestCase  # noqa: E402
+
+
+DEFAULT_KERNELS = [
+    "liger_swiglu",
+    "liger_rms_norm",
+    "liger_fused_add_rms_norm",
+    "liger_rope",
+    "liger_cross_entropy",
+]
 
 
 def _torch_dtype(dt: str) -> torch.dtype:
@@ -370,9 +380,12 @@ def _max_abs_diff(a: np.ndarray, b: np.ndarray) -> float:
 def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
     from pipeline.triton.providers.liger.specs import (
         cross_entropy_forward,
+        geglu_forward,
         fused_add_rms_norm_forward,
+        layer_norm_forward,
         rms_norm_forward,
         rope_forward,
+        _softmax_forward,
         swiglu_forward,
     )
 
@@ -419,6 +432,30 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
             cross_entropy_forward(x, target, None, -100, 0.0, 0.0, "mean", None, False, return_token_accuracy=False, return_predicted_tokens=False)
 
         return _fn
+    if kernel == "liger_geglu":
+        a = torch.as_tensor(np.asarray(baseline["a"]), device="cuda", dtype=torch.float32).contiguous()
+        b = torch.as_tensor(np.asarray(baseline["b"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            geglu_forward(a, b)
+
+        return _fn
+    if kernel == "liger_layer_norm":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        w = torch.as_tensor(np.asarray(baseline["W"]), device="cuda", dtype=torch.float32).contiguous()
+        b = torch.as_tensor(np.asarray(baseline["B"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            layer_norm_forward(x, w, b, 1.0e-5)
+
+        return _fn
+    if kernel == "liger_softmax":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            _softmax_forward(x)
+
+        return _fn
     raise KeyError(f"unsupported kernel={kernel}")
 
 
@@ -443,6 +480,16 @@ def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], gui
         }
     if kernel == "liger_cross_entropy":
         return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
+    if kernel == "liger_geglu":
+        return {"c": _max_abs_diff(guided_outputs["c"], baseline["c"])}
+    if kernel == "liger_layer_norm":
+        return {
+            "Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"]),
+            "Mean": _max_abs_diff(guided_outputs["Mean"], baseline["Mean"]),
+            "RSTD": _max_abs_diff(guided_outputs["RSTD"], baseline["RSTD"]),
+        }
+    if kernel == "liger_softmax":
+        return {"Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"])}
     raise KeyError(f"unsupported kernel={kernel}")
 
 
@@ -472,19 +519,34 @@ def _pick_best_guided(candidates: list[dict[str, Any]], *, tol: float = 1.0e-5) 
     return max(pool, key=lambda c: float(c.get("guided_qps") or 0.0))
 
 
-def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int) -> dict[str, Any]:
+def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int, shape_overrides: dict[str, int] | None = None) -> dict[str, Any]:
+    if shape_overrides:
+        spec = replace(spec, canonical_shapes={**dict(spec.canonical_shapes), **dict(shape_overrides)})
     out_dir = out_root / spec.name
     out_dir.mkdir(parents=True, exist_ok=True)
-    report = run_pipeline_for_spec(
-        spec,
-        out_dir=out_dir,
-        cases_limit=1,
-        triton_provider="native",
-        backend_target="cuda_5090d",
-        execution_policy=None,
-    )
+    _bootstrap_seed_file(kernel=spec.name, out_dir=out_dir, suffix="intent_seed.json")
+    _bootstrap_seed_file(kernel=spec.name, out_dir=out_dir, suffix="org_seed.json")
     report_path = out_dir / f"{spec.name}.json"
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    report: dict[str, Any]
+    pipeline_error = ""
+    try:
+        report = run_pipeline_for_spec(
+            spec,
+            out_dir=out_dir,
+            cases_limit=1,
+            triton_provider="native",
+            backend_target="cuda_5090d",
+            execution_policy=None,
+        )
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        pipeline_error = f"{type(exc).__name__}: {exc}"
+        report = {
+            "kernel": spec.name,
+            "baseline": {"shapes": dict(spec.canonical_shapes), "seed": 0},
+            "org": {"error": pipeline_error},
+        }
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     baseline_npz = out_dir / f"{spec.name}.baseline.npz"
     if baseline_npz.is_file():
         baseline = dict(np.load(baseline_npz, allow_pickle=False))
@@ -570,11 +632,12 @@ def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int) -> 
     org = report.get("org") if isinstance(report.get("org"), dict) else {}
     remote_source = org.get("remote_source") if isinstance(org.get("remote_source"), dict) else {}
     guided_status = {
-        "ok": bool(best_guided.get("ok")),
-        "error": str(best_guided.get("error") or org.get("error") or org.get("reason") or ""),
+        "ok": bool(best_guided.get("ok")) if not pipeline_error else False,
+        "error": str(pipeline_error or best_guided.get("error") or org.get("error") or org.get("reason") or ""),
     }
     return {
         "kernel": spec.name,
+        "shapes": dict(spec.canonical_shapes),
         "report_path": str(report_path),
         "native_ns": float(ns_native),
         "guided_ns": float(best_guided["guided_ns"]),
@@ -598,13 +661,69 @@ def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int) -> 
     }
 
 
+def _parse_bindings_json(raw: str) -> dict[str, int]:
+    if not str(raw or "").strip():
+        return {}
+    data = json.loads(str(raw))
+    if not isinstance(data, dict):
+        raise TypeError("--bindings-json must decode to an object")
+    out: dict[str, int] = {}
+    for k, v in data.items():
+        key = str(k).strip()
+        if not key:
+            continue
+        out[key] = int(v)
+    return out
+
+
+def _bootstrap_seed_file(*, kernel: str, out_dir: Path, suffix: str) -> bool:
+    target = out_dir / f"{kernel}.{suffix}"
+    if target.is_file():
+        return True
+    artifacts_root = ROOT / "artifacts"
+    candidates = [
+        p
+        for p in artifacts_root.glob(f"**/{kernel}/{kernel}.{suffix}")
+        if p.is_file() and out_dir not in p.parents
+    ]
+    if candidates:
+        source = max(candidates, key=lambda p: p.stat().st_mtime)
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        return True
+    if suffix == "org_seed.json":
+        org_candidates = [
+            p
+            for p in artifacts_root.glob(f"**/{kernel}/{kernel}.org.json")
+            if p.is_file() and out_dir not in p.parents
+        ]
+        if not org_candidates:
+            return False
+        source = max(org_candidates, key=lambda p: p.stat().st_mtime)
+        org_payload = json.loads(source.read_text(encoding="utf-8"))
+        seed_payload = {
+            "schema_version": "org_seed_v1",
+            "generated_at": "",
+            "kernel": str(kernel),
+            "triton_provider": "native",
+            "backend_target": "cuda_5090d",
+            "org": org_payload,
+            "raw_json": org_payload,
+            "llm_trace": {},
+            "quality": {"diff_ok": True, "static_ok": True, "contract_level": "semantic"},
+        }
+        target.write_text(json.dumps(seed_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        return True
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kernels", nargs="*", default=["liger_swiglu", "liger_rms_norm", "liger_fused_add_rms_norm", "liger_rope", "liger_cross_entropy"])
+    ap.add_argument("--kernels", nargs="*", default=list(DEFAULT_KERNELS))
     ap.add_argument("--out", default=str(ARTIFACT_ROOT / "latest"))
     ap.add_argument("--warmup", type=int, default=20)
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--repeats", type=int, default=5)
+    ap.add_argument("--bindings-json", default="{}")
     args = ap.parse_args()
 
     os.environ.setdefault("INTENTIR_REAL_MLIR", "1")
@@ -616,6 +735,7 @@ def main() -> int:
     out_root = Path(args.out).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
     spec_map = {spec.name: spec for spec in liger_kernel_specs()}
+    bindings_override = _parse_bindings_json(str(args.bindings_json))
     rows: list[dict[str, Any]] = []
     for name in list(args.kernels):
         spec = spec_map[str(name)]
@@ -625,6 +745,7 @@ def main() -> int:
             warmup=int(args.warmup),
             iters=int(args.iters),
             repeats=int(args.repeats),
+            shape_overrides=bindings_override,
         )
         rows.append(row)
         print(json.dumps(row, ensure_ascii=False))

@@ -22,6 +22,9 @@ _SUPPORTED_KERNELS = {
     "liger_fused_add_rms_norm",
     "liger_rope",
     "liger_cross_entropy",
+    "liger_geglu",
+    "liger_layer_norm",
+    "liger_softmax",
 }
 
 
@@ -87,6 +90,9 @@ def _canonical_remote_bindings(spec_name: str, shape_bindings: Mapping[str, int]
         "liger_fused_add_rms_norm": {"M": 2048, "N": 32768},
         "liger_rope": {"B": 2, "QH": 32, "KH": 8, "S": 2048, "HD": 128},
         "liger_cross_entropy": {"BT": 2048, "V": 4096},
+        "liger_geglu": {"M": 65536, "N": 256},
+        "liger_layer_norm": {"M": 2048, "N": 4096},
+        "liger_softmax": {"M": 2048, "N": 4096},
     }
     out = dict(defaults.get(str(spec_name), {}))
     out.update(raw)

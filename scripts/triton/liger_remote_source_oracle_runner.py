@@ -155,6 +155,58 @@ def _run_kernel(kernel: str, bindings: dict[str, int]) -> dict[str, Any]:
             "predicted_tokens_is_none": bool(predicted_tokens is None),
         }
 
+    if kernel == "liger_geglu":
+        from liger_kernel.ops.geglu import _geglu_tanh_forward_kernel, geglu_forward
+
+        m = int(bindings.get("M", 65536))
+        n = int(bindings.get("N", 256))
+        a = torch.randn((m, n), device=device, dtype=dtype)
+        b = torch.randn((m, n), device=device, dtype=dtype)
+        _a, _b, c = geglu_forward(a, b)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_geglu_tanh_forward_kernel",
+            "source_attr": str(_geglu_tanh_forward_kernel.src),
+            "output_shape": list(c.shape),
+        }
+
+    if kernel == "liger_layer_norm":
+        from liger_kernel.ops.layer_norm import _layer_norm_forward_kernel, layer_norm_forward
+
+        m = int(bindings.get("M", 2048))
+        n = int(bindings.get("N", 4096))
+        x = torch.randn((m, n), device=device, dtype=dtype)
+        w = torch.randn((n,), device=device, dtype=dtype)
+        b = torch.randn((n,), device=device, dtype=dtype)
+        y, _x2, mean, rstd, block_size, num_warps = layer_norm_forward(x, w, b, 1.0e-5)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_layer_norm_forward_kernel",
+            "source_attr": str(_layer_norm_forward_kernel.src),
+            "output_shape": list(y.shape),
+            "mean_shape": list(mean.shape),
+            "rstd_shape": list(rstd.shape),
+            "block_size": int(block_size),
+            "num_warps": int(num_warps),
+        }
+
+    if kernel == "liger_softmax":
+        from liger_kernel.ops.softmax import _softmax_forward, _softmax_single_block_forward_kernel
+
+        m = int(bindings.get("M", 2048))
+        n = int(bindings.get("N", 4096))
+        x = torch.randn((m, n), device=device, dtype=dtype)
+        y, block_size, num_warps, multi_block_launch = _softmax_forward(x)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_softmax_single_block_forward_kernel",
+            "source_attr": str(_softmax_single_block_forward_kernel.src),
+            "output_shape": list(y.shape),
+            "block_size": int(block_size),
+            "num_warps": int(num_warps),
+            "multi_block_launch": bool(multi_block_launch),
+        }
+
     raise KeyError(f"unsupported kernel: {kernel}")
 
 
