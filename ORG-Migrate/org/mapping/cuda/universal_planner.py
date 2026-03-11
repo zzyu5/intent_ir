@@ -342,6 +342,8 @@ def _graph_profile(
     output_ids: list[str] = []
     state_ids: list[str] = []
     full_row_ids: list[str] = []
+    has_weight_like = False
+    has_bias_like = False
 
     if "resident_working_set" in goal_tags:
         signal_names.add("resident_state")
@@ -360,7 +362,7 @@ def _graph_profile(
         signal_names.add("sync_path")
     if mechanism_tags & {"vector_row_path", "vector_global_io", "tile_load_stage", "blocked_register_layout", "vector_group_io", "vector_dot_fragment"}:
         signal_names.add("vector_path")
-    if mechanism_tags & {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization"}:
+    if mechanism_tags & {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization", "online_safe_math_reduction"}:
         signal_names.add("reduction_path")
     if mechanism_tags & {"mask_apply", "mask_causal_apply"}:
         signal_names.add("mask_path")
@@ -372,8 +374,10 @@ def _graph_profile(
         signal_names.add("persistent_path")
     if mechanism_tags & {"kv_streamed_tiles", "qkv_stage", "tiny_kv_stage"}:
         signal_names.add("stream_stage")
-    if mechanism_tags & {"q_resident_state", "row_tile_resident", "group_tile_resident", "tile_resident"}:
+    if mechanism_tags & {"q_resident_state", "row_tile_resident", "group_tile_resident", "tile_resident", "multi_output_stats_resident"}:
         signal_names.add("resident_state")
+    if mechanism_tags & {"online_softmax_reduce", "parallel_softmax", "online_safe_math_reduction"}:
+        signal_names.add("online_state")
     if mechanism_tags & {"mma_core", "dot_op"}:
         signal_names.add("mma_path")
     if mechanism_tags & {"label_gather", "index_gather"}:
@@ -408,6 +412,10 @@ def _graph_profile(
         role_tokens = set(tensor_roles.get(tensor_id) or set())
         mech_tokens = lifetime_mechanism_tags(org, lifetime)
         all_tokens = set(role_tokens) | set(mech_tokens)
+        if any(tok in role_tokens for tok in {"weight", "w", "gamma", "scale"}):
+            has_weight_like = True
+        if any(tok in role_tokens for tok in {"bias", "b", "beta", "shift"}):
+            has_bias_like = True
         reuse_scope = _normalize_scope(getattr(lifetime, "reuse_window", "") or getattr(lifetime, "scope", "") or getattr(lifetime, "region", ""))
         raw_reuse_window = _norm_token(getattr(lifetime, "reuse_window", "") or "")
         storage = _norm_token(getattr(lifetime, "storage", ""))
@@ -440,9 +448,9 @@ def _graph_profile(
             signal_names.add("resident_state")
         if any(tok in all_tokens for tok in {"kv_streamed_tiles", "qkv_stage", "tiny_kv_stage", "operand_tile_stage", "ab_tile_stage"}):
             signal_names.add("stream_stage")
-        if any(tok in all_tokens for tok in {"online_softmax_reduce", "parallel_softmax"}):
+        if any(tok in all_tokens for tok in {"online_softmax_reduce", "parallel_softmax", "online_safe_math_reduction"}):
             signal_names.add("online_state")
-        if any(tok in all_tokens for tok in {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization"}):
+        if any(tok in all_tokens for tok in {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization", "online_safe_math_reduction"}):
             signal_names.add("reduction_path")
         if any(tok in all_tokens for tok in {"vector_row_path", "vector_global_io", "tile_load_stage", "blocked_register_layout", "vector_group_io", "vector_dot_fragment"}):
             signal_names.add("vector_path")
@@ -454,7 +462,7 @@ def _graph_profile(
             signal_names.add("mma_path")
         if any(tok in all_tokens for tok in {"output_layout_convert", "affine_epilogue", "affine_fused_epilogue", "bias_fused_epilogue", "epilogue_fused_writeback"}):
             signal_names.add("fused_epilogue")
-        if any(tok in all_tokens for tok in {"persistent_row_cache", "row_stats"}) or "persistent_row_state" in goal_tags:
+        if any(tok in all_tokens for tok in {"persistent_row_cache", "row_stats", "multi_output_stats_resident"}) or "persistent_row_state" in goal_tags:
             signal_names.add("persistent_path")
         if is_full_row_lifetime:
             signal_names.add("full_row_path")
@@ -472,6 +480,9 @@ def _graph_profile(
             signal_names.add("mean_state")
         if any(tok in role_tokens for tok in {"rstd", "inv_rms", "rms_state"}):
             signal_names.add("rms_state")
+        if any(tok in all_tokens for tok in {"multi_output_stats_resident", "mean_state", "rstd_state"}):
+            signal_names.add("stateful_recurrence")
+            signal_names.add("resident_state")
         if any(tok in role_tokens for tok in {"target", "target_col", "picked", "picked_col", "label"}):
             signal_names.add("gather_path")
         if str(getattr(tensor_by_id(org).get(tensor_id, None), "view_of", "")).strip():
@@ -494,6 +505,11 @@ def _graph_profile(
             persistent_ids.append(lifetime_id)
         if is_full_row_lifetime:
             full_row_ids.append(lifetime_id)
+    if signal_names >= {"mean_state", "rms_state"}:
+        signal_names.add("reduction_path")
+        signal_names.add("stateful_recurrence")
+    if has_weight_like and has_bias_like and signal_names >= {"mean_state", "rms_state", "output_accumulator"}:
+        signal_names.add("fused_epilogue")
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
     if _fact_present(ptx_facts, "pipeline.async_copy") and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False)):
@@ -739,6 +755,15 @@ def _resolve_family_spec(
         if profile.cfg_uniform_branch:
             base_score += 10.0
         _consider("cfg_masked_row_reduce2d", base_score, "graph:cfg+gather+reduction")
+    if profile.has_signal("mean_state") and profile.has_signal("rms_state"):
+        norm_score = 109.0
+        if profile.has_signal("fused_epilogue"):
+            norm_score += 4.0
+        if profile.has_signal("vector_path"):
+            norm_score += 2.0
+        if profile.has_signal("persistent_path"):
+            norm_score += 1.0
+        _consider("layer_norm_persistent", norm_score, "graph:mean+rstd_norm")
     if profile.has_signal("reduction_path") and profile.has_signal("fused_epilogue"):
         if _shape_keys_present(shape_bindings, ("N", "GROUP_SIZE")):
             _consider("group_norm_kernel", 108.0, "graph:group_norm")
@@ -1325,7 +1350,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="softmax_inner",
             catalog_builder=lambda hw: row_softmax_catalog(hw, masked=False),
             required_shape_keys=("M", "N"),
-            base_modules=("softmax_inner_row_tile_resident", "softmax_inner_row_reduction"),
+            base_modules=("softmax_inner_row_tile_resident", "softmax_inner_row_reduction", "softmax_inner_online_safe_math_reduction"),
             optional_modules=(OptionalModuleSpec(module_id="softmax_inner_vector_row_path", signals=("vector_path",)),),
             params=(ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(64, 128), allowed_values=(32, 64, 128), cap_mode="softmax_threads"),),
             templates=(
@@ -1334,14 +1359,14 @@ def _family_specs() -> dict[str, FamilySpec]:
                     module_id="softmax_inner_backend_triton_v1",
                     param_names=("SOFTMAX_BLOCK_THREADS",),
                     required_signals=("resident_state", "reduction_path"),
-                    signal_weights={"vector_path": 10.0, "online_state": 8.0},
+                    signal_weights={"vector_path": 10.0, "online_state": 14.0, "stateful_recurrence": 6.0},
                 ),
                 TemplateSpec(
                     kernel_kind="row_softmax_axis1_v1",
                     module_id="softmax_inner_backend_v1",
                     param_names=(),
                     required_signals=("reduction_path",),
-                    signal_weights={"online_state": 6.0},
+                    signal_weights={"online_state": 10.0, "stateful_recurrence": 4.0},
                 ),
             ),
         ),
@@ -1349,7 +1374,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="masked_softmax2d",
             catalog_builder=lambda hw: row_softmax_catalog(hw, masked=True),
             required_shape_keys=("M", "N"),
-            base_modules=("masked_softmax_row_tile_resident", "masked_softmax_row_reduction", "masked_softmax_mask_apply"),
+            base_modules=("masked_softmax_row_tile_resident", "masked_softmax_row_reduction", "masked_softmax_online_safe_math_reduction", "masked_softmax_mask_apply"),
             optional_modules=(OptionalModuleSpec(module_id="masked_softmax_vector_row_path", signals=("vector_path",)),),
             params=(ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(64, 128), allowed_values=(32, 64, 128), cap_mode="softmax_threads"),),
             templates=(
@@ -1358,14 +1383,14 @@ def _family_specs() -> dict[str, FamilySpec]:
                     module_id="masked_softmax_backend_triton_v1",
                     param_names=("SOFTMAX_BLOCK_THREADS",),
                     required_signals=("resident_state", "reduction_path", "mask_path"),
-                    signal_weights={"vector_path": 10.0, "online_state": 8.0},
+                    signal_weights={"vector_path": 10.0, "online_state": 14.0, "stateful_recurrence": 6.0},
                 ),
                 TemplateSpec(
                     kernel_kind="row_masked_softmax_axis1_v1",
                     module_id="masked_softmax_backend_v1",
                     param_names=(),
                     required_signals=("reduction_path", "mask_path"),
-                    signal_weights={"online_state": 6.0},
+                    signal_weights={"online_state": 10.0, "stateful_recurrence": 4.0},
                 ),
             ),
         ),
@@ -1554,7 +1579,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="layer_norm_persistent",
             catalog_builder=layer_norm_persistent_catalog,
             required_shape_keys=("M", "N"),
-            base_modules=("layer_norm_row_tile_resident", "layer_norm_warp_statistics", "layer_norm_affine_epilogue", "layer_norm_backend_v1"),
+            base_modules=("layer_norm_row_tile_resident", "layer_norm_warp_statistics", "layer_norm_multi_output_stats_resident", "layer_norm_affine_epilogue", "layer_norm_backend_v1"),
             optional_modules=(
                 OptionalModuleSpec(module_id="layer_norm_register_stage", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="layer_norm_persistent_row_cache", signals=("persistent_path",), gate_param="LAYER_NORM_PERSISTENT_ROW"),
@@ -1570,7 +1595,7 @@ def _family_specs() -> dict[str, FamilySpec]:
                     module_id="layer_norm_backend_v1",
                     param_names=("LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_PERSISTENT_ROW"),
                     required_signals=("resident_state", "reduction_path", "fused_epilogue"),
-                    signal_weights={"persistent_path": 24.0, "vector_path": 10.0},
+                    signal_weights={"persistent_path": 24.0, "vector_path": 10.0, "mean_state": 8.0, "rms_state": 8.0, "stateful_recurrence": 6.0},
                 ),
             ),
         ),

@@ -625,11 +625,17 @@ def _cuda_real_mlir_allow_unknown() -> bool:
 
 
 def _downstream_llvm_extra_pipelines(backend_target: str | None) -> list[tuple[str, str]]:
-    if _real_mlir_enabled():
-        # Avoid triggering legacy cached-LLVM pipelines as "extras" under real-MLIR runs.
-        return []
     target = str(backend_target or "").strip().lower()
     if not target:
+        return []
+    if _real_mlir_enabled():
+        # Real-MLIR remains the primary lowering path. Keep a same-backend legacy
+        # LLVM pipeline as an extra executable-materialization branch so ORG
+        # candidate compile-checks can still recover PTX contracts.
+        if target.startswith("cuda"):
+            return [("downstream_cuda_llvm", "cuda")]
+        if target.startswith("rvv"):
+            return [("downstream_rvv_llvm", "rvv")]
         return []
     if target.startswith("cuda"):
         return [("downstream_rvv_llvm", "rvv")]

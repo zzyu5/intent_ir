@@ -208,6 +208,13 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
             constraints=[],
         ),
         BackendModule(
+            id=f"{prefix}_online_safe_math_reduction",
+            kind="communication",
+            provides=[f"{prefix}.online_safe_math_reduction"],
+            params=["SOFTMAX_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
             id=f"{prefix}_vector_row_path",
             kind="mapping",
             provides=[f"{prefix}.vector_row_path"],
@@ -225,7 +232,7 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
             id=f"{prefix}_backend_triton_v1",
             kind="template",
             provides=["backend.kernel_kind.row_softmax_axis1_triton_v1"],
-            requires=[f"{prefix}.row_tile_resident", f"{prefix}.row_reduction", f"{prefix}.vector_row_path"],
+            requires=[f"{prefix}.row_tile_resident", f"{prefix}.row_reduction", f"{prefix}.online_safe_math_reduction", f"{prefix}.vector_row_path"],
             params=["SOFTMAX_BLOCK_THREADS"],
             constraints=[],
         ),
@@ -233,7 +240,7 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
             id=f"{prefix}_backend_v1",
             kind="template",
             provides=["backend.kernel_kind.row_softmax_axis1_v1" if not masked else "backend.kernel_kind.row_masked_softmax_axis1_v1"],
-            requires=[f"{prefix}.row_reduction"],
+            requires=[f"{prefix}.row_reduction", f"{prefix}.online_safe_math_reduction"],
             params=[],
             constraints=[],
         ),
@@ -241,8 +248,10 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
     edges = [
         BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_online_safe_math_reduction", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_vector_row_path", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_online_safe_math_reduction", edge_type="uses"),
     ]
     if masked:
         edges.append(BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_mask_apply", edge_type="uses"))
@@ -540,6 +549,13 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
             constraints=["LAYER_NORM_BLOCK_THREADS in {32,64,128,256}"],
         ),
         BackendModule(
+            id="layer_norm_multi_output_stats_resident",
+            kind="communication",
+            provides=["layer_norm.multi_output_stats_resident"],
+            params=["LAYER_NORM_BLOCK_THREADS"],
+            constraints=["LAYER_NORM_BLOCK_THREADS in {32,64,128,256}"],
+        ),
+        BackendModule(
             id="layer_norm_register_stage",
             kind="staging",
             provides=["layer_norm.register_stage"],
@@ -567,6 +583,7 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
             requires=[
                 "layer_norm.row_tile_resident",
                 "layer_norm.warp_statistics",
+                "layer_norm.multi_output_stats_resident",
                 "layer_norm.affine_epilogue",
             ],
             params=["LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_PERSISTENT_ROW"],
@@ -576,6 +593,7 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
     edges = [
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_warp_statistics", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_multi_output_stats_resident", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_register_stage", edge_type="optional"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_persistent_row_cache", edge_type="optional"),

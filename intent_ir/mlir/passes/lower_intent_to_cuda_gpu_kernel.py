@@ -6530,7 +6530,7 @@ def lower_intent_to_cuda_gpu_kernel(
                         raise RuntimeError("layer_norm_residual2d requires f32 scalar const 'eps'")
                     row_layer_norm_residual2d = {"M": int(out_m), "N": int(out_n), "eps_const": float(eps_const)}
 
-        elif intent_name == "ai_bench_layernorm":
+        elif intent_name == "ai_bench_layernorm" or {"X", "W", "B", "Y", "Mean", "Rstd"}.issubset(set(arg_specs.keys())):
             required = {"X", "W", "B", "Y", "Mean", "Rstd"}
             if required.issubset(set(arg_specs.keys())):
                 ok = (
