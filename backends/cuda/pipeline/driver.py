@@ -878,7 +878,15 @@ def _looks_like_explicit_launch_override(payload: object) -> bool:
         bx, by, bz = int(block[0]), int(block[1]), int(block[2])
     except Exception:
         return False
-    return gx > 0 and gy > 0 and gz > 0 and bx > 0 and by > 0 and bz > 0
+    if not (gx > 0 and gy > 0 and gz > 0 and bx > 0 and by > 0 and bz > 0):
+        return False
+    # Historical semantic/PTX contracts often carry a placeholder grid=[1,1,1]
+    # even when the final runtime launch must still be inferred from PTX bounds
+    # or output size. Treat that shape as non-explicit unless the caller marks it.
+    explicit_marker = str(payload.get("origin") or payload.get("launch_origin") or "").strip().lower()
+    if (gx, gy, gz) == (1, 1, 1) and explicit_marker not in {"explicit", "real_mlir_override"}:
+        return False
+    return True
 
 
 def _repair_pad_scalar_arg_names(

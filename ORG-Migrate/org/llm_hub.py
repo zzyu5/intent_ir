@@ -19,6 +19,23 @@ from intent_ir.llm import DEFAULT_MODEL, LLMClientError, extract_json_object_wit
 from org.schema import OrgDoc, OrgValidationError, validate_org_doc
 
 
+def _norm_token(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _canonical_reuse_window(value: Any, *, storage: Any = "") -> str:
+    raw = str(value or "").strip()
+    token = _norm_token(raw)
+    storage_token = _norm_token(storage)
+    if not token:
+        return ""
+    if token in {"row_processing", "row_normalization", "row_normalization_epilogue", "full_row_program"}:
+        return "full_row"
+    if storage_token == "register" and token in {"row_epilogue", "affine_epilogue"}:
+        return "row_epilogue"
+    return raw
+
+
 def _hash_messages(messages: List[Dict[str, str]]) -> str:
     payload = json.dumps(messages, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
@@ -231,6 +248,10 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
         lifetime["dims"] = [
             ref for ref in [str(x).strip() for x in list(lifetime.get("dims") or []) if str(x).strip()] if ref in dim_names
         ]
+        lifetime["reuse_window"] = _canonical_reuse_window(
+            lifetime.get("reuse_window"),
+            storage=lifetime.get("storage"),
+        )
         lifetime["evidence_refs"] = [
             ref for ref in [str(x).strip() for x in list(lifetime.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
         ]

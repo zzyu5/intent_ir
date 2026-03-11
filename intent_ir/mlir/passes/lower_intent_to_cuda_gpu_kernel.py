@@ -5512,6 +5512,8 @@ def lower_intent_to_cuda_gpu_kernel(
                                 "HALF": int(half),
                                 "COS_B": int(cos_b),
                                 "COS_W": int(cos_w),
+                                "Q_LAYOUT": "bhsd",
+                                "K_LAYOUT": "bhsd",
                             }
 
         # Pattern: already-canonicalized dual-rope with direct logical tensors.
@@ -5551,11 +5553,33 @@ def lower_intent_to_cuda_gpu_kernel(
                     and len(cos_dims) in {2, 3}
                     and len(sin_dims) in {2, 3}
                 ):
-                    b_dim, qh_dim, s_dim, hd_dim = map(int, q_dims)
-                    bk_dim, kh_dim, sk_dim, hk_dim = map(int, k_dims)
+                    q_layout = ""
+                    k_layout = ""
                     if (
-                        list(map(int, q_out_dims)) == [b_dim, qh_dim, s_dim, hd_dim]
-                        and list(map(int, k_out_dims)) == [bk_dim, kh_dim, sk_dim, hk_dim]
+                        list(map(int, q_out_dims)) == list(map(int, q_dims))
+                        and list(map(int, k_out_dims)) == list(map(int, k_dims))
+                        and int(q_dims[0]) == int(k_dims[0])
+                        and int(q_dims[3]) == int(k_dims[3])
+                    ):
+                        if int(q_dims[1]) == int(k_dims[1]) and int(q_dims[2]) != int(k_dims[2]):
+                            b_dim, s_dim, qh_dim, hd_dim = map(int, q_dims)
+                            bk_dim, sk_dim, kh_dim, hk_dim = map(int, k_dims)
+                            q_layout = "bshd"
+                            k_layout = "bshd"
+                        elif int(q_dims[2]) == int(k_dims[2]) and int(q_dims[1]) != int(k_dims[1]):
+                            b_dim, qh_dim, s_dim, hd_dim = map(int, q_dims)
+                            bk_dim, kh_dim, sk_dim, hk_dim = map(int, k_dims)
+                            q_layout = "bhsd"
+                            k_layout = "bhsd"
+                        else:
+                            b_dim = s_dim = qh_dim = hd_dim = 0
+                            bk_dim = sk_dim = kh_dim = hk_dim = 0
+                    else:
+                        b_dim = s_dim = qh_dim = hd_dim = 0
+                        bk_dim = sk_dim = kh_dim = hk_dim = 0
+                    if (
+                        q_layout
+                        and k_layout
                         and b_dim == bk_dim
                         and s_dim == sk_dim
                         and hd_dim == hk_dim
@@ -5592,6 +5616,8 @@ def lower_intent_to_cuda_gpu_kernel(
                                 "HALF": int(half),
                                 "COS_B": int(cos_b),
                                 "COS_W": int(cos_w),
+                                "Q_LAYOUT": str(q_layout),
+                                "K_LAYOUT": str(k_layout),
                             }
 
         if tuple(op_names) in {
@@ -7756,6 +7782,8 @@ def lower_intent_to_cuda_gpu_kernel(
         half = int(rope_dual_v1["HALF"])
         cos_b_dim = int(rope_dual_v1["COS_B"])
         cos_w_dim = int(rope_dual_v1["COS_W"])
+        q_layout = str(rope_dual_v1.get("Q_LAYOUT") or "bhsd").strip().lower()
+        k_layout = str(rope_dual_v1.get("K_LAYOUT") or "bhsd").strip().lower()
 
         for tensor_name in (q_name, k_name, cos_name, sin_name, q_out_name, k_out_name):
             if str(arg_specs[tensor_name].get("memref_elem_ty")) != "f32":
@@ -7805,11 +7833,18 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %sin_v = memref.load {arg_ssa[sin_name]}[%cidx] : {sin_memref}")
         lines.append("          %pred_q = arith.cmpi ult, %bid_head, %cQH : index")
         lines.append("          scf.if %pred_q {")
-        lines.append("            %q0 = arith.muli %bid_batch, %cQH : index")
-        lines.append("            %q1 = arith.addi %q0, %bid_head : index")
-        lines.append("            %q2 = arith.muli %q1, %cS : index")
-        lines.append("            %q3 = arith.addi %q2, %bid_seq : index")
-        lines.append("            %qbase = arith.muli %q3, %cHD : index")
+        if q_layout == "bshd":
+            lines.append("            %q0 = arith.muli %bid_batch, %cS : index")
+            lines.append("            %q1 = arith.addi %q0, %bid_seq : index")
+            lines.append("            %q2 = arith.muli %q1, %cQH : index")
+            lines.append("            %q3 = arith.addi %q2, %bid_head : index")
+            lines.append("            %qbase = arith.muli %q3, %cHD : index")
+        else:
+            lines.append("            %q0 = arith.muli %bid_batch, %cQH : index")
+            lines.append("            %q1 = arith.addi %q0, %bid_head : index")
+            lines.append("            %q2 = arith.muli %q1, %cS : index")
+            lines.append("            %q3 = arith.addi %q2, %bid_seq : index")
+            lines.append("            %qbase = arith.muli %q3, %cHD : index")
         lines.append("            %qidx1 = arith.addi %qbase, %j : index")
         lines.append("            %qidx2 = arith.addi %qbase, %j2 : index")
         lines.append(f"            %qx1 = memref.load {arg_ssa[q_name]}[%qidx1] : {q_memref}")
@@ -7825,11 +7860,18 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          }")
         lines.append("          %pred_k = arith.cmpi ult, %bid_head, %cKH : index")
         lines.append("          scf.if %pred_k {")
-        lines.append("            %k0 = arith.muli %bid_batch, %cKH : index")
-        lines.append("            %k1 = arith.addi %k0, %bid_head : index")
-        lines.append("            %k2 = arith.muli %k1, %cS : index")
-        lines.append("            %k3 = arith.addi %k2, %bid_seq : index")
-        lines.append("            %kbase = arith.muli %k3, %cHD : index")
+        if k_layout == "bshd":
+            lines.append("            %k0 = arith.muli %bid_batch, %cS : index")
+            lines.append("            %k1 = arith.addi %k0, %bid_seq : index")
+            lines.append("            %k2 = arith.muli %k1, %cKH : index")
+            lines.append("            %k3 = arith.addi %k2, %bid_head : index")
+            lines.append("            %kbase = arith.muli %k3, %cHD : index")
+        else:
+            lines.append("            %k0 = arith.muli %bid_batch, %cKH : index")
+            lines.append("            %k1 = arith.addi %k0, %bid_head : index")
+            lines.append("            %k2 = arith.muli %k1, %cS : index")
+            lines.append("            %k3 = arith.addi %k2, %bid_seq : index")
+            lines.append("            %kbase = arith.muli %k3, %cHD : index")
         lines.append("            %kidx1 = arith.addi %kbase, %j : index")
         lines.append("            %kidx2 = arith.addi %kbase, %j2 : index")
         lines.append(f"            %kx1 = memref.load {arg_ssa[k_name]}[%kidx1] : {k_memref}")

@@ -341,7 +341,29 @@ def _repair_candidate_from_descriptor(cand: CandidateIntent, descriptor: KernelD
     shapes = _baseline_array_shapes(descriptor)
     name = str(descriptor.name or "").strip().lower()
     module = str((descriptor.launch or {}).get("module") or "").strip().lower()
+    canonical_shapes = {
+        str(k): int(v)
+        for k, v in dict((descriptor.launch or {}).get("canonical_shapes") or {}).items()
+        if str(k).strip()
+    }
 
+    if "rope" in name and not shapes and {"B", "QH", "KH", "S", "HD"} <= set(canonical_shapes):
+        shapes = {
+            "q": (
+                int(canonical_shapes["B"]),
+                int(canonical_shapes["QH"]),
+                int(canonical_shapes["S"]),
+                int(canonical_shapes["HD"]),
+            ),
+            "k": (
+                int(canonical_shapes["B"]),
+                int(canonical_shapes["KH"]),
+                int(canonical_shapes["S"]),
+                int(canonical_shapes["HD"]),
+            ),
+            "cos": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
+            "sin": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
+        }
     if "rope" in name and "q" in shapes and "k" in shapes and "cos" in shapes and "sin" in shapes:
         repaired = parse_candidate_json(
             _rope_repair_json(
@@ -354,6 +376,12 @@ def _repair_candidate_from_descriptor(cand: CandidateIntent, descriptor: KernelD
         repairs.append("liger_rope_view_repair_v1")
         return repaired, repairs
 
+    if ("cross_entropy" in name or "cross_entropy" in module) and not shapes and {"BT", "V"} <= set(canonical_shapes):
+        shapes = {
+            "input": (int(canonical_shapes["BT"]), int(canonical_shapes["V"])),
+            "target": (int(canonical_shapes["BT"]),),
+            "loss": tuple(),
+        }
     if ("cross_entropy" in name or "cross_entropy" in module) and "input" in shapes and "target" in shapes and "loss" in shapes:
         repaired = parse_candidate_json(
             _cross_entropy_repair_json(

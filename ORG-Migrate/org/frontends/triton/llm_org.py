@@ -278,6 +278,13 @@ Kernel-specific expectations:
   and prefer a region_graph with:
   if(target == ignore_index) / else(target != ignore_index)
   and explicitly attach branch paths to the masked-loss and active-loss lifetimes
+- For RMSNorm or fused residual RMSNorm kernels, capture:
+  resident_working_set, persistent_row_state, affine_epilogue_fusion, reduction_tree_balance
+  and prefer mechanism tags such as:
+  row_tile_resident, blocked_register_layout, vector_row_path, warp_reduction, affine_epilogue
+  and when a blocked register row stays live from normalization into epilogue, set:
+  reuse_window=full_row
+  and report bytes_hint for the resident full-row representation rather than only a per-thread fragment
 - For RoPE kernels with logical/physical layout mismatch, capture:
   avoid_materialization, memory_coalescing, latency_hiding
   and prefer tensor view metadata:

@@ -399,6 +399,9 @@ def run_org_sidecar(
             )
             if isinstance(remote_source, dict):
                 org_report["remote_source"] = dict(remote_source)
+                remote_source_arch = str(remote_source.get("source_arch") or "").strip()
+                if remote_source_arch:
+                    extra_evidence["source_arch"] = remote_source_arch
         build_ttir_summary = load_org_attr("org.facts.ttir", "build_ttir_summary")
         extract_ttgir_mechanism_facts = load_org_attr("org.facts.ttgir", "extract_ttgir_mechanism_facts")
         extract_ptx_mechanism_facts = load_org_attr("org.facts.ptx", "extract_ptx_mechanism_facts")

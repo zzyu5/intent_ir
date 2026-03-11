@@ -1199,8 +1199,8 @@ def _cmd_env(_: argparse.Namespace) -> int:
             print(f"torch.cuda.device_name[0]: {torch.cuda.get_device_name(0)}")
     except Exception as e:
         print(f"cuda_probe_error: {e}")
-    print(f"rvv_default_host: {os.getenv('INTENTIR_RVV_HOST', '192.168.8.72')}")
-    print(f"rvv_default_user: {os.getenv('INTENTIR_RVV_USER', 'ubuntu')}")
+    print(f"rvv_default_host: {os.getenv('INTENTIR_RVV_HOST', 'rvv')}")
+    print(f"rvv_default_user: {os.getenv('INTENTIR_RVV_USER', '')}")
     print(f"intentir.execution_ir: {os.getenv('INTENTIR_EXECUTION_IR', 'mlir')}")
     return 0
 
@@ -1530,8 +1530,8 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     suite.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--skip-rvv-local", action=argparse.BooleanOptionalAction, default=True)
-    suite.add_argument("--rvv-host", default="192.168.8.72")
-    suite.add_argument("--rvv-user", default="ubuntu")
+    suite.add_argument("--rvv-host", default=os.getenv("INTENTIR_RVV_HOST", "rvv"))
+    suite.add_argument("--rvv-user", default=os.getenv("INTENTIR_RVV_USER", ""))
     suite.add_argument("--rvv-port", type=int, default=22)
     suite.add_argument(
         "--rvv-remote-timeout-sec",
@@ -1564,8 +1564,8 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     kernel.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     kernel.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
-    kernel.add_argument("--rvv-host", default="192.168.8.72")
-    kernel.add_argument("--rvv-user", default="ubuntu")
+    kernel.add_argument("--rvv-host", default=os.getenv("INTENTIR_RVV_HOST", "rvv"))
+    kernel.add_argument("--rvv-user", default=os.getenv("INTENTIR_RVV_USER", ""))
     kernel.add_argument("--rvv-port", type=int, default=22)
     kernel.add_argument(
         "--rvv-remote-timeout-sec",

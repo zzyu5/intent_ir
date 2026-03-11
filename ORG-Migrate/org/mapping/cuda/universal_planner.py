@@ -135,11 +135,32 @@ def _normalize_scope(value: Any) -> str:
         return "tile"
     if token in {"row_reduce", "row", "row_scope"}:
         return "row"
-    if token in {"row_epilogue", "full_row", "kv_loop", "loop", "loop_carried", "outer_loop"}:
+    if token in {
+        "row_epilogue",
+        "full_row",
+        "row_processing",
+        "row_normalization",
+        "row_normalization_epilogue",
+        "kv_loop",
+        "loop",
+        "loop_carried",
+        "outer_loop",
+    }:
         return "loop"
     if token in {"warp", "warp_reduce"}:
         return "warp"
     return token
+
+
+def _is_full_row_reuse_window(value: Any) -> bool:
+    token = _norm_token(value)
+    return token in {
+        "full_row",
+        "full_row_program",
+        "row_processing",
+        "row_normalization",
+        "row_normalization_epilogue",
+    }
 
 
 @dataclass(frozen=True)
@@ -291,6 +312,13 @@ def _graph_profile(
         values = union_dim_candidate_ints(dim_candidates, key)
         if values:
             pipeline_depth = max(pipeline_depth, int(values[0]))
+    row_width = 0
+    for key in ("N", "KV_CTX", "Q_CTX"):
+        iv = _coerce_int(shape_bindings.get(key))
+        if iv is not None and iv > 0:
+            row_width = int(iv)
+            break
+    row_bytes_hint = int(row_width * 4) if int(row_width) > 0 else 0
 
     signal_names: set[str] = set()
     resource_groups: dict[str, ResourceGroup] = {}
@@ -370,10 +398,28 @@ def _graph_profile(
         raw_reuse_window = _norm_token(getattr(lifetime, "reuse_window", "") or "")
         storage = _norm_token(getattr(lifetime, "storage", ""))
         bytes_hint = max(0, int(getattr(lifetime, "bytes_hint", 0) or 0))
+        is_full_row_lifetime = storage == "register" and _is_full_row_reuse_window(raw_reuse_window)
+        region_token = _norm_token(getattr(lifetime, "region", ""))
+        epilogue_stream_bytes = max(
+            16,
+            int(min(bytes_hint, max(1, min(int(blocked_threads_hint or 256), 256)) * max(1, int(blocked_vector_hint or 1)) * 4)),
+        )
+        is_epilogue_stream_lifetime = (
+            storage == "register"
+            and not is_full_row_lifetime
+            and row_bytes_hint > 0
+            and bytes_hint >= row_bytes_hint
+            and region_token in {"affine_epilogue", "row_epilogue", "epilogue"}
+            and (
+                "affine_epilogue_fusion" in goal_tags
+                or "fused_epilogue" in signal_names
+                or any(tok in all_tokens for tok in {"affine_epilogue", "output_layout_convert", "vector_row_path"})
+            )
+        )
         if storage == "shared":
             shared_bytes += int(bytes_hint)
-        if storage == "register":
-            register_bytes += int(bytes_hint)
+        if storage == "register" and not is_full_row_lifetime:
+            register_bytes += int(epilogue_stream_bytes if is_epilogue_stream_lifetime else bytes_hint)
         if reuse_scope in {"tile", "loop"} and not resident_window_scope:
             resident_window_scope = reuse_scope
         if "resident_working_set" in goal_tags or any(tok in all_tokens for tok in {"row_tile_resident", "group_tile_resident", "tile_resident", "q_resident_state"}):
@@ -396,7 +442,7 @@ def _graph_profile(
             signal_names.add("fused_epilogue")
         if any(tok in all_tokens for tok in {"persistent_row_cache", "row_stats"}) or "persistent_row_state" in goal_tags:
             signal_names.add("persistent_path")
-        if storage == "register" and raw_reuse_window == "full_row":
+        if is_full_row_lifetime:
             signal_names.add("full_row_path")
         if any(tok in all_tokens for tok in {"blocked_register_layout", "output_layout_convert"}) or _norm_token(getattr(lifetime, "layout", "")):
             signal_names.add("layout_path")
@@ -432,7 +478,7 @@ def _graph_profile(
             and any(tok in all_tokens for tok in {"input_row", "row_tile_resident", "group_tile_resident", "tile_resident"})
         ):
             persistent_ids.append(lifetime_id)
-        if storage == "register" and raw_reuse_window == "full_row":
+        if is_full_row_lifetime:
             full_row_ids.append(lifetime_id)
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
@@ -504,16 +550,10 @@ def _graph_profile(
         signal_names.add("shared_stage_path")
 
     total_work = 1
-    row_width = 0
     for key in ("M", "N", "K", "Q_CTX", "KV_CTX", "HEAD_DIM"):
         iv = _coerce_int(shape_bindings.get(key))
         if iv is not None and iv > 0:
             total_work *= int(iv)
-    for key in ("N", "KV_CTX", "Q_CTX"):
-        iv = _coerce_int(shape_bindings.get(key))
-        if iv is not None and iv > 0:
-            row_width = int(iv)
-            break
     if int(row_width) == 64:
         signal_names.add("row_width_64")
     head_dim = int(_coerce_int(shape_bindings.get("HEAD_DIM")) or 0)
