@@ -8035,7 +8035,8 @@ def lower_intent_to_cuda_gpu_kernel(
 
         launch_override = {"block": [256, 1, 1], "grid": [int(n_dim), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
-        shared_global_memref_ty = "memref<512xf32, 3>"
+        # One f32 partial per thread (block_x=256), reduced in shared.
+        shared_global_memref_ty = "memref<256xf32, 3>"
         cuda_real_mlir_matmul_cfg = {"kind": "matvec_v1", "N": int(n_dim), "K": int(k_dim_red), "block_x": 256}
 
         lines.append("      %tid = gpu.thread_id x")
@@ -8060,7 +8061,7 @@ def lower_intent_to_cuda_gpu_kernel(
         assert shared_global_sym is not None
         assert shared_global_memref_ty == "memref<256xf32, 3>"
         lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
-        lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
+        lines.append(f"        memref.store %partial, %sh[%tid] : {shared_global_memref_ty}")
         lines.append("        gpu.barrier")
         for stride in (128, 64, 32, 16, 8, 4, 2, 1):
             cS = f"%cS_{stride}"
@@ -8073,16 +8074,16 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
             lines.append(f"        scf.if {pS} {{")
             lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
-            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
-            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {a} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : {shared_global_memref_ty}")
             lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
-            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          memref.store {s}, %sh[%tid] : {shared_global_memref_ty}")
             lines.append("        }")
             lines.append("        gpu.barrier")
 
         lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
         lines.append("        scf.if %is0 {")
-        lines.append("          %sum0 = memref.load %sh[%c0] : memref<256xf32, 3>")
+        lines.append(f"          %sum0 = memref.load %sh[%c0] : {shared_global_memref_ty}")
         body_lines = _emit_elementwise_for_index(
             "%bid",
             precomputed={mv_out_name: ("%sum0", "f32")},
