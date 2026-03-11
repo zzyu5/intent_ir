@@ -104,6 +104,9 @@ def _select_provider(model: str) -> Dict[str, str]:
 
 
 def _candidate_models(requested_model: str) -> List[str]:
+    if str(os.getenv("INTENTIR_LLM_DISABLE_FALLBACK", "") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        requested = str(requested_model or "").strip()
+        return [requested or DEFAULT_MODEL]
     # Try requested model first; if it fails, fall back to other configured providers/models.
     models: List[str] = []
     providers = _load_providers()

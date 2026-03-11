@@ -122,12 +122,47 @@ def _build_source_oracle(extra_evidence: Mapping[str, Any] | None) -> dict[str, 
 
 def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]:
     obj = dict(raw_json or {})
+    for key in (
+        "goals",
+        "mechanisms",
+        "dims",
+        "evidence",
+        "tensors",
+        "tensor_lifetimes",
+        "dataflow_edges",
+        "mechanism_topology",
+        "schedule_edges",
+    ):
+        if obj.get(key) is None:
+            obj[key] = []
     dims = [dict(x) for x in list(obj.get("dims") or []) if isinstance(x, Mapping)]
     dim_names = {str(item.get("name") or "").strip() for item in dims if str(item.get("name") or "").strip()}
     goal_ids = {str(item.get("id") or "").strip() for item in list(obj.get("goals") or []) if isinstance(item, Mapping)}
     evidence_ids = {
         str(item.get("id") or "").strip() for item in list(obj.get("evidence") or []) if isinstance(item, Mapping)
     }
+    goals_out: list[dict[str, Any]] = []
+    for raw_goal in list(obj.get("goals") or []):
+        if not isinstance(raw_goal, Mapping):
+            continue
+        goal = dict(raw_goal)
+        goal["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(goal.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        goals_out.append(goal)
+    if goals_out or "goals" in obj:
+        obj["goals"] = goals_out
+    dims_out: list[dict[str, Any]] = []
+    for raw_dim in list(obj.get("dims") or []):
+        if not isinstance(raw_dim, Mapping):
+            continue
+        dim = dict(raw_dim)
+        dim["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(dim.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
+        dims_out.append(dim)
+    if dims_out or "dims" in obj:
+        obj["dims"] = dims_out
     mechanisms_out: list[dict[str, Any]] = []
     for raw_mech in list(obj.get("mechanisms") or []):
         if not isinstance(raw_mech, Mapping):
@@ -140,6 +175,12 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
                 continue
             dims_list.append(name)
         mech["dims"] = dims_list
+        mech["supports_goals"] = [
+            ref for ref in [str(x).strip() for x in list(mech.get("supports_goals") or []) if str(x).strip()] if ref in goal_ids
+        ]
+        mech["evidence_refs"] = [
+            ref for ref in [str(x).strip() for x in list(mech.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
+        ]
         mechanisms_out.append(mech)
     if mechanisms_out:
         obj["mechanisms"] = mechanisms_out

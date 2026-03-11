@@ -375,6 +375,7 @@ def lower_intent_to_cuda_gpu_kernel(
         "per_token_group_quant_fp8_2d",
         "batch_norm2d",
         "liger_rope",
+        "liger_cross_entropy",
     }
     if len(outputs) == 2 and not multi_output_ok:
         out_ranks = sorted(
@@ -5496,6 +5497,86 @@ def lower_intent_to_cuda_gpu_kernel(
                         sin_w = int(sin_dims[-1]) if len(sin_dims) >= 1 else 0
                         half = hd_dim // 2
                         if cos_s == s_dim and sin_s == s_dim and cos_w in {half, hd_dim} and sin_w in {half, hd_dim}:
+                            rope_dual_v1 = {
+                                "q": q_name,
+                                "k": k_name,
+                                "cos": cos_name,
+                                "sin": sin_name,
+                                "q_out": q_out_name,
+                                "k_out": k_out_name,
+                                "B": int(b_dim),
+                                "S": int(s_dim),
+                                "QH": int(qh_dim),
+                                "KH": int(kh_dim),
+                                "HD": int(hd_dim),
+                                "HALF": int(half),
+                                "COS_B": int(cos_b),
+                                "COS_W": int(cos_w),
+                            }
+
+        # Pattern: already-canonicalized dual-rope with direct logical tensors.
+        if rope_dual_v1 is None and op_names == ["rope", "rope"]:
+            op0, op1 = ops_list
+            ins0, out0 = _op_inputs(op0), _op_out(op0)
+            ins1, out1 = _op_inputs(op1), _op_out(op1)
+            if (
+                len(ins0) == 3
+                and len(ins1) == 3
+                and str(ins0[1]) == str(ins1[1])
+                and str(ins0[2]) == str(ins1[2])
+            ):
+                q_name = str(ins0[0])
+                k_name = str(ins1[0])
+                cos_name = str(ins0[1])
+                sin_name = str(ins0[2])
+                q_out_name = str(out0)
+                k_out_name = str(out1)
+                q_dims = _dims(q_name)
+                k_dims = _dims(k_name)
+                q_out_dims = _dims(q_out_name)
+                k_out_dims = _dims(k_out_name)
+                cos_dims = _dims(cos_name)
+                sin_dims = _dims(sin_name)
+                if (
+                    q_dims
+                    and k_dims
+                    and q_out_dims
+                    and k_out_dims
+                    and cos_dims
+                    and sin_dims
+                    and len(q_dims) == 4
+                    and len(k_dims) == 4
+                    and len(q_out_dims) == 4
+                    and len(k_out_dims) == 4
+                    and len(cos_dims) in {2, 3}
+                    and len(sin_dims) in {2, 3}
+                ):
+                    b_dim, qh_dim, s_dim, hd_dim = map(int, q_dims)
+                    bk_dim, kh_dim, sk_dim, hk_dim = map(int, k_dims)
+                    if (
+                        list(map(int, q_out_dims)) == [b_dim, qh_dim, s_dim, hd_dim]
+                        and list(map(int, k_out_dims)) == [bk_dim, kh_dim, sk_dim, hk_dim]
+                        and b_dim == bk_dim
+                        and s_dim == sk_dim
+                        and hd_dim == hk_dim
+                        and hd_dim > 0
+                        and hd_dim % 2 == 0
+                    ):
+                        cos_b = int(cos_dims[0]) if len(cos_dims) == 3 else 1
+                        cos_s = int(cos_dims[-2]) if len(cos_dims) >= 2 else 0
+                        cos_w = int(cos_dims[-1]) if len(cos_dims) >= 1 else 0
+                        sin_b = int(sin_dims[0]) if len(sin_dims) == 3 else 1
+                        sin_s = int(sin_dims[-2]) if len(sin_dims) >= 2 else 0
+                        sin_w = int(sin_dims[-1]) if len(sin_dims) >= 1 else 0
+                        half = hd_dim // 2
+                        if (
+                            cos_s == s_dim
+                            and sin_s == s_dim
+                            and cos_b in {1, b_dim}
+                            and sin_b in {1, b_dim}
+                            and cos_w in {half, hd_dim}
+                            and sin_w in {half, hd_dim}
+                        ):
                             rope_dual_v1 = {
                                 "q": q_name,
                                 "k": k_name,

@@ -1,0 +1,500 @@
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import statistics
+import sys
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ARTIFACT_ROOT = ROOT / "artifacts" / "liger_true_migration"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel  # noqa: E402
+from backends.cuda.runtime import CudaLaunch, load_cuda_ptx_module  # noqa: E402
+from pipeline.triton.core import run_pipeline_for_spec  # noqa: E402
+from pipeline.triton.providers.liger.specs import liger_kernel_specs  # noqa: E402
+from scripts.cuda_backend_smoke import _with_io_aliases_for_names  # noqa: E402
+from verify.gen_cases import TestCase  # noqa: E402
+
+
+def _torch_dtype(dt: str) -> torch.dtype:
+    raw = str(dt).strip().lower()
+    if raw == "f16":
+        return torch.float16
+    if raw == "bf16":
+        return torch.bfloat16
+    if raw == "f32":
+        return torch.float32
+    if raw == "i64":
+        return torch.int64
+    if raw == "i32":
+        return torch.int32
+    if raw in {"bool", "i1"}:
+        return torch.bool
+    raise KeyError(f"unsupported dtype: {dt}")
+
+
+def _parse_launch_dict(launch_raw: Any) -> CudaLaunch:
+    launch = dict(launch_raw or {}) if isinstance(launch_raw, dict) else {}
+    grid = launch.get("grid")
+    block = launch.get("block")
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        raise RuntimeError("invalid launch metadata")
+    return CudaLaunch(
+        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
+        block=(int(block[0]), int(block[1]), int(block[2])),
+        shared_mem=int(launch.get("shared_mem", 0)),
+    )
+
+
+def _resolve_tensor_shape(shape_spec: list[Any], bindings: dict[str, Any]) -> tuple[int, ...]:
+    dims: list[int] = []
+    for dim in list(shape_spec or []):
+        if isinstance(dim, int):
+            dims.append(int(dim))
+            continue
+        key = str(dim).strip()
+        if key in bindings:
+            dims.append(int(bindings[key]))
+            continue
+        dims.append(int(key))
+    return tuple(dims)
+
+
+def _build_guided_tensors(*, io_spec: dict[str, Any], baseline: dict[str, np.ndarray], bindings: dict[str, Any], outputs: list[str]) -> tuple[list[Any], dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
+    scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), dict) else {}
+    arg_names = [str(x) for x in list(io_spec.get("arg_names") or [])]
+    output_set = {str(x) for x in outputs}
+    args: list[Any] = []
+    inputs_torch: dict[str, torch.Tensor] = {}
+    outputs_torch: dict[str, torch.Tensor] = {}
+
+    def _tensor_alias_base(name: str) -> str:
+        raw = str(name).strip()
+        head, _sep, _tail = raw.partition("__")
+        return head if head else raw
+
+    for name in arg_names:
+        if name in tensors:
+            spec = tensors[name] if isinstance(tensors.get(name), dict) else {}
+            dt = _torch_dtype(str(spec.get("dtype") or "f32"))
+            base_name = _tensor_alias_base(name)
+            if base_name in output_set:
+                shape = _resolve_tensor_shape(list(spec.get("shape") or []), bindings)
+                t = torch.empty(shape, device="cuda", dtype=dt)
+                outputs_torch[base_name] = t
+                args.append(t)
+            else:
+                if base_name in outputs_torch:
+                    args.append(outputs_torch[base_name])
+                    continue
+                if base_name in inputs_torch:
+                    args.append(inputs_torch[base_name])
+                    continue
+                if base_name not in baseline:
+                    raise KeyError(f"missing baseline input for {name}")
+                t = torch.as_tensor(np.asarray(baseline[base_name]), device="cuda", dtype=dt).contiguous()
+                inputs_torch[base_name] = t
+                args.append(t)
+        elif name in scalars:
+            dt = str(scalars[name])
+            if name not in bindings:
+                raise KeyError(f"missing scalar binding for {name}")
+            if dt == "f32":
+                args.append(float(bindings[name]))
+            else:
+                args.append(int(bindings[name]))
+        else:
+            if name not in bindings:
+                raise KeyError(f"missing binding for {name}")
+            args.append(int(bindings[name]))
+    return args, inputs_torch, outputs_torch
+
+
+def _load_guided_realizations(report: dict[str, Any]) -> list[dict[str, Any]]:
+    org = report.get("org") if isinstance(report.get("org"), dict) else {}
+    compile_checks = list(org.get("compile_checks") or [])
+    if not compile_checks:
+        plan_path_raw = str(org.get("plan_path") or "").strip()
+        if plan_path_raw:
+            plan_path = Path(plan_path_raw)
+            if plan_path.is_file():
+                try:
+                    plan_json = json.loads(plan_path.read_text(encoding="utf-8"))
+                    compile_checks = list(plan_json.get("compile_checks") or [])
+                except Exception:
+                    compile_checks = []
+    out: list[dict[str, Any]] = []
+    for idx, item in enumerate(compile_checks):
+        if not isinstance(item, dict) or not bool(item.get("ok")):
+            continue
+        contract_path_raw = str(item.get("contract_path") or "").strip()
+        if not contract_path_raw:
+            continue
+        contract_path = Path(contract_path_raw)
+        if not contract_path.is_file():
+            continue
+        try:
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        try:
+            lowered = lower_cuda_contract_to_kernel(
+                dict(contract),
+                shape_bindings=dict(((report.get("baseline") or {}).get("shapes") or {})),
+            )
+        except Exception:
+            continue
+        out.append(
+            {
+                "rank": idx,
+                "candidate": str(item.get("candidate") or ""),
+                "kernel_kind": str(item.get("kernel_kind") or ""),
+                "bindings": dict(item.get("bindings") or {}),
+                "contract_path": str(contract_path),
+                "ptx_path": str(lowered.get("cuda_ptx_path") or (contract.get("executable") or {}).get("path") or item.get("ptx_path") or ""),
+                "entry": str(lowered.get("kernel_name") or (contract.get("executable") or {}).get("entry") or item.get("entry") or ""),
+                "io_spec": dict(lowered.get("io_spec") or {}),
+                "shape_bindings": dict(lowered.get("bindings") or {}),
+                "output_names": [str(x) for x in list(lowered.get("output_names") or []) if str(x).strip()],
+                "launch": _parse_launch_dict(lowered.get("launch")),
+                "ptx_text": lowered.get("cuda_ptx") or "",
+            }
+        )
+    return out
+
+
+def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaLaunch, warmup: int, iters: int, repeats: int) -> tuple[float, list[float]]:
+    launch_args = [*args, int(launch.grid[0]), int(launch.grid[1]), int(launch.grid[2]), int(launch.block[0]), int(launch.block[1]), int(launch.block[2]), int(launch.shared_mem)]
+    for _ in range(int(warmup)):
+        compiled_module.launch(*launch_args)
+    torch.cuda.synchronize()
+    g = torch.cuda.CUDAGraph()
+    try:
+        with torch.cuda.graph(g):
+            for _ in range(int(iters)):
+                compiled_module.launch(*launch_args)
+        torch.cuda.synchronize()
+    except Exception:
+        g = None
+    times_ns: list[float] = []
+    for _ in range(max(1, int(repeats))):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        if g is not None:
+            g.replay()
+        else:
+            for _ in range(int(iters)):
+                compiled_module.launch(*launch_args)
+        end.record()
+        torch.cuda.synchronize()
+        times_ns.append(float(start.elapsed_time(end)) * 1.0e6 / float(iters))
+    return float(statistics.median(times_ns)), times_ns
+
+
+def _bench_native(fn, *, warmup: int, iters: int, repeats: int) -> tuple[float, list[float]]:
+    for _ in range(int(warmup)):
+        fn()
+    torch.cuda.synchronize()
+    graphs: list[torch.cuda.CUDAGraph] = []
+    try:
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            for _ in range(int(iters)):
+                fn()
+        torch.cuda.synchronize()
+        graphs.append(g)
+    except Exception:
+        graphs = []
+    times_ns: list[float] = []
+    for _ in range(max(1, int(repeats))):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        if graphs:
+            graphs[0].replay()
+        else:
+            for _ in range(int(iters)):
+                fn()
+        end.record()
+        torch.cuda.synchronize()
+        times_ns.append(float(start.elapsed_time(end)) * 1.0e6 / float(iters))
+    return float(statistics.median(times_ns)), times_ns
+
+
+def _qps(ns_per_iter: float) -> float:
+    return float(1.0e9 / float(ns_per_iter)) if float(ns_per_iter) > 0.0 else 0.0
+
+
+def _max_abs_diff(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
+
+
+def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
+    from pipeline.triton.providers.liger.specs import (
+        cross_entropy_forward,
+        fused_add_rms_norm_forward,
+        rms_norm_forward,
+        rope_forward,
+        swiglu_forward,
+    )
+
+    if kernel == "liger_swiglu":
+        a = torch.as_tensor(np.asarray(baseline["a"]), device="cuda", dtype=torch.float32).contiguous()
+        b = torch.as_tensor(np.asarray(baseline["b"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            swiglu_forward(a, b)
+
+        return _fn
+    if kernel == "liger_rms_norm":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        w = torch.as_tensor(np.asarray(baseline["W"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            rms_norm_forward(x, w, 1.0e-5, 0.0, "none", False)
+
+        return _fn
+    if kernel == "liger_fused_add_rms_norm":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        r = torch.as_tensor(np.asarray(baseline["R"]), device="cuda", dtype=torch.float32).contiguous()
+        w = torch.as_tensor(np.asarray(baseline["W"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            fused_add_rms_norm_forward(x, r, w, 1.0e-5, 0.0, "none")
+
+        return _fn
+    if kernel == "liger_rope":
+        q = torch.as_tensor(np.asarray(baseline["q"]), device="cuda", dtype=torch.float32).contiguous()
+        k = torch.as_tensor(np.asarray(baseline["k"]), device="cuda", dtype=torch.float32).contiguous()
+        cos = torch.as_tensor(np.asarray(baseline["cos"]), device="cuda", dtype=torch.float32).contiguous()
+        sin = torch.as_tensor(np.asarray(baseline["sin"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            rope_forward(q, k, cos, sin)
+
+        return _fn
+    if kernel == "liger_cross_entropy":
+        x = torch.as_tensor(np.asarray(baseline["input"]), device="cuda", dtype=torch.float32).contiguous()
+        target = torch.as_tensor(np.asarray(baseline["target"]), device="cuda", dtype=torch.int64).contiguous()
+
+        def _fn():
+            cross_entropy_forward(x, target, None, -100, 0.0, 0.0, "mean", None, False, return_token_accuracy=False, return_predicted_tokens=False)
+
+        return _fn
+    raise KeyError(f"unsupported kernel={kernel}")
+
+
+def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], guided_outputs: dict[str, np.ndarray]) -> dict[str, float]:
+    if kernel == "liger_swiglu":
+        return {"c": _max_abs_diff(guided_outputs["c"], baseline["c"])}
+    if kernel == "liger_rms_norm":
+        return {
+            "Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"]),
+            "RSTD": _max_abs_diff(guided_outputs["RSTD"], baseline["RSTD"]),
+        }
+    if kernel == "liger_fused_add_rms_norm":
+        return {
+            "Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"]),
+            "S": _max_abs_diff(guided_outputs["S"], baseline["S"]),
+            "RSTD": _max_abs_diff(guided_outputs["RSTD"], baseline["RSTD"]),
+        }
+    if kernel == "liger_rope":
+        return {
+            "q_out": _max_abs_diff(guided_outputs["q_out"], baseline["q_out"]),
+            "k_out": _max_abs_diff(guided_outputs["k_out"], baseline["k_out"]),
+        }
+    if kernel == "liger_cross_entropy":
+        return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
+    raise KeyError(f"unsupported kernel={kernel}")
+
+
+def _guided_error_score(max_abs: dict[str, float]) -> float:
+    vals = [float(v) for v in max_abs.values()]
+    return max(vals) if vals else math.inf
+
+
+def _pick_best_guided(candidates: list[dict[str, Any]], *, tol: float = 1.0e-5) -> dict[str, Any]:
+    if not candidates:
+        return {
+            "candidate": "",
+            "kernel_kind": "",
+            "bindings": {},
+            "contract_path": "",
+            "ptx_path": "",
+            "guided_ns": 0.0,
+            "guided_qps": 0.0,
+            "guided_repeats_ns": [],
+            "max_abs": {},
+            "error_score": math.inf,
+            "ok": False,
+            "error": "guided_candidate_missing",
+        }
+    correct = [c for c in candidates if float(c.get("error_score", math.inf)) <= float(tol)]
+    pool = correct if correct else candidates
+    return max(pool, key=lambda c: float(c.get("guided_qps") or 0.0))
+
+
+def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int) -> dict[str, Any]:
+    out_dir = out_root / spec.name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report = run_pipeline_for_spec(
+        spec,
+        out_dir=out_dir,
+        cases_limit=1,
+        triton_provider="native",
+        backend_target="cuda_5090d",
+        execution_policy=None,
+    )
+    report_path = out_dir / f"{spec.name}.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    baseline_npz = out_dir / f"{spec.name}.baseline.npz"
+    if baseline_npz.is_file():
+        baseline = dict(np.load(baseline_npz, allow_pickle=False))
+    else:
+        baseline_shapes = dict(((report.get("baseline") or {}).get("shapes") or {}) or dict(spec.canonical_shapes))
+        baseline_seed = int(((report.get("baseline") or {}).get("seed") or 0))
+        baseline = {str(k): np.asarray(v) for k, v in dict(spec.runner(TestCase(shapes=baseline_shapes, dtypes={}, seed=baseline_seed))).items()}
+    guided_rows: list[dict[str, Any]] = []
+    for realization in _load_guided_realizations(report):
+        output_names = list(realization["output_names"])
+        baseline_for_candidate = _with_io_aliases_for_names(sorted(set(list(baseline.keys()) + list(output_names))), baseline)
+        try:
+            compiled_module = load_cuda_ptx_module(
+                kernel_name=str(realization.get("entry") or spec.name),
+                ptx=realization.get("ptx_text") or "",
+                io_spec=dict(realization.get("io_spec") or {}),
+            )
+            args, _inputs_torch, outputs_torch = _build_guided_tensors(
+                io_spec=dict(realization.get("io_spec") or {}),
+                baseline=baseline_for_candidate,
+                bindings=dict(realization.get("shape_bindings") or {}),
+                outputs=output_names,
+            )
+            ns_guided, guided_repeats = _bench_module_launch(
+                compiled_module=compiled_module,
+                args=args,
+                launch=realization["launch"],
+                warmup=warmup,
+                iters=iters,
+                repeats=repeats,
+            )
+            torch.cuda.synchronize()
+            guided_outputs = {str(k): v.detach().cpu().numpy() for k, v in outputs_torch.items()}
+            guided_outputs = _with_io_aliases_for_names(sorted(set(list(guided_outputs.keys()) + list(output_names))), guided_outputs)
+            max_abs = _compare_guided_outputs(kernel=spec.name, baseline=baseline_for_candidate, guided_outputs=guided_outputs)
+            guided_rows.append(
+                {
+                    "candidate": realization["candidate"],
+                    "kernel_kind": realization["kernel_kind"],
+                    "bindings": dict(realization.get("bindings") or {}),
+                    "contract_path": realization["contract_path"],
+                    "ptx_path": realization["ptx_path"],
+                    "guided_ns": float(ns_guided),
+                    "guided_qps": _qps(ns_guided),
+                    "guided_repeats_ns": guided_repeats,
+                    "max_abs": max_abs,
+                    "error_score": _guided_error_score(max_abs),
+                    "ok": True,
+                    "error": "",
+                }
+            )
+        except Exception as exc:
+            guided_rows.append(
+                {
+                    "candidate": realization["candidate"],
+                    "kernel_kind": realization["kernel_kind"],
+                    "bindings": dict(realization.get("bindings") or {}),
+                    "contract_path": realization["contract_path"],
+                    "ptx_path": realization["ptx_path"],
+                    "guided_ns": 0.0,
+                    "guided_qps": 0.0,
+                    "guided_repeats_ns": [],
+                    "max_abs": {},
+                    "error_score": math.inf,
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    best_guided = _pick_best_guided(guided_rows)
+    native_fn = _native_callable(spec.name, baseline)
+    ns_native, native_repeats = _bench_native(native_fn, warmup=warmup, iters=iters, repeats=repeats)
+    org = report.get("org") if isinstance(report.get("org"), dict) else {}
+    remote_source = org.get("remote_source") if isinstance(org.get("remote_source"), dict) else {}
+    guided_status = {
+        "ok": bool(best_guided.get("ok")),
+        "error": str(best_guided.get("error") or org.get("error") or org.get("reason") or ""),
+    }
+    return {
+        "kernel": spec.name,
+        "report_path": str(report_path),
+        "native_ns": float(ns_native),
+        "guided_ns": float(best_guided["guided_ns"]),
+        "native_qps": _qps(ns_native),
+        "guided_qps": float(best_guided["guided_qps"]),
+        "ratio": (float(best_guided["guided_qps"]) / _qps(ns_native) if _qps(ns_native) > 0.0 else 0.0),
+        "max_abs": dict(best_guided["max_abs"]),
+        "native_repeats_ns": native_repeats,
+        "guided_repeats_ns": list(best_guided["guided_repeats_ns"]),
+        "guided_candidate": {
+            "candidate": str(best_guided["candidate"]),
+            "kernel_kind": str(best_guided["kernel_kind"]),
+            "bindings": dict(best_guided["bindings"]),
+            "contract_path": str(best_guided["contract_path"]),
+            "ptx_path": str(best_guided["ptx_path"]),
+            "error_score": float(best_guided["error_score"]),
+        },
+        "guided_status": guided_status,
+        "guided_candidates": guided_rows,
+        "remote_source": remote_source,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--kernels", nargs="*", default=["liger_swiglu", "liger_rms_norm", "liger_fused_add_rms_norm", "liger_rope", "liger_cross_entropy"])
+    ap.add_argument("--out", default=str(ARTIFACT_ROOT / "latest"))
+    ap.add_argument("--warmup", type=int, default=20)
+    ap.add_argument("--iters", type=int, default=200)
+    ap.add_argument("--repeats", type=int, default=5)
+    args = ap.parse_args()
+
+    os.environ.setdefault("INTENTIR_REAL_MLIR", "1")
+    os.environ.setdefault("INTENTIR_CUDA_REAL_MLIR_ALLOW_UNKNOWN", "1")
+    os.environ.setdefault("INTENTIR_ORG_MODE", "apply")
+    os.environ.setdefault("INTENTIR_ORG_SEED_POLICY", "force_llm")
+    os.environ.setdefault("INTENTIR_ORG_REMOTE_SOURCE_ENABLE", "1")
+
+    out_root = Path(args.out).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+    spec_map = {spec.name: spec for spec in liger_kernel_specs()}
+    rows: list[dict[str, Any]] = []
+    for name in list(args.kernels):
+        spec = spec_map[str(name)]
+        row = _run_one(
+            spec,
+            out_root=out_root,
+            warmup=int(args.warmup),
+            iters=int(args.iters),
+            repeats=int(args.repeats),
+        )
+        rows.append(row)
+        print(json.dumps(row, ensure_ascii=False))
+    summary = {"rows": rows}
+    (out_root / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

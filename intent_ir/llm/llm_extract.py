@@ -21,6 +21,55 @@ def strip_code_fence(text: str) -> str:
     return fence.sub("", text).strip()
 
 
+def _close_json_scaffolding(text: str) -> str:
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    for ch in str(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch in "{[":
+            stack.append(ch)
+            continue
+        if ch == "}" and stack and stack[-1] == "{":
+            stack.pop()
+            continue
+        if ch == "]" and stack and stack[-1] == "[":
+            stack.pop()
+            continue
+    suffix = "".join("}" if ch == "{" else "]" for ch in reversed(stack))
+    return str(text) + suffix
+
+
+def _attempt_repair_parse(text: str) -> Dict[str, Any]:
+    start = text.find("{")
+    if start == -1:
+        raise json.JSONDecodeError("json object not found", text, 0)
+    core = text[start:]
+    lines = core.splitlines()
+    max_trim = min(len(lines), 256)
+    for trim in range(max_trim + 1):
+        candidate = "\n".join(lines[:-trim] if trim else lines).rstrip()
+        if not candidate:
+            continue
+        candidate = re.sub(r",\s*$", "", candidate)
+        candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+        try:
+            return json.loads(_close_json_scaffolding(candidate))
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("unable to repair truncated JSON", text, 0)
+
+
 def parse_json_block(text: str) -> Dict[str, Any]:
     cleaned = strip_code_fence(text)
     try:
@@ -36,7 +85,11 @@ def parse_json_block(text: str) -> Dict[str, Any]:
             except json.JSONDecodeError:
                 # Remove trailing commas before } or ].
                 cleaned2 = re.sub(r",\\s*([}\\]])", r"\\1", snippet)
-                return json.loads(cleaned2)
+                try:
+                    return json.loads(cleaned2)
+                except json.JSONDecodeError:
+                    return _attempt_repair_parse(cleaned2)
+        return _attempt_repair_parse(cleaned)
         raise
 
 

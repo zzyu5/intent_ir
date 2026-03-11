@@ -28,6 +28,7 @@ from pipeline.triton.core import (
     _org_seed_path,
     _org_seed_policy,
 )
+from pipeline.triton.remote_source_oracle import apply_remote_source_oracle, remote_source_enabled
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,6 +123,11 @@ def _org_compile_topk() -> int:
         return max(0, int(raw))
     except Exception:
         return 4
+
+
+def _org_ignore_diff_gate() -> bool:
+    raw = str(os.getenv("INTENTIR_ORG_IGNORE_DIFF_GATE", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _compile_check_id(candidate_line: str, *, idx: int) -> str:
@@ -329,13 +335,16 @@ def run_org_sidecar(
     static_ok = False
     if isinstance(report.get("static_validation"), dict):
         static_ok = bool((report.get("static_validation") or {}).get("ok"))
-    if (not diff_ok) or (not static_ok):
+    if ((not diff_ok) or (not static_ok)) and (not _org_ignore_diff_gate()):
         reason = f"skip_org: diff_ok={diff_ok} static_ok={static_ok}"
         org_report["skipped"] = True
         org_report["reason"] = reason
         if mode == "strict":
             raise RuntimeError(reason)
         return
+    if (not diff_ok) or (not static_ok):
+        org_report["diff_gate_overridden"] = True
+        org_report["diff_gate_status"] = {"diff_ok": diff_ok, "static_ok": static_ok}
 
     seed_policy = _org_seed_policy()
     if seed_policy not in {"auto", "force_llm", "force_cache"}:
@@ -381,6 +390,15 @@ def run_org_sidecar(
     ptx_facts: dict[str, Any] | None = None
     ttir_summary: dict[str, Any] | None = None
     if desc is not None:
+        if remote_source_enabled():
+            remote_source = apply_remote_source_oracle(
+                spec_name=str(spec_name),
+                out_dir=Path(out_dir),
+                desc=desc,
+                shape_bindings=shape_bindings,
+            )
+            if isinstance(remote_source, dict):
+                org_report["remote_source"] = dict(remote_source)
         build_ttir_summary = load_org_attr("org.facts.ttir", "build_ttir_summary")
         extract_ttgir_mechanism_facts = load_org_attr("org.facts.ttgir", "extract_ttgir_mechanism_facts")
         extract_ptx_mechanism_facts = load_org_attr("org.facts.ptx", "extract_ptx_mechanism_facts")
