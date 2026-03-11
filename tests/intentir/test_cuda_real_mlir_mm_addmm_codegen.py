@@ -117,7 +117,7 @@ def test_cuda_real_mlir_mm2d_lowering_uses_matmul_tile_v2(monkeypatch: pytest.Mo
     out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
     assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "matmul_tile_v2"
     assert "vector<4xf32>" in out.module_text
-    assert "llvm.intr.fma" in out.module_text
+    assert "math.fma" in out.module_text or "llvm.intr.fma" in out.module_text
     _verify_with_mlir_opt(out.module_text)
 
 

@@ -473,11 +473,77 @@ def _nvrtc_shim_include_dir() -> str | None:
     return str(d) if d.is_dir() else None
 
 
+def _normalize_nvrtc_arch(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return ""
+    if s.startswith("compute_"):
+        digits = "".join(ch for ch in s[len("compute_") :] if ch.isdigit())
+        return f"compute_{digits}" if digits else ""
+    if s.startswith("sm_"):
+        s = s[3:]
+    elif s.startswith("sm"):
+        s = s[2:]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return f"compute_{digits}" if digits else ""
+
+
+def _nvrtc_auto_compat_arch(major: int, minor: int) -> str:
+    """
+    Choose a conservative NVRTC target for very new GPUs.
+
+    Some local toolchains lag behind the newest SM versions (e.g. sm_120),
+    while the driver can still JIT older PTX targets (e.g. compute_90).
+    """
+    env_compat = _normalize_nvrtc_arch(os.getenv("INTENTIR_CUDA_NVRTC_COMPAT_ARCH", ""))
+    if env_compat:
+        return env_compat
+    mj = int(major)
+    mn = int(minor)
+    if mj >= 12:
+        return "compute_90"
+    if mj > 0:
+        return f"compute_{mj}{mn}"
+    return "compute_80"
+
+
+def _resolve_nvrtc_arch(torch: Any) -> str:
+    env_arch = _normalize_nvrtc_arch(os.getenv("INTENTIR_CUDA_NVRTC_ARCH", ""))
+    if env_arch:
+        return env_arch
+    env_sm = _normalize_nvrtc_arch(os.getenv("INTENTIR_CUDA_SM", ""))
+    if env_sm:
+        return env_sm
+    try:
+        major, minor = torch.cuda.get_device_capability()
+    except Exception:
+        major, minor = (0, 0)
+    return _nvrtc_auto_compat_arch(int(major), int(minor))
+
+
+def _normalize_extra_include_dirs(extra_include_dirs: Optional[Iterable[str | Path]]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for x in list(extra_include_dirs or []):
+        p = Path(str(x)).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        if not p.is_dir():
+            continue
+        s = str(p)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def _nvrtc_compile_ptx(
     *,
     cuda_src: str,
     prog_name: str,
     extra_cuda_cflags: Tuple[str, ...],
+    extra_include_dirs: Optional[Iterable[str | Path]] = None,
 ) -> bytes:
     """
     Compile CUDA device code to PTX via NVRTC (no nvcc / CUDA toolkit required).
@@ -507,11 +573,7 @@ def _nvrtc_compile_ptx(
             "or install `cuda-bindings` explicitly."
         ) from e
 
-    try:
-        major, minor = torch.cuda.get_device_capability()
-    except Exception:
-        major, minor = (0, 0)
-    arch = f"compute_{major}{minor}"
+    arch = _resolve_nvrtc_arch(torch)
 
     # NVRTC option support varies by version; keep the baseline flags minimal.
     opts: list[bytes] = [b"--std=c++17", f"--gpu-architecture={arch}".encode("utf-8")]
@@ -528,7 +590,13 @@ def _nvrtc_compile_ptx(
     # are not device-annotated and often fail under NVRTC's device compilation
     # mode. We provide a tiny shim (nvrtc_shim/) for the few std headers we use.
     include_dirs += [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs()]
+    include_dirs += _normalize_extra_include_dirs(extra_include_dirs)
+    seen_includes: set[str] = set()
     for inc in include_dirs:
+        s = str(inc).strip()
+        if not s or s in seen_includes:
+            continue
+        seen_includes.add(s)
         opts.append(f"--include-path={inc}".encode("utf-8"))
 
     # NVRTC runs in device compilation mode: strip host-only helpers that may be
@@ -1180,10 +1248,15 @@ def compile_cuda_extension(
         msg = str(e)
         if not allow_nvrtc:
             raise
-        if _has_working_nvcc():
-            raise
-        if "CUDA_HOME" not in msg and "nvcc" not in msg.lower():
-            # Don't mask unrelated failures; only fallback on missing-toolkit symptoms.
+        # If nvcc is unavailable, always try NVRTC fallback.
+        if not _has_working_nvcc():
+            import json  # noqa: PLC0415
+
+            return _load_nvrtc_cached(mod_name, kernel_name, cuda_src, json.dumps(io_spec, sort_keys=True), flags)
+        # Even when nvcc exists, allow fallback for common extension-toolchain issues.
+        lower_msg = msg.lower()
+        missing_so = _is_missing_extension_so_error(msg, mod_name)
+        if ("cuda_home" not in lower_msg) and ("nvcc" not in lower_msg) and ("ninja" not in lower_msg) and (not missing_so):
             raise
         import json  # noqa: PLC0415
 
@@ -1195,6 +1268,7 @@ def compile_cuda_src_to_ptx(
     kernel_name: str,
     cuda_src: str,
     extra_cuda_cflags: Optional[Iterable[str]] = None,
+    include_dirs: Optional[Iterable[str | Path]] = None,
 ) -> bytes:
     """
     Compile CUDA source to PTX bytes via NVRTC.
@@ -1204,6 +1278,7 @@ def compile_cuda_src_to_ptx(
         cuda_src=cuda_src,
         prog_name=f"{kernel_name}.cu",
         extra_cuda_cflags=flags,
+        extra_include_dirs=include_dirs,
     )
 
 
@@ -1306,9 +1381,19 @@ def run_cuda_kernel_io(
     out_set = {str(x) for x in output_names}
     bindings = _augment_scalar_bindings_from_io_spec(bindings=bindings, io_spec=io_spec)
 
+    def _tensor_alias_base(name: str) -> str:
+        n = str(name).strip()
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)__", n)
+        if m is not None:
+            base = str(m.group(1))
+            if base in tensors:
+                return base
+        return n
+
     # Build torch args in kernel param order.
     args: list[Any] = []
     outputs_torch: Dict[str, Any] = {}
+    inputs_torch: Dict[str, Any] = {}
     try:
         for name in arg_names:
             if name in tensors:
@@ -1324,17 +1409,25 @@ def run_cuda_kernel_io(
                     outputs_torch[name] = t
                     args.append(t)
                 else:
-                    if name in inputs_np:
-                        arr = np.asarray(inputs_np[name])
+                    base_name = _tensor_alias_base(name)
+                    if base_name in outputs_torch:
+                        args.append(outputs_torch[base_name])
+                    elif base_name in inputs_torch:
+                        args.append(inputs_torch[base_name])
+                    elif base_name in inputs_np:
+                        arr = np.asarray(inputs_np[base_name])
                         t = torch.from_numpy(arr).to(device=device)
                         if t.dtype != _dtype_to_torch(dt):
                             t = t.to(dtype=_dtype_to_torch(dt))
-                        args.append(t.contiguous())
+                        t = t.contiguous()
+                        inputs_torch[base_name] = t
+                        args.append(t)
                     else:
                         # Convenience: scalar-tensors (shape=[]) can be materialized from bindings.
                         # This matches the IntentIR convention of modeling scalar params as 0-d tensors.
-                        if shape_tpl == [] and name in bindings:
-                            val = bindings[name]
+                        if shape_tpl == [] and (name in bindings or base_name in bindings):
+                            key = name if name in bindings else base_name
+                            val = bindings[key]
                             if dt == "f32":
                                 t = torch.tensor(float(val), device=device, dtype=torch.float32)
                             else:

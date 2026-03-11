@@ -2231,6 +2231,15 @@ def _build_intentir_launch_fn(
     arg_names = [str(x) for x in arg_names]
     out_set = {str(x) for x in list(lowered.get("output_names") or ctx["outputs"])}
 
+    def _tensor_alias_base(name: str) -> str:
+        n = str(name).strip()
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)__", n)
+        if m is not None:
+            base = str(m.group(1))
+            if base in tensors:
+                return base
+        return n
+
     # Keep scalar launch arguments aligned with baseline artifact values when
     # those scalars are explicitly present as external inputs.
     for s_name in list(scalars.keys()):
@@ -2258,18 +2267,28 @@ def _build_intentir_launch_fn(
                 launch_tensors[name] = t
                 args.append(t)
             else:
-                if name not in inputs_np:
-                    if shape_tpl == [] and name in lowered_bindings:
-                        val = lowered_bindings[name]
+                base_name = _tensor_alias_base(name)
+                if base_name in launch_tensors:
+                    t = launch_tensors[base_name]
+                    launch_tensors[name] = t
+                    args.append(t)
+                    continue
+                input_key = base_name if base_name in inputs_np else name
+                if input_key not in inputs_np:
+                    if shape_tpl == [] and (name in lowered_bindings or base_name in lowered_bindings):
+                        key = name if name in lowered_bindings else base_name
+                        val = lowered_bindings[key]
                         t = torch.tensor(val, device=device, dtype=dt)
+                        launch_tensors[base_name] = t
                         launch_tensors[name] = t
                         args.append(t)
                         continue
                     raise RuntimeError(f"missing input for intentir launch arg {name}")
-                t = torch.as_tensor(inputs_np[name], device=device)
+                t = torch.as_tensor(inputs_np[input_key], device=device)
                 if t.dtype != dt:
                     t = t.to(dtype=dt)
                 t = t.contiguous()
+                launch_tensors[base_name] = t
                 launch_tensors[name] = t
                 args.append(t)
         elif name in scalars:

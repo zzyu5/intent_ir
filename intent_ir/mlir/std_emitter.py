@@ -91,10 +91,7 @@ def emit_std_mlir(
         lines.append("module {")
 
     lines.append(f"  func.func @{fn_sym}() {{")
-    lines.append("    %c0 = arith.constant 0 : i32")
-    lines.append("    %init = tensor.from_elements %c0 : tensor<1xi32>")
-    lines.append("    %t1 = linalg.fill ins(%c0 : i32) outs(%init : tensor<1xi32>) -> tensor<1xi32>")
-    lines.append("    return")
+    lines.append("    func.return")
     lines.append("  }")
 
     if include_json_payload:

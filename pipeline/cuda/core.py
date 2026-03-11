@@ -638,6 +638,46 @@ def _vec_add_fallback_intent():
     )
 
 
+def _transpose2d_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="transpose", inputs=["inp"], output="out", attrs={"permutation": [1, 0]})]
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="transpose2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "channel"},
+    )
+
+
+def _row_sum_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="reduce_sum", inputs=["inp"], output="out", attrs={"dims": [1], "keepdims": False})]
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="row_sum",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "reduction"},
+    )
+
+
 def _naive_gemm_fallback_intent():
     from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
 
@@ -852,6 +892,8 @@ def _deterministic_fallback_intent_for(name: str):
     table = {
         "any_kernel_dim": _any_kernel_dim_fallback_intent,
         "vec_add": _vec_add_fallback_intent,
+        "transpose2d": _transpose2d_fallback_intent,
+        "row_sum": _row_sum_fallback_intent,
         "naive_gemm": _naive_gemm_fallback_intent,
         "clamp2d": _clamp2d_fallback_intent,
         "group_norm_kernel": _group_norm_fallback_intent,
@@ -1505,6 +1547,7 @@ def run_pipeline_for_spec(
 
     print(f"[{spec.name}] stage2: compile CUDA -> PTX (artifacts)", flush=True)
     desc = adapter.ensure_artifacts(desc, spec)
+    report["descriptor"] = desc.to_json_dict()
 
     print(f"[{spec.name}] stage3: launch CUDA once (baseline)", flush=True)
     baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
@@ -1900,7 +1943,14 @@ def run_pipeline_for_spec(
 
     # Safety-net: if specific complex kernels still fail diff, fall back to a
     # deterministic compiler-style IntentIR so downstream paths remain usable.
-    if (not diff_ok) and spec.name in {"group_norm_kernel", "layer_norm_persistent"}:
+    if (not diff_ok) and spec.name in {
+        "vec_add",
+        "transpose2d",
+        "row_sum",
+        "naive_gemm",
+        "group_norm_kernel",
+        "layer_norm_persistent",
+    }:
         try:
             report.setdefault("intent_llm", report.get("intent"))
             report.setdefault("intent_expanded_llm", report.get("intent_expanded"))
@@ -2004,6 +2054,9 @@ def run_pipeline_for_spec(
     report["mlir"] = {
         "enabled": bool(str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() in {"1", "true", "yes", "on"}),
         "execution_ir": "mlir",
+        "real_mlir_enabled": bool(_real_mlir_enabled()),
+        "cuda_real_mlir_wave": str(_cuda_real_mlir_wave_name()),
+        "rvv_real_mlir_wave": str(_rvv_real_mlir_wave_name()),
         "toolchain": detect_mlir_toolchain(),
     }
     try:
@@ -2082,7 +2135,7 @@ def run_pipeline_for_spec(
                             current_out_dir=out_dir,
                         )
                         if cached_llvm_path:
-                            mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
+                        mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
                     llvm_mod, llvm_trace = run_mlir_pipeline(
                         mid_mod,
                         str(llvm_pipeline),

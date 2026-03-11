@@ -9,5 +9,12 @@ def test_rewrite_cuda_nv_exp2f_calls_replaces_callsite() -> None:
     mod = IntentMLIRModule(module_text=text, dialect_version="std_mlir_v1")
     out = rewrite_cuda_nv_exp2f_calls(mod)
     assert "llvm.call @__nv_exp2f" not in out.module_text
-    assert "llvm.intr.exp2(%arg0)" in out.module_text
+    assert "\"llvm.intr.exp2\"(%arg0)" in out.module_text
 
+
+def test_rewrite_cuda_nv_expf_calls_replaces_callsite() -> None:
+    text = """module {\n  llvm.func @__nv_expf(f32) -> f32\n  llvm.func @k(%arg0: f32) -> f32 {\n    %0 = llvm.call @__nv_expf(%arg0) : (f32) -> f32\n    llvm.return %0 : f32\n  }\n}\n"""
+    mod = IntentMLIRModule(module_text=text, dialect_version="std_mlir_v1")
+    out = rewrite_cuda_nv_exp2f_calls(mod)
+    assert "llvm.call @__nv_expf" not in out.module_text
+    assert "\"llvm.intr.exp\"(%arg0)" in out.module_text

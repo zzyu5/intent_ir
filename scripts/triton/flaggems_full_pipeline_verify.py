@@ -170,8 +170,24 @@ def main() -> None:
             print(s.name)
         return
 
-    wanted = set(args.kernel or [])
-    selected_specs = [spec for spec in specs if (not wanted or spec.name in wanted)]
+    wanted_list = [str(x) for x in list(args.kernel or []) if str(x).strip()]
+    if wanted_list:
+        # User explicitly requested kernels; allow selecting from the full coverage
+        # universe even when --suite=smoke (smoke is a small subset).
+        all_specs = list(
+            coverage_flaggems_kernel_specs(
+                flaggems_opset=str(args.flaggems_opset),
+                backend_target=str(args.backend_target),
+            )
+        )
+        by_name = {str(s.name): s for s in all_specs}
+        missing = [k for k in wanted_list if k not in by_name]
+        if missing:
+            print(f"Unknown kernel(s): {missing}", file=sys.stderr, flush=True)
+            raise SystemExit(2)
+        selected_specs = [by_name[k] for k in wanted_list]
+    else:
+        selected_specs = [spec for spec in specs]
     kernel_failures: list[str] = []
     total = len(selected_specs)
     _append_progress_row(

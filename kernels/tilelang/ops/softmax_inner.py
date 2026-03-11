@@ -17,7 +17,8 @@ def make_softmax_inner_prim_func(*, n: int = 16, threads: int = 128):
     ):
         with T.Kernel(M, threads=threads) as (pid_m,):
             row = T.alloc_fragment((N,), "float32")
-            T.copy(input_ptr[pid_m, 0], row)
+            for r in T.serial(N):
+                row[r] = input_ptr[pid_m, r]
 
             mx = T.alloc_fragment((1,), "float32")
             T.reduce_max(row, mx, dim=0)
@@ -34,7 +35,8 @@ def make_softmax_inner_prim_func(*, n: int = 16, threads: int = 128):
             out_row = T.alloc_fragment((N,), "float32")
             for r in T.serial(N):
                 out_row[r] = exp_row[r] / sm[0]
-            T.copy(out_row, output_ptr[pid_m, 0])
+            for r in T.serial(N):
+                output_ptr[pid_m, r] = out_row[r]
 
     return main
 

@@ -20,6 +20,7 @@ from intent_ir.ops import SUPPORTED_OPS, op_spec_for
 __all__ = [
     "IntentIRValidationError",
     "Dim",
+    "ControlRegion",
     "TensorLayout",
     "TensorType",
     "Op",
@@ -185,6 +186,9 @@ class TensorType:
     dtype: AllowedDType
     shape: List[Dim]
     layout: TensorLayout
+    view_of: str = ""
+    alias_group: str = ""
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -193,6 +197,19 @@ class Op:
     inputs: List[str]
     output: str
     attrs: Dict[str, Any] = field(default_factory=dict)
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ControlRegion:
+    id: str
+    kind: str
+    inputs: List[str] = field(default_factory=list)
+    outputs: List[str] = field(default_factory=list)
+    predicate: Optional[str] = None
+    path_id: Optional[str] = None
+    ops: List[Op] = field(default_factory=list)
+    regions: List["ControlRegion"] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -220,6 +237,7 @@ class IntentFunction:
     schedule: Optional[ScheduleSketch] = None
     meta: Dict[str, Any] = field(default_factory=dict)
     axis_roles: Dict[str, str] = field(default_factory=dict)
+    regions: List[ControlRegion] = field(default_factory=list)
 
     @classmethod
     def from_json_dict(cls, data: Dict[str, Any]) -> "IntentFunction":
@@ -249,6 +267,10 @@ class IntentFunction:
             parallel_axes = schedule.parallel_axes
 
         axis_roles = data.get("axis_roles") or {}
+        regions_json = data.get("regions") or []
+        if not isinstance(regions_json, list):
+            raise IntentIRValidationError("regions must be a list if provided")
+        regions = [_region_from_json(r, path=f"regions[{i}]") for i, r in enumerate(regions_json)]
         meta_raw = data.get("meta") or {}
         meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
 
@@ -267,6 +289,7 @@ class IntentFunction:
             schedule=schedule,
             meta=meta,
             axis_roles=axis_roles,
+            regions=regions,
         )
         inst.validate()
         return inst
@@ -287,6 +310,8 @@ class IntentFunction:
             result["schedule"] = _schedule_to_json(self.schedule)
         if self.axis_roles:
             result["axis_roles"] = dict(self.axis_roles)
+        if self.regions:
+            result["regions"] = [_region_to_json(r) for r in self.regions]
         if self.meta:
             result["meta"] = dict(self.meta)
         return result
@@ -300,6 +325,7 @@ class IntentFunction:
         if self.contract is not None:
             _validate_contract(self.contract)
         _validate_parallel_axes(self.parallel_axes, self.tensors)
+        _validate_regions(self.regions, self.tensors)
         if self.schedule:
             _validate_schedule(self.schedule)
             if self.schedule.parallel_axes and self.schedule.parallel_axes != self.parallel_axes:
@@ -348,15 +374,42 @@ def _tensor_from_json(name: str, data: Dict[str, Any]) -> TensorType:
     shape = [parse_dim(d) for d in shape_raw]
     layout_raw = data.get("layout", "row_major")
     layout = parse_layout(layout_raw)
-    return TensorType(dtype=dtype, shape=shape, layout=layout)
+    view_of = data.get("view_of", "")
+    if view_of is None:
+        view_of = ""
+    if not isinstance(view_of, str):
+        raise IntentIRValidationError(f"tensors.{name}.view_of must be a string when provided")
+    alias_group = data.get("alias_group", "")
+    if alias_group is None:
+        alias_group = ""
+    if not isinstance(alias_group, str):
+        raise IntentIRValidationError(f"tensors.{name}.alias_group must be a string when provided")
+    meta_raw = data.get("meta") or {}
+    if not isinstance(meta_raw, dict):
+        raise IntentIRValidationError(f"tensors.{name}.meta must be an object when provided")
+    return TensorType(
+        dtype=dtype,
+        shape=shape,
+        layout=layout,
+        view_of=str(view_of),
+        alias_group=str(alias_group),
+        meta=dict(meta_raw),
+    )
 
 
 def _tensor_to_json(t: TensorType) -> Dict[str, Any]:
-    return {
+    data = {
         "dtype": t.dtype,
         "shape": [d.value for d in t.shape],
         "layout": _layout_to_json(t.layout),
     }
+    if t.view_of:
+        data["view_of"] = str(t.view_of)
+    if t.alias_group:
+        data["alias_group"] = str(t.alias_group)
+    if t.meta:
+        data["meta"] = dict(t.meta)
+    return data
 
 
 def _layout_to_json(layout: TensorLayout) -> Any:
@@ -400,6 +453,67 @@ def _op_to_json(op: Op) -> Dict[str, Any]:
         data["attrs"] = op.attrs
     if op.meta:
         data["meta"] = op.meta
+    return data
+
+
+def _region_from_json(data: Dict[str, Any], *, path: str) -> ControlRegion:
+    if not isinstance(data, dict):
+        raise IntentIRValidationError(f"{path} must be an object")
+    region_id = data.get("id")
+    kind = data.get("kind")
+    if not isinstance(region_id, str) or not region_id.strip():
+        raise IntentIRValidationError(f"{path}.id must be a non-empty string")
+    if not isinstance(kind, str) or not kind.strip():
+        raise IntentIRValidationError(f"{path}.kind must be a non-empty string")
+    inputs = data.get("inputs") or []
+    outputs = data.get("outputs") or []
+    if not isinstance(inputs, list) or not all(isinstance(x, str) for x in inputs):
+        raise IntentIRValidationError(f"{path}.inputs must be a list[str]")
+    if not isinstance(outputs, list) or not all(isinstance(x, str) for x in outputs):
+        raise IntentIRValidationError(f"{path}.outputs must be a list[str]")
+    predicate = data.get("predicate")
+    if predicate is not None and not isinstance(predicate, str):
+        raise IntentIRValidationError(f"{path}.predicate must be string when provided")
+    path_id = data.get("path_id")
+    if path_id is not None and not isinstance(path_id, str):
+        raise IntentIRValidationError(f"{path}.path_id must be string when provided")
+    ops_json = data.get("ops") or []
+    if not isinstance(ops_json, list):
+        raise IntentIRValidationError(f"{path}.ops must be a list")
+    regions_json = data.get("regions") or []
+    if not isinstance(regions_json, list):
+        raise IntentIRValidationError(f"{path}.regions must be a list")
+    meta = data.get("meta") or {}
+    if not isinstance(meta, dict):
+        raise IntentIRValidationError(f"{path}.meta must be an object")
+    return ControlRegion(
+        id=str(region_id),
+        kind=str(kind),
+        inputs=[str(x) for x in inputs],
+        outputs=[str(x) for x in outputs],
+        predicate=(str(predicate) if predicate is not None else None),
+        path_id=(str(path_id) if path_id is not None else None),
+        ops=[_op_from_json(op) for op in ops_json],
+        regions=[_region_from_json(region, path=f"{path}.regions[{i}]") for i, region in enumerate(regions_json)],
+        meta=dict(meta),
+    )
+
+
+def _region_to_json(region: ControlRegion) -> Dict[str, Any]:
+    data: Dict[str, Any] = {
+        "id": str(region.id),
+        "kind": str(region.kind),
+        "inputs": list(region.inputs),
+        "outputs": list(region.outputs),
+        "ops": [_op_to_json(op) for op in region.ops],
+        "regions": [_region_to_json(r) for r in region.regions],
+    }
+    if region.predicate is not None:
+        data["predicate"] = str(region.predicate)
+    if region.path_id is not None:
+        data["path_id"] = str(region.path_id)
+    if region.meta:
+        data["meta"] = dict(region.meta)
     return data
 
 
@@ -464,6 +578,12 @@ def _validate_tensors(tensors: Dict[str, TensorType]) -> None:
                 raise IntentIRValidationError(
                     f"tensors.{name}.layout.params must be object for custom layout"
                 )
+        if t.view_of and t.view_of not in tensors:
+            raise IntentIRValidationError(f"tensors.{name}.view_of unknown tensor ref: {t.view_of}")
+        if not isinstance(t.alias_group, str):
+            raise IntentIRValidationError(f"tensors.{name}.alias_group must be a string")
+        if not isinstance(t.meta, dict):
+            raise IntentIRValidationError(f"tensors.{name}.meta must be an object")
 
 
 def _validate_axis_roles(axis_roles: Dict[str, str], tensors: Dict[str, TensorType], parallel_axes: List[str]) -> None:
@@ -1344,3 +1464,37 @@ def _validate_function_meta(meta: Dict[str, Any]) -> None:
         raise IntentIRValidationError("meta.capability_state must be string when provided")
     if "backend_target" in meta and not isinstance(meta.get("backend_target"), str):
         raise IntentIRValidationError("meta.backend_target must be string when provided")
+
+
+def _validate_regions(regions: List[ControlRegion], tensors: Dict[str, TensorType]) -> None:
+    if not isinstance(regions, list):
+        raise IntentIRValidationError("regions must be a list")
+    seen: set[str] = set()
+    allowed_kinds = {"region", "if", "then", "else", "merge"}
+
+    def _walk(items: List[ControlRegion], *, path: str) -> None:
+        for idx, region in enumerate(items):
+            rpath = f"{path}[{idx}]"
+            if not isinstance(region, ControlRegion):
+                raise IntentIRValidationError(f"{rpath} must be a ControlRegion")
+            if not region.id.strip():
+                raise IntentIRValidationError(f"{rpath}.id must be non-empty")
+            if region.id in seen:
+                raise IntentIRValidationError(f"duplicate region id: {region.id}")
+            seen.add(region.id)
+            if region.kind not in allowed_kinds:
+                raise IntentIRValidationError(f"{rpath}.kind unsupported: {region.kind}")
+            if region.predicate is not None and not isinstance(region.predicate, str):
+                raise IntentIRValidationError(f"{rpath}.predicate must be string when provided")
+            if region.path_id is not None and not isinstance(region.path_id, str):
+                raise IntentIRValidationError(f"{rpath}.path_id must be string when provided")
+            if not isinstance(region.meta, dict):
+                raise IntentIRValidationError(f"{rpath}.meta must be an object")
+            if region.ops:
+                _validate_ops(region.ops, tensors)
+                _validate_outputs(region.outputs, tensors, region.ops)
+            elif region.outputs:
+                raise IntentIRValidationError(f"{rpath}.outputs requires non-empty ops")
+            _walk(region.regions, path=f"{rpath}.regions")
+
+    _walk(regions, path="regions")

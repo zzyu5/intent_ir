@@ -25,6 +25,8 @@ class KernelArtifactBundle:
 
     ttir_text: Optional[str] = None
     ttir_path: Optional[str] = None
+    ttgir_text: Optional[str] = None
+    ttgir_path: Optional[str] = None
     llvm_ir_text: Optional[str] = None
     ptx_text: Optional[str] = None
     extra: Dict[str, Any] = field(default_factory=dict)

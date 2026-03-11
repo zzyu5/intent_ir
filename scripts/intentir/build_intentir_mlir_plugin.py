@@ -13,14 +13,20 @@ import argparse
 import json
 import os
 import shutil
+import sys
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from intent_ir.mlir.toolchain import detect_mlir_toolchain
+
+
 DEFAULT_TOOLCHAIN_PREFIX = ROOT / "artifacts" / "toolchains" / "mlir-current"
 PLUGIN_SRC = ROOT / "compiler" / "intentir_mlir_plugin"
 DEFAULT_OUT_DIR = ROOT / "artifacts" / "mlir_plugins" / "intentir"
@@ -78,10 +84,26 @@ def _resolve_generator(raw: str) -> str:
         return "Unix Makefiles"
     return generator
 
+def _resolve_default_toolchain_prefix() -> Path:
+    report = detect_mlir_toolchain()
+    selected = str(report.get("selected_prefix") or "").strip()
+    if selected:
+        path = Path(selected)
+        if path.is_dir():
+            return path
+    llc = dict(((report.get("tools") or {}).get("llc") or {}))
+    llc_path = str(llc.get("path") or "").strip()
+    if llc_path:
+        p = Path(llc_path)
+        for candidate in (p.parent.parent, p.parent.parent.parent):
+            if (candidate / "lib" / "cmake" / "mlir").is_dir() and (candidate / "lib" / "cmake" / "llvm").is_dir():
+                return candidate
+    return DEFAULT_TOOLCHAIN_PREFIX
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--toolchain-prefix", type=Path, default=DEFAULT_TOOLCHAIN_PREFIX)
+    ap.add_argument("--toolchain-prefix", type=Path, default=None)
     ap.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--build-dir", type=Path, default=DEFAULT_BUILD_DIR)
     ap.add_argument("--generator", default="Ninja")
@@ -90,7 +112,7 @@ def main() -> None:
     ap.add_argument("--clean", action=argparse.BooleanOptionalAction, default=False)
     args = ap.parse_args()
 
-    toolchain = Path(args.toolchain_prefix)
+    toolchain = Path(args.toolchain_prefix) if args.toolchain_prefix is not None else _resolve_default_toolchain_prefix()
     if not toolchain.is_dir():
         raise SystemExit(f"toolchain prefix not found: {toolchain}")
     if not PLUGIN_SRC.is_dir():

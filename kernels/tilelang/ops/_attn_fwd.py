@@ -46,7 +46,8 @@ def make_attn_fwd_prim_func(
             pid_kvh = pid_h % KV_NUMHEAD
 
             q_row = T.alloc_fragment((HEAD_DIM,), "float32")
-            T.copy(Q[pid_z, pid_h, pid_q, 0], q_row)
+            for k in T.serial(HEAD_DIM):
+                q_row[k] = Q[pid_z, pid_h, pid_q, k]
 
             scores = T.alloc_fragment((KV_CTX,), "float32")
             tmp = T.alloc_fragment((HEAD_DIM,), "float32")
@@ -80,7 +81,8 @@ def make_attn_fwd_prim_func(
                     tmp2[j] = probs[j] * V[pid_z, pid_kvh, j, d]
                 T.reduce_sum(tmp2, acc2, dim=0)
                 out_row[d] = acc2[0]
-            T.copy(out_row, Out[pid_z, pid_h, pid_q, 0])
+            for d in T.serial(HEAD_DIM):
+                Out[pid_z, pid_h, pid_q, d] = out_row[d]
 
     return main
 

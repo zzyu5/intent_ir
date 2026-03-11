@@ -168,6 +168,43 @@ def _parse_candidate(raw: str) -> tuple[str, dict[str, int]]:
     return kernel_kind, bindings
 
 
+def _read_candidate_file(path: str | Path) -> list[tuple[int, str]]:
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(str(p))
+    lines = p.read_text(encoding="utf-8").splitlines()
+    out: list[tuple[int, str]] = []
+    for ln, raw in enumerate(lines, start=1):
+        s = str(raw).strip()
+        if not s or s.startswith("#"):
+            continue
+        if "#" in s:
+            s = s.split("#", 1)[0].strip()
+            if not s:
+                continue
+        out.append((int(ln), s))
+    return out
+
+
+def _parse_candidate_list(
+    raw_candidates: Sequence[str] | None,
+    candidate_files: Sequence[str] | None,
+) -> list[tuple[str, dict[str, int]]]:
+    out: list[tuple[str, dict[str, int]]] = []
+    for raw in list(raw_candidates or []):
+        out.append(_parse_candidate(str(raw)))
+    for f in list(candidate_files or []):
+        path = str(f).strip()
+        if not path:
+            continue
+        for ln, cand in _read_candidate_file(path):
+            try:
+                out.append(_parse_candidate(cand))
+            except Exception as e:  # noqa: BLE001
+                raise ValueError(f"invalid candidate in {path}:{ln}: {e}") from e
+    return out
+
+
 def _candidate_id(kernel_kind: str, bindings: dict[str, int], *, idx: int) -> str:
     flat = ",".join(f"{k}={v}" for k, v in sorted(bindings.items()))
     key = f"{kernel_kind}|{flat}"
@@ -300,12 +337,14 @@ def _cmd_tune(args: argparse.Namespace) -> int:
     if not wave:
         raise SystemExit("missing INTENTIR_CUDA_REAL_MLIR_WAVE and no wave files found under workflow/flaggems/state/")
 
-    raw_candidates = list(args.candidate or [])
-    if not raw_candidates:
-        raise SystemExit("--candidate is required (repeatable)")
-    candidates: list[tuple[str, dict[str, int]]] = []
-    for raw in raw_candidates:
-        candidates.append(_parse_candidate(str(raw)))
+    try:
+        candidates = _parse_candidate_list(getattr(args, "candidate", []), getattr(args, "candidate_file", []))
+    except FileNotFoundError as e:
+        raise SystemExit(f"--candidate-file not found: {e}") from e
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    if not candidates:
+        raise SystemExit("--candidate or --candidate-file is required")
 
     base_env = {
         "INTENTIR_REAL_MLIR": "1",
@@ -1436,6 +1475,12 @@ def _build_parser() -> argparse.ArgumentParser:
     tune.add_argument("--kernel", required=True)
     tune.add_argument("--kernel-source", choices=["triton_native", "coverage_batches"], default="triton_native")
     tune.add_argument("--candidate", action="append", default=[], help="Candidate: KIND[:K=V,A=B] (repeatable)")
+    tune.add_argument(
+        "--candidate-file",
+        action="append",
+        default=[],
+        help="Read candidates from file (one per line; blank lines and '# ...' comments ignored). Repeatable.",
+    )
     tune.add_argument("--arch", default="", help="Optional arch key override (e.g. sm120). Defaults to detect.")
     tune.add_argument("--out-root", default=None)
     tune.add_argument("--cases-limit", type=int, default=1)

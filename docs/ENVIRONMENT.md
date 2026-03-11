@@ -25,6 +25,16 @@ The pipeline uses Triton dump env vars:
 
 These are set automatically by `pipeline/triton/core.py`.
 
+## Strict LLM-only mode (default)
+
+IntentIR now defaults to strict LLM/cache execution:
+
+- `INTENTIR_STRICT_LLM_ONLY=1` (default): force LLM/cache path and disable deterministic/runtime heuristic fallback.
+  If LLM output or runtime compile is wrong, the pipeline fails directly.
+- `INTENTIR_STRICT_LLM_ONLY=0`: allow fallback behavior (deterministic/provider intent or numpy/runtime fallback) for debugging.
+
+Recommended policy for real verification/signoff is to keep `INTENTIR_STRICT_LLM_ONLY=1`.
+
 ## Remote RVV execution (Task6)
 
 To run `scripts/rvv_remote_run.py` / `scripts/rvv_remote_suite.py` you need:

@@ -15,12 +15,19 @@ from intent_ir.llm import DEFAULT_MODEL, extract_json_object
 SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
 @triton.jit kernel body, produce Intent-IR v1.1 candidate JSON. Hard rules:
 - Emit JSON object with: name, kernel_type, tensors, ops, outputs,
-  parallel_axes, schedule(optional), axis_roles(optional), meta(optional).
+  parallel_axes, schedule(optional), axis_roles(optional), regions(optional), meta(optional).
 - tensors must be an object {name: {...}}, NOT a list. Each tensor has dtype in
   {f16,bf16,f32,i32,...}, shape list of symbols/ints, layout row_major unless explicit.
   IMPORTANT: keep argument tensor shapes as declared in the kernel signature; if you need
   a grouped/view shape (e.g., [num_groups, group_size, HW]) insert explicit reshape ops
   instead of redefining the original tensor shape.
+- If the Triton kernel operates on a physical storage view of a public logical tensor
+  (for example an outer wrapper transposes [B,H,S,D] into a kernel-local [B,S,H,D]),
+  keep the public tensor in its logical shape and express the physical storage view with
+  explicit transpose/layout_cast ops plus tensor metadata (`view_of`, `alias_group`, `meta`).
+- When the source contains a data-dependent early return / branch, emit top-level `regions`
+  that describe the branch topology. Each region must have: id, kind, inputs, outputs,
+  predicate, path_id, ops, regions(optional), meta(optional).
 - Use the standard op set (primitives):
   - numeric: add/sub/mul/div/max/min/exp/relu/rsqrt/abs/floor
   - compare/bool: ne/lt/le/gt/ge/and/or/not/where
@@ -68,6 +75,10 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
   - warp: warp(src, offset) -> out, where src/out are int8 [C,H,W], offset is int16 [H,W] packing Q8.8 (high byte int part, low byte signed frac). Follow the kernel's int8 index arithmetic.
   - rope: rope(input, cos, sin) -> output, where input/output are f32 [SEQ_LEN,BATCH_NUM,HEAD_NUM,HEAD_DIM] and cos/sin are f32 [SEQ_LEN,HEAD_DIM/2].
     Do NOT use identity with slice/assign_slice to model RoPE; those shorthands are unsupported. Use the semantic rope op.
+- IMPORTANT RoPE / view-sensitive kernels:
+  - If the benchmark/public API uses logical tensors and the Triton kernel uses a transposed physical view,
+    model both. Keep public tensors with logical shape, create explicit transpose ops for the physical view,
+    and use tensor metadata to preserve the alias/view relation.
 - IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW
   (mean = sum/num_elements; var = sumsq/num_elements; rstd = rsqrt(var+eps)). Use reduce_sum(attrs.scale=...) or explicit div ops.
 - IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N).
@@ -88,6 +99,8 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
   such as `store_C`, `load_A`, or `tmp_store_*`. Outputs must use the declared tensor names.
 - axis_roles: {axis: role} with role in {spatial,reduction,batch,channel}; do NOT invert.
 - parallel_axes: list of axis strings, and every axis must appear in some tensor shape; do not invent axes.
+- regions are control-topology metadata, not duplicate top-level ops. Use them to capture path structure when the kernel
+  has data-dependent control flow; keep the top-level ops as the full semantic dataflow.
 - schedule may include tile_m/tile_n/tile_k/vec_width/axis_bindings/vec_axis/parallel_axes; if unknown, omit rather than guess.
 - For optional tensors, either mark optional:true or omit consistently.
 - For complex kernels (e.g., bicubic upsample), prefer a semantic macro op instead of a huge low-level graph:
@@ -101,7 +114,7 @@ Return a single JSON object with no prose and no code fences."""
 SYSTEM_PROMPT_COMPACT = """You are an expert compiler engineer. Convert the given
 Triton @triton.jit kernel into ONE Intent-IR v1.1 JSON object (no prose, no code fences).
 
-Required keys: name, kernel_type, tensors, ops, outputs, parallel_axes (schedule/axis_roles/meta optional).
+Required keys: name, kernel_type, tensors, ops, outputs, parallel_axes (schedule/axis_roles/regions/meta optional).
 Rules:
 - tensors is an object {name:{dtype,shape,layout}}, NOT a list.
 - outputs is a list; every output must be declared in tensors and produced by some op.
@@ -115,6 +128,9 @@ Rules:
   macro: upsample_bicubic2d_aa (only when semantically appropriate).
 - Do NOT invent new shape symbols; use only symbols from the kernel signature/evidence.
 - Keep original input view shapes; use reshape ops for any grouped/view computation (e.g., groupnorm).
+- If the kernel uses a transposed physical storage view, keep the logical/public tensor shape and express the
+  physical view explicitly with transpose ops plus tensor metadata (`view_of`, `alias_group`, `meta`).
+- If the kernel has a data-dependent branch/early-return, emit `regions` describing the path structure.
 - Scalars/constants should be explicit (`const` or scalar tensors from signature).
 """
 

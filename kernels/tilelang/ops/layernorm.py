@@ -19,11 +19,14 @@ def make_layer_norm_persistent_prim_func(*, n: int = 16, threads: int = 128):
         eps = T.float32(1e-5)
         with T.Kernel(M, threads=threads) as (pid,):
             row = T.alloc_fragment((N,), "float32")
-            T.copy(in_ptr[pid, 0], row)
+            for r in T.serial(N):
+                row[r] = in_ptr[pid, r]
             w = T.alloc_fragment((N,), "float32")
-            T.copy(weight_ptr[0], w)
+            for r in T.serial(N):
+                w[r] = weight_ptr[r]
             b = T.alloc_fragment((N,), "float32")
-            T.copy(bias_ptr[0], b)
+            for r in T.serial(N):
+                b[r] = bias_ptr[r]
 
             s = T.alloc_fragment((1,), "float32")
             T.reduce_sum(row, s, dim=0)
@@ -46,7 +49,8 @@ def make_layer_norm_persistent_prim_func(*, n: int = 16, threads: int = 128):
             out_row = T.alloc_fragment((N,), "float32")
             for r in T.serial(N):
                 out_row[r] = diff[r] * rstd * w[r] + b[r]
-            T.copy(out_row, out_ptr[pid, 0])
+            for r in T.serial(N):
+                out_ptr[pid, r] = out_row[r]
 
     return main
 

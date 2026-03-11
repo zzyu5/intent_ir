@@ -1957,6 +1957,18 @@ def _ensure_interface_symbols_and_roles_tilelang(intent: IntentFunction, spec: K
     except Exception:
         pass
 
+    # Align public outputs to deterministic interface so diff/ABI remains stable
+    # even when LLM emits extra auxiliary outputs.
+    try:
+        tmpl_outputs = [str(x) for x in list(getattr(tmpl, "outputs", []) or [])]
+        if tmpl_outputs:
+            intent.outputs = list(tmpl_outputs)
+            for name in tmpl_outputs:
+                if name not in intent.tensors and name in tmpl.tensors:
+                    intent.tensors[name] = tmpl.tensors[name]
+    except Exception:
+        pass
+
 
 def _buffer_param_names(prim_func) -> List[str]:
     try:
@@ -2431,15 +2443,37 @@ def run_pipeline_for_spec(
     desc = adapter.ensure_artifacts(desc, spec)
     print(f"[{spec.name}] stage3: launch tilelang once (baseline)", flush=True)
     baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-    use_rt_baseline = bool(use_tilelang_runtime) and bool(getattr(spec, "runtime_ref_ok", True))
-    baseline_io_raw = (_run_tilelang_ref(spec, baseline_case) if use_rt_baseline else spec.runner(baseline_case))
+    strict_llm_only = str(os.getenv("INTENTIR_STRICT_LLM_ONLY", "1")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    runtime_requested = bool(use_tilelang_runtime) and bool(getattr(spec, "runtime_ref_ok", True))
+    runtime_available = bool(runtime_requested)
+    runtime_fallback_detail = ""
+    baseline_source = "tilelang_runtime" if runtime_requested else "numpy_reference"
+    if runtime_requested:
+        try:
+            baseline_io_raw = _run_tilelang_ref(spec, baseline_case)
+        except Exception as e:
+            if strict_llm_only:
+                raise
+            runtime_available = False
+            baseline_source = "numpy_reference_fallback"
+            runtime_fallback_detail = f"{type(e).__name__}: {e}"
+            baseline_io_raw = spec.runner(baseline_case)
+    else:
+        baseline_io_raw = spec.runner(baseline_case)
     report["baseline"] = {
         "shapes": dict(baseline_case.shapes),
         "seed": int(baseline_case.seed),
         "npz_path": None,
         "keys": sorted(list(baseline_io_raw.keys())),
-        "source": ("tilelang_runtime" if use_rt_baseline else "numpy_reference"),
+        "source": baseline_source,
     }
+    report["runtime_fallback"] = bool(runtime_requested and not runtime_available)
+    report["runtime_fallback_detail"] = str(runtime_fallback_detail)
 
     print(f"[{spec.name}] stage4: Task4 facts/constraints/certificate", flush=True)
     facts = adapter.extract_facts(desc)
@@ -2547,8 +2581,25 @@ def run_pipeline_for_spec(
     # 3) Stage B: cases + diff
     print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
-    use_rt_ref = bool(use_tilelang_runtime) and bool(getattr(spec, "runtime_ref_ok", True)) and (contract.level != "OUT_OF_SCOPE")
-    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
+    use_rt_ref = bool(runtime_available) and (contract.level != "OUT_OF_SCOPE")
+
+    def run_ref_fn(c: TestCase) -> Dict[str, np.ndarray]:
+        nonlocal runtime_available, baseline_source, runtime_fallback_detail
+        if bool(runtime_available) and (contract.level != "OUT_OF_SCOPE"):
+            try:
+                return _run_tilelang_ref(spec, c)
+            except Exception as e:
+                if strict_llm_only:
+                    raise
+                runtime_available = False
+                detail = f"{type(e).__name__}: {e}"
+                if not runtime_fallback_detail:
+                    runtime_fallback_detail = detail
+                if baseline_source == "tilelang_runtime":
+                    baseline_source = "mixed_runtime_fallback"
+                else:
+                    baseline_source = "numpy_reference_fallback"
+        return spec.runner(c)
     tile_hints: List[int] = []
     try:
         th = (cert_v2.schedule_hints or {}).get("tile_hints")
@@ -2842,8 +2893,7 @@ def run_pipeline_for_spec(
 
     # Persist baseline IO for Task6 tools (remote RVV / backend codegen smoke).
     try:
-        baseline_source = "tilelang_runtime" if use_rt_ref else "numpy_reference"
-        baseline_io = dict(baseline_io_raw) if use_rt_ref else dict(spec.runner(baseline_case))
+        baseline_io = dict(baseline_io_raw)
         try:
             from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
 
@@ -2878,9 +2928,15 @@ def run_pipeline_for_spec(
     except Exception as e:
         report["baseline"] = {"error": f"{type(e).__name__}: {e}"}
 
+    report["runtime_fallback"] = bool(runtime_requested and (not runtime_available))
+    report["runtime_fallback_detail"] = str(runtime_fallback_detail)
+
     report["mlir"] = {
         "enabled": str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() not in {"0", "false", "no", "off"},
         "execution_ir": "mlir",
+        "real_mlir_enabled": bool(_real_mlir_enabled()),
+        "cuda_real_mlir_wave": str(_cuda_real_mlir_wave_name()),
+        "rvv_real_mlir_wave": str(_rvv_real_mlir_wave_name()),
         "toolchain": detect_mlir_toolchain(),
     }
     try:

@@ -97,3 +97,17 @@ def test_cuda_real_mlir_attention_emits_shuffle_and_no_barrier(
     assert "gpu.barrier" not in out.module_text
     assert "gpu.shuffle xor" in out.module_text
     _verify_with_mlir_opt(out.module_text)
+
+
+def test_cuda_real_mlir_flash_attention2d_v6_emits_legacy_assume_alignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    monkeypatch.delenv("INTENTIR_CUDA_REAL_MLIR_ATTN_V1", raising=False)
+
+    intent = _flash_attention2d_intent()
+    mod = to_mlir(intent)
+    mod.meta["shape_bindings"] = {"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64}
+    mod.meta["intentir_kernel_kind_override"] = "attn2d_causal_softmax_v6"
+    out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "attn2d_causal_softmax_v6"
+    assert "memref.assume_alignment" in out.module_text
+    _verify_with_mlir_opt(out.module_text)

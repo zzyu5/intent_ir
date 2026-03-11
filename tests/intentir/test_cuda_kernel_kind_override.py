@@ -66,6 +66,51 @@ def _ai_bench_matmul_intent() -> IntentFunction:
     )
 
 
+def _softmax_inner_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "softmax_inner",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "maxv": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
+                "shifted": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "expv": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sumv": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_max", "inputs": ["input"], "output": "maxv", "attrs": {"dims": [1]}},
+                {"op": "sub", "inputs": ["input", "maxv"], "output": "shifted", "attrs": {}},
+                {"op": "exp", "inputs": ["shifted"], "output": "expv", "attrs": {}},
+                {"op": "reduce_sum", "inputs": ["expv"], "output": "sumv", "attrs": {"dims": [1]}},
+                {"op": "div", "inputs": ["expv", "sumv"], "output": "output", "attrs": {}},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _masked_softmax2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "masked_softmax2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "i32", "shape": ["N"], "layout": "row_major"},
+                "maxv": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
+                "sumv": {"dtype": "f32", "shape": ["M", 1], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_max", "inputs": ["inp"], "output": "maxv", "attrs": {"dims": [1]}},
+                {"op": "reduce_sum", "inputs": ["inp"], "output": "sumv", "attrs": {"dims": [1]}},
+                {"op": "identity", "inputs": ["inp"], "output": "out", "attrs": {}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def test_cuda_kernel_kind_override_attn_fwd_forces_v2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
     monkeypatch.delenv("INTENTIR_CUDA_REAL_MLIR_ATTN_FWD_V1", raising=False)
@@ -97,6 +142,17 @@ def test_cuda_kernel_kind_override_matmul_forces_v1(monkeypatch: pytest.MonkeyPa
     _verify_with_mlir_opt(out.module_text)
 
 
+def test_cuda_kernel_kind_override_softmax_inner_triton(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
+    intent = _softmax_inner_intent()
+    mod = to_mlir(intent)
+    mod.meta["shape_bindings"] = {"M": 4, "N": 64, "SOFTMAX_BLOCK_THREADS": 64}
+    mod.meta["intentir_kernel_kind_override"] = "row_softmax_axis1_triton_v1"
+    out = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
+    assert str(out.meta.get("cuda_real_mlir_kernel_kind") or "") == "row_softmax_axis1_triton_v1"
+    assert "vector.from_elements" in out.module_text
+
+
 def test_cuda_kernel_kind_override_rejects_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INTENTIR_REAL_MLIR", "1")
 
@@ -107,4 +163,3 @@ def test_cuda_kernel_kind_override_rejects_invalid(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(RuntimeError, match="invalid intentir_kernel_kind_override"):
         _ = lower_intent_to_cuda_gpu_kernel(mod, backend="cuda")
-

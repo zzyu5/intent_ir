@@ -15,7 +15,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 import torch
@@ -98,6 +98,167 @@ def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent
     return _LLM_HUB.lift(desc, feedback=list(feedback or []))
 
 
+def _detect_cuda_arch() -> str:
+    def _normalize_cuda_arch(raw: str) -> str:
+        s = str(raw or "").strip().lower()
+        if not s:
+            return ""
+        if s.isdigit():
+            return f"sm{s}"
+        if s.startswith("sm_"):
+            s = s[3:]
+        elif s.startswith("sm"):
+            s = s[2:]
+        digits = "".join(ch for ch in s if ch.isdigit())
+        return f"sm{digits}" if digits else ""
+
+    env = _normalize_cuda_arch(os.getenv("INTENTIR_CUDA_SM", ""))
+    if env:
+        return env
+    try:  # pragma: no cover - depends on CUDA env
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
+                return f"sm{int(major)}{int(minor)}"
+    except Exception:
+        pass
+    return ""
+
+
+def _candidate_line(kernel_kind: str, bindings: Mapping[str, int] | None) -> str:
+    kk = str(kernel_kind).strip()
+    flat = ",".join(f"{k}={int(v)}" for k, v in sorted((dict(bindings or {})).items()))
+    return f"{kk}:{flat}" if flat else kk
+
+
+def _normalize_cuda_arch_key(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return ""
+    if s.isdigit():
+        return f"sm{str(s)}"
+    if s.startswith("sm_"):
+        s = s[3:]
+    elif s.startswith("sm"):
+        s = s[2:]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return f"sm{digits}" if digits else ""
+
+
+def _score_candidate_against_oracle(
+    cand_kind: str,
+    cand_bindings: Mapping[str, int] | None,
+    *,
+    oracle_kind: str,
+    oracle_bindings: Mapping[str, int],
+    consider_keys: set[str],
+) -> tuple[int, int, int]:
+    """
+    Return a lexicographic score tuple (mismatch, kind_mismatch, -match_count).
+    Smaller is better.
+    """
+
+    kind = str(cand_kind or "").strip()
+    bindings = dict(cand_bindings or {})
+    ok_kind = bool(oracle_kind and kind == oracle_kind)
+
+    match_count = 0
+    mismatch = False
+    for k in consider_keys:
+        if k not in bindings:
+            continue
+        v = int(bindings[k])
+        if int(oracle_bindings.get(k)) == v:
+            match_count += 1
+        else:
+            mismatch = True
+
+    return (1 if mismatch else 0, 0 if ok_kind else 1, -int(match_count))
+
+
+def _apply_source_oracle_ordering(plan, *, oracle: Mapping[str, object], budget: int) -> None:
+    try:
+        oracle_kind = str(oracle.get("kernel_kind") or "").strip()
+        oracle_bindings_raw = oracle.get("bindings")
+        oracle_bindings: dict[str, int] = {}
+        if isinstance(oracle_bindings_raw, Mapping):
+            for k, v in dict(oracle_bindings_raw).items():
+                key = str(k).strip()
+                if not key:
+                    continue
+                try:
+                    oracle_bindings[key] = int(v)
+                except Exception:
+                    continue
+
+        candidates = list(getattr(plan, "candidates", []) or [])
+        if not candidates or (not oracle_kind and not oracle_bindings):
+            return
+
+        # Only consider keys that exist in the candidate space, to avoid spurious mismatches.
+        consider_keys: set[str] = set()
+        for c in candidates:
+            for k in dict(getattr(c, "bindings", {}) or {}).keys():
+                kk = str(k).strip()
+                if kk:
+                    consider_keys.add(kk)
+        consider_keys = {k for k in oracle_bindings.keys() if k in consider_keys}
+
+        decorated: list[tuple[tuple[int, int, int], int, object]] = []
+        for idx, c in enumerate(candidates):
+            score = _score_candidate_against_oracle(
+                str(getattr(c, "kernel_kind", "") or ""),
+                getattr(c, "bindings", None),
+                oracle_kind=oracle_kind,
+                oracle_bindings=oracle_bindings,
+                consider_keys=set(consider_keys),
+            )
+            decorated.append((score, int(idx), c))
+        decorated.sort(key=lambda x: (x[0], x[1]))
+        reordered = [c for _, _, c in decorated]
+        if int(budget) > 0:
+            reordered = reordered[: int(budget)]
+        plan.candidates = reordered
+
+        meta = dict(getattr(plan, "meta", {}) or {})
+        meta["source_oracle"] = {
+            "arch": str(oracle.get("arch") or ""),
+            "compiler_stack": str(oracle.get("compiler_stack") or ""),
+            "kernel_kind": str(oracle_kind),
+            "bindings": dict(oracle_bindings),
+        }
+        plan.meta = meta
+    except Exception:
+        return
+
+
+def _run_org_plugin(
+    *,
+    spec_name: str,
+    out_dir: Path,
+    desc,
+    intent: IntentFunction,
+    report: Dict[str, object],
+    shape_bindings: Dict[str, int],
+    triton_provider: str,
+    backend_target: str | None,
+) -> None:
+    from pipeline.triton.org_bridge import run_org_sidecar  # noqa: PLC0415
+
+    run_org_sidecar(
+        spec_name=spec_name,
+        out_dir=out_dir,
+        desc=desc,
+        intent=intent,
+        report=report,
+        shape_bindings=shape_bindings,
+        triton_provider=triton_provider,
+        backend_target=backend_target,
+    )
+
+
 def _materialize_missing_tensors_for_report(intent: IntentFunction, report: Dict[str, object], *, phase: str) -> None:
     try:
         actions = materialize_missing_op_output_tensors(intent)
@@ -140,6 +301,7 @@ def _save_intent_seed(
     backend_target: str | None,
     candidate: CandidateIntent,
     candidate_expanded: CandidateIntent | None,
+    quality: Dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "schema_version": "intent_seed_v1",
@@ -154,8 +316,30 @@ def _save_intent_seed(
         "raw_json": dict(candidate.raw_json or {}),
         "llm_trace": dict(candidate.llm_trace or {}),
     }
+    if isinstance(quality, dict):
+        payload["quality"] = dict(quality)
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _is_seed_trusted_for_auto(seed_path: Path) -> tuple[bool, str]:
+    """
+    Only replay cache in auto mode when previous run proved it correct.
+    """
+    try:
+        payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return False, f"invalid_seed:{type(e).__name__}"
+    if not isinstance(payload, dict):
+        return False, "invalid_seed:payload_not_object"
+    quality = payload.get("quality")
+    if not isinstance(quality, dict):
+        return False, "untrusted_seed:missing_quality"
+    if not bool(quality.get("diff_ok")):
+        return False, "untrusted_seed:diff_not_ok"
+    if not bool(quality.get("static_ok")):
+        return False, "untrusted_seed:static_not_ok"
+    return True, "trusted"
 
 
 def _load_intent_seed(seed_path: Path) -> tuple[CandidateIntent, CandidateIntent | None]:
@@ -190,6 +374,26 @@ def _load_intent_seed(seed_path: Path) -> tuple[CandidateIntent, CandidateIntent
     return cand, cand_expanded
 
 
+def _org_seed_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_seed.json"
+
+
+def _org_doc_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org.json"
+
+
+def _org_plan_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_plan.json"
+
+
+def _org_candidates_jsonl_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_candidates.jsonl"
+
+
+def _org_candidates_txt_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.org_candidates.txt"
+
+
 def _mlir_shadow_mode_enabled() -> bool:
     # Evidence mode is a stronger switch than the legacy "shadow" toggle:
     # INTENTIR_EVIDENCE_MODE=off must suppress large intermediate dumps.
@@ -212,6 +416,39 @@ def _execution_ir_mode() -> str:
 
 def _real_mlir_enabled() -> bool:
     return str(os.getenv("INTENTIR_REAL_MLIR", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _org_mode() -> str:
+    """
+    ORG plugin mode switch.
+
+    Values:
+      - off: do not run ORG LLM / mapping
+      - extract: extract ORG only (sidecar artifact)
+      - apply: extract ORG + backend mapper -> candidates
+      - strict: like apply, but failures are fatal
+    """
+    v = str(os.getenv("INTENTIR_ORG_MODE", "off") or "off").strip().lower()
+    return v or "off"
+
+
+def _org_seed_policy() -> str:
+    v = str(os.getenv("INTENTIR_ORG_SEED_POLICY", "auto") or "auto").strip().lower()
+    return v or "auto"
+
+
+def _org_model() -> str:
+    return str(os.getenv("INTENTIR_ORG_MODEL", "") or "").strip()
+
+
+def _org_budget() -> int:
+    raw = str(os.getenv("INTENTIR_ORG_BUDGET", "") or "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except Exception:
+            return 32
+    return 32
 
 
 _CUDA_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
@@ -345,6 +582,8 @@ def _downstream_llvm_pipeline(
             kernels = _load_cuda_real_mlir_wave_kernels(wave)
             if spec_name and str(spec_name) in kernels:
                 return "downstream_cuda_std_llvm", "cuda"
+            if _cuda_real_mlir_allow_unknown():
+                return "downstream_cuda_std_llvm", "cuda"
             # In real-MLIR mode, do not fall back to cached LLVM IR implicitly.
             return None, None
         return "downstream_cuda_llvm", "cuda"
@@ -357,6 +596,11 @@ def _downstream_llvm_pipeline(
             return None, None
         return "downstream_rvv_llvm", "rvv"
     return None, None
+
+
+def _cuda_real_mlir_allow_unknown() -> bool:
+    raw = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_ALLOW_UNKNOWN", "0") or "").strip().lower()
+    return raw in {"1", "true", "yes", "y", "on"}
 
 
 def _downstream_llvm_extra_pipelines(backend_target: str | None) -> list[tuple[str, str]]:
@@ -390,6 +634,9 @@ def _emit_mlir_shadow_artifacts(
     mlir_report["execution_ir"] = _execution_ir_mode()
     mlir_report["shadow_mode"] = bool(shadow_enabled)
     mlir_report["evidence_mode"] = str(evidence_mode())
+    mlir_report["real_mlir_enabled"] = bool(_real_mlir_enabled())
+    mlir_report["cuda_real_mlir_wave"] = str(_cuda_real_mlir_wave_name())
+    mlir_report["rvv_real_mlir_wave"] = str(_rvv_real_mlir_wave_name())
     mlir_report["toolchain"] = detect_mlir_toolchain()
     try:
         # For C++ plugin lowering (and remote audit), persist concrete shape
@@ -1423,8 +1670,6 @@ def _run_row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
     M = int(case.shapes.get("M", 4))
     N = int(case.shapes.get("N", 256))
     device = "cuda"
-    if N > 1024:
-        raise ValueError(f"row_sum requires N<=1024, got N={N}")
     if case.inputs and "input" in case.inputs:
         inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
         if tuple(inp.shape) != (M, N):
@@ -1510,8 +1755,6 @@ def _run_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
     M = int(case.shapes.get("M", 4))
     N = int(case.shapes.get("N", 256))
     device = "cuda"
-    if N > 1024:
-        raise ValueError(f"row_max requires N<=1024, got N={N}")
     if case.inputs and "input" in case.inputs:
         inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
         if tuple(inp.shape) != (M, N):
@@ -2586,7 +2829,7 @@ def default_kernel_specs() -> List[KernelSpec]:
             module="kernels.triton.ops.layernorm",
             attr="layer_norm_persistent_kernel.fn.src",
             runner=_run_layernorm_reference,
-            canonical_shapes={"M": 4, "N": 64},
+            canonical_shapes={"M": 256, "N": 2097152},
             vary_axes=["M", "N"],
         ),
         KernelSpec(
@@ -2611,7 +2854,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     def _norm_row_sum(shapes: Dict[str, int]) -> Dict[str, int]:
         out = dict(shapes)
         if "N" in out:
-            out["N"] = max(1, min(int(out["N"]), 1024))
+            out["N"] = max(1, int(out["N"]))
         if "M" in out:
             out["M"] = max(1, int(out["M"]))
         return out
@@ -2709,7 +2952,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.row_sum",
                 attr="row_sum_kernel.src",
                 runner=_run_row_sum_reference,
-                canonical_shapes={"M": 4, "N": 256},
+                canonical_shapes={"M": 256, "N": 2097152},
                 vary_axes=["M", "N"],
                 normalize_shapes=_norm_row_sum,
             ),
@@ -2742,7 +2985,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.row_max",
                 attr="row_max_kernel.src",
                 runner=_run_row_max_reference,
-                canonical_shapes={"M": 4, "N": 256},
+                canonical_shapes={"M": 256, "N": 2097152},
                 vary_axes=["M", "N"],
                 normalize_shapes=_norm_row_sum,
             ),
@@ -3265,6 +3508,29 @@ def run_pipeline_for_spec(
     seed_policy = str(intentir_seed_policy).strip().lower()
     if seed_policy not in {"auto", "force_llm", "force_cache"}:
         raise ValueError(f"unsupported intentir_seed_policy: {intentir_seed_policy}")
+    # Some macro/complex kernels can easily trigger provider instability; keep
+    # deterministic fallback available, while using LLM by default.
+    use_llm_for_macro = str(os.getenv("INTENTIR_TRITON_UPSAMPLE_USE_LLM", "1")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    use_llm_for_attn = str(os.getenv("INTENTIR_TRITON_ATTN_USE_LLM", "1")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    strict_llm_only = str(os.getenv("INTENTIR_STRICT_LLM_ONLY", "1")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if strict_llm_only:
+        use_llm_for_macro = True
+        use_llm_for_attn = True
 
     # 3) IntentIR construction (cache/LLM/fallback policy).
     if seed_policy == "force_cache":
@@ -3313,6 +3579,8 @@ def run_pipeline_for_spec(
     should_try_cache = bool(seed_policy in {"auto", "force_cache"})
     should_try_llm = bool(seed_policy in {"auto", "force_llm"})
     prefer_provider_deterministic_in_force_llm = (
+        not strict_llm_only
+        and
         seed_policy == "force_llm"
         and allow_deterministic_fallback
         and str(os.getenv("INTENTIR_TRITON_FORCE_COMPILE_PREFER_PROVIDER_DETERMINISTIC", "1")).strip().lower()
@@ -3351,30 +3619,38 @@ def run_pipeline_for_spec(
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
 
     if should_try_cache and seed_path.is_file():
-        cand, cand_expanded = _load_intent_seed(seed_path)
-        cache_used = True
-        report["intent_seed"]["used"] = True
-        report["intent_seed"]["source"] = "cache"
-        (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
-        if cand_expanded is not None:
-            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
-            )
+        cache_allowed = True
+        cache_reason = "trusted"
+        if seed_policy == "auto":
+            cache_allowed, cache_reason = _is_seed_trusted_for_auto(seed_path)
+        if cache_allowed:
+            cand, cand_expanded = _load_intent_seed(seed_path)
+            cache_used = True
+            report["intent_seed"]["used"] = True
+            report["intent_seed"]["source"] = "cache"
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
+            if cand_expanded is not None:
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                    _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
+                )
+        else:
+            report["intent_seed"]["used"] = False
+            report["intent_seed"]["reason"] = str(cache_reason)
     elif seed_policy == "force_cache":
-        if not allow_deterministic_fallback:
-            raise RuntimeError(
-                f"no cached intent seed for {spec.name}: {seed_path}. "
-                "Run once with IntentIR compile mode (for FlagGems: --flaggems-path intentir --intentir-mode force_compile) to create cache."
-            )
-        feedback = ["IntentIR force_cache requested but cache missing; deterministic fallback enabled by caller"]
-        report["intent_seed"]["used"] = False
-        report["intent_seed"]["reason"] = "cache_missing_fallback_enabled"
+        raise RuntimeError(
+            f"no cached intent seed for {spec.name}: {seed_path}. "
+            "Run once with IntentIR compile mode (for FlagGems: --flaggems-path intentir --intentir-mode force_compile) to create cache."
+        )
     # Some macro/complex kernels can easily trigger provider instability or long
-    # waits. Keep the default full pipeline usable by allowing deterministic
-    # fallbacks, while still permitting LLM forcing via env vars.
-    use_llm_for_macro = str(os.getenv("INTENTIR_TRITON_UPSAMPLE_USE_LLM", "1")).strip() in {"1", "true", "yes", "on"}
-    use_llm_for_attn = str(os.getenv("INTENTIR_TRITON_ATTN_USE_LLM", "1")).strip() in {"1", "true", "yes", "on"}
-    if cand is None and spec.name == "upsample_bicubic2d_aa" and seed_policy != "force_llm" and not use_llm_for_macro:
+    # waits. Keep deterministic fallbacks available, while allowing explicit LLM
+    # forcing via env vars.
+    if (
+        cand is None
+        and (not strict_llm_only)
+        and spec.name == "upsample_bicubic2d_aa"
+        and seed_policy != "force_llm"
+        and not use_llm_for_macro
+    ):
         fb_intent = _upsample_bicubic2d_aa_fallback_intent()
         cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
         report["llm_fallback"] = {
@@ -3397,7 +3673,13 @@ def run_pipeline_for_spec(
         exp_txt = _intent_to_mlir_text(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
-    elif cand is None and spec.name == "_attn_fwd" and seed_policy != "force_llm" and not use_llm_for_attn:
+    elif (
+        cand is None
+        and (not strict_llm_only)
+        and spec.name == "_attn_fwd"
+        and seed_policy != "force_llm"
+        and not use_llm_for_attn
+    ):
         fb_intent = _attn_fwd_fallback_intent()
         cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
         report["llm_fallback"] = {
@@ -3448,6 +3730,9 @@ def run_pipeline_for_spec(
                     continue
         elif not feedback:
             feedback = ["intent seed policy does not allow live LLM in this run"]
+    if cand is None and strict_llm_only:
+        raise RuntimeError(f"LLM/Intent parse failed after retries for {spec.name}: {'; '.join(feedback)}")
+
     if cand is None:
         # Resilience fallback for macro-heavy kernels when providers are unstable.
         if spec.name == "upsample_bicubic2d_aa":
@@ -3835,7 +4120,7 @@ def run_pipeline_for_spec(
                 pass
 
     # Provider-level deterministic repair pass (only after dynamic diff failure).
-    if diffs_in and not all(d.ok for d in diffs_in):
+    if (not strict_llm_only) and diffs_in and not all(d.ok for d in diffs_in):
         try:
             repaired = provider_plugin.repair_candidate_after_diff(
                 spec_name=str(spec.name),
@@ -3954,6 +4239,138 @@ def run_pipeline_for_spec(
                 "ok": False,
                 "error": f"{type(e).__name__}: {e}",
             }
+
+    # For large macro kernels, keep LLM as primary route but fail-safe to the
+    # deterministic macro intent when LLM candidate remains incorrect.
+    if (
+        (not strict_llm_only)
+        and
+        spec.name == "upsample_bicubic2d_aa"
+        and bool(use_llm_for_macro)
+        and bool(llm_generated)
+        and diffs_in
+        and not all(d.ok for d in diffs_in)
+    ):
+        try:
+            fb_intent = _upsample_bicubic2d_aa_fallback_intent()
+            fb_candidate = CandidateIntent(
+                intent=fb_intent,
+                problem_params={},
+                schedule_params={},
+                raw_json={"fallback": True},
+                llm_trace={},
+            )
+            enrich_intent_macros(fb_candidate.intent)
+            _ensure_schedule(fb_candidate.intent, kernel_name=spec.name, triton_src=src)
+            _attach_access_witness_meta(
+                fb_candidate.intent,
+                cert_v2=cert_v2,
+                canonical_shapes=dict(spec.canonical_shapes),
+            )
+            provider_plugin.annotate_intent_meta(
+                fb_candidate.intent,
+                source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                backend_target=backend_target,
+            )
+            fb_expanded_intent = expand_macros(fb_candidate.intent)
+            fb_candidate_expanded = CandidateIntent(
+                intent=fb_expanded_intent,
+                problem_params={},
+                schedule_params={},
+                raw_json={"fallback": True},
+                llm_trace={},
+            )
+            _ensure_schedule(fb_candidate_expanded.intent, kernel_name=spec.name, triton_src=src)
+            _attach_access_witness_meta(
+                fb_candidate_expanded.intent,
+                cert_v2=cert_v2,
+                canonical_shapes=dict(spec.canonical_shapes),
+            )
+            provider_plugin.annotate_intent_meta(
+                fb_candidate_expanded.intent,
+                source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                backend_target=backend_target,
+            )
+
+            fb_for_run = fb_candidate_expanded or fb_candidate
+            fb_cases_pack = make_cases(
+                spec,
+                fb_for_run,
+                constraints,
+                limit=cases_limit,
+                extra_tile_hints=cert.tile_hints if cert else None,
+                cert=cert,
+                cert_v2=cert_v2,
+                assumptions=assumptions,
+            )
+            fb_cases_in = list(fb_cases_pack.in_contract)
+            fb_cases_out = list(fb_cases_pack.out_of_contract)
+            fb_tol = infer_tolerances(fb_for_run.intent).to_dict()
+            fb_diffs_in, fb_cex_in = run_diff(fb_for_run.intent, run_ref_fn, fb_cases_in, tolerances=fb_tol)
+
+            if fb_diffs_in and all(d.ok for d in fb_diffs_in):
+                cand = fb_candidate
+                cand_expanded = fb_candidate_expanded
+                cand_for_run = fb_for_run
+                cases_in = fb_cases_in
+                cases_out = fb_cases_out
+                tol = dict(fb_tol)
+                diffs_in = fb_diffs_in
+                cex_in = fb_cex_in
+
+                report["llm_fallback"] = {
+                    "used": True,
+                    "kind": "macro_deterministic_after_llm_diff_fail",
+                    "reason": "llm_candidate_diff_failed",
+                }
+                report["cases"] = {
+                    "in_contract": [dict(c.shapes) for c in cases_in],
+                    "out_of_contract": [dict(c.shapes) for c in cases_out],
+                }
+                report["tolerances"] = dict(tol)
+                worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
+                report["diff"] = {
+                    "ok": True,
+                    "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
+                    "results": [
+                        {
+                            "case_shapes": dict(cases_in[i].shapes),
+                            "ok": bool(diffs_in[i].ok),
+                            "summary": diffs_in[i].summary,
+                            "max_abs": float(diffs_in[i].max_abs_err),
+                            "max_rel": float(diffs_in[i].max_rel_err),
+                        }
+                        for i in range(min(len(cases_in), len(diffs_in)))
+                    ],
+                }
+                if cex_in:
+                    report["counterexamples"] = [
+                        {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)}
+                        for cx in cex_in[:3]
+                    ]
+                report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
+                _materialize_missing_tensors_for_report(cand.intent, report, phase="macro_det_repair")
+                _materialize_missing_tensors_for_report(
+                    cand_expanded.intent,
+                    report,
+                    phase="macro_det_repair_expanded",
+                )
+                report["intent"] = cand.intent.to_json_dict()
+                report["intent_expanded"] = cand_expanded.intent.to_json_dict()
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
+                (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(
+                    _intent_to_mlir_text(cand.intent), encoding="utf-8"
+                )
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                    _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
+                )
+                (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(
+                    _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
+                )
+        except Exception as e:
+            report["llm_fallback_after_diff_error"] = f"{type(e).__name__}: {e}"
 
     # If diff still fails, attach a compact debug report (P0 gap fix).
     if diffs_in and not all(d.ok for d in diffs_in):
@@ -4098,20 +4515,38 @@ def run_pipeline_for_spec(
                 report["mutation_kill"] = {"skipped": True, "reason": "disabled_by_kernel_or_cli"}
 
     if llm_generated:
-        try:
-            _save_intent_seed(
-                seed_path=seed_path,
-                kernel_name=spec.name,
-                triton_provider=str(triton_provider),
-                backend_target=backend_target,
-                candidate=cand,
-                candidate_expanded=cand_expanded,
-            )
-            report["intent_seed"]["saved"] = True
-            report["intent_seed"]["source"] = "llm"
-        except Exception as e:
+        diff_ok_for_seed = bool((report.get("diff") or {}).get("ok"))
+        static_ok_for_seed = bool((report.get("static_validation") or {}).get("ok"))
+        llm_fallback_used = bool((report.get("llm_fallback") or {}).get("used"))
+        quality = {
+            "diff_ok": bool(diff_ok_for_seed),
+            "static_ok": bool(static_ok_for_seed),
+            "contract_level": str((report.get("contract") or {}).get("level") or ""),
+        }
+        if diff_ok_for_seed and static_ok_for_seed and not llm_fallback_used:
+            try:
+                _save_intent_seed(
+                    seed_path=seed_path,
+                    kernel_name=spec.name,
+                    triton_provider=str(triton_provider),
+                    backend_target=backend_target,
+                    candidate=cand,
+                    candidate_expanded=cand_expanded,
+                    quality=quality,
+                )
+                report["intent_seed"]["saved"] = True
+                report["intent_seed"]["source"] = "llm"
+                report["intent_seed"]["quality"] = dict(quality)
+            except Exception as e:
+                report["intent_seed"]["saved"] = False
+                report["intent_seed"]["error"] = f"{type(e).__name__}: {e}"
+        else:
             report["intent_seed"]["saved"] = False
-            report["intent_seed"]["error"] = f"{type(e).__name__}: {e}"
+            if llm_fallback_used:
+                report["intent_seed"]["reason"] = "llm_replaced_by_fallback_not_cached"
+            else:
+                report["intent_seed"]["reason"] = "llm_result_not_promoted_to_cache"
+            report["intent_seed"]["quality"] = dict(quality)
 
     if seed_cache_dir is not None and seed_policy in {"auto", "force_llm"}:
         try:
@@ -4128,6 +4563,17 @@ def run_pipeline_for_spec(
         intent=cand.intent,
         baseline_io_raw=baseline_io_raw,
         shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
+    )
+
+    _run_org_plugin(
+        spec_name=spec.name,
+        out_dir=out_dir,
+        desc=desc,
+        intent=cand_for_run.intent,
+        report=report,
+        shape_bindings=dict(shape_bindings),
+        triton_provider=str(triton_provider),
+        backend_target=backend_target,
     )
 
     _emit_mlir_shadow_artifacts(

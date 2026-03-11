@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from typing import Any
 
 from intent_ir.mlir.module import IntentMLIRModule
@@ -195,12 +196,86 @@ def _retarget_llvm_ir_to_host_triple_for_link(llvm_ir_text: str) -> tuple[str, b
     return text, changed, host_triple
 
 
-def _cuda_llc_target() -> str:
+def _cuda_llc_target_info() -> dict[str, Any]:
+    def _normalize_sm(raw: str) -> str:
+        s = str(raw or "").strip().lower()
+        if not s:
+            return ""
+        if s.startswith("sm_"):
+            digits = "".join(ch for ch in s[3:] if ch.isdigit())
+            return f"sm_{digits}" if digits else ""
+        if s.startswith("sm"):
+            digits = "".join(ch for ch in s[2:] if ch.isdigit())
+            return f"sm_{digits}" if digits else ""
+        if s.startswith("compute_"):
+            digits = "".join(ch for ch in s[len("compute_") :] if ch.isdigit())
+            return f"sm_{digits}" if digits else ""
+        digits = "".join(ch for ch in s if ch.isdigit())
+        return f"sm_{digits}" if digits else ""
+
+    def _sm_num(sm: str) -> int:
+        digits = "".join(ch for ch in str(sm or "") if ch.isdigit())
+        try:
+            return int(digits)
+        except Exception:
+            return -1
+
+    @lru_cache(maxsize=1)
+    def _llc_supported_sms() -> tuple[str, ...]:
+        toolchain = detect_mlir_toolchain()
+        llc_path = str((((toolchain.get("tools") or {}).get("llc") or {}).get("path") or "")).strip()
+        if not llc_path:
+            return tuple()
+        try:
+            cp = subprocess.run(
+                [llc_path, "-march=nvptx64", "-mcpu=help"],
+                capture_output=True,
+                text=True,
+            )
+            text = f"{cp.stdout or ''}\n{cp.stderr or ''}"
+            sms = sorted(
+                {
+                    _normalize_sm(m.group(0))
+                    for m in re.finditer(r"\bsm_[0-9]{2,3}\b", text)
+                    if _normalize_sm(m.group(0))
+                },
+                key=_sm_num,
+            )
+            return tuple(sms)
+        except Exception:
+            return tuple()
+
+    def _choose_supported(preferred: str) -> str:
+        pref = _normalize_sm(preferred)
+        if not pref:
+            return "sm_80"
+        supported = list(_llc_supported_sms())
+        if not supported:
+            return pref
+        if pref in supported:
+            return pref
+        env_fb = _normalize_sm(os.getenv("INTENTIR_CUDA_LLC_FALLBACK_SM", "sm_90"))
+        if env_fb and env_fb in supported:
+            return env_fb
+        pref_num = _sm_num(pref)
+        le = [s for s in supported if _sm_num(s) <= pref_num]
+        if le:
+            return str(le[-1])
+        return str(supported[-1])
+
     raw = str(os.getenv("INTENTIR_CUDA_SM", "")).strip().lower()
-    if raw.startswith("sm_"):
-        return raw
-    if raw.isdigit():
-        return f"sm_{raw}"
+    norm = _normalize_sm(raw)
+    requested = ""
+    if norm:
+        requested = str(norm)
+        effective = _choose_supported(norm)
+        supported = list(_llc_supported_sms())
+        return {
+            "requested_sm": requested,
+            "effective_sm": str(effective),
+            "supported_sms": [str(x) for x in supported],
+            "downleveled": bool(requested and effective and requested != effective),
+        }
     # Best-effort auto-detect from torch when available so local dev runs (and
     # perf evidence) compile for the actual GPU arch without extra knobs.
     try:  # pragma: no cover - depends on CUDA env
@@ -209,10 +284,29 @@ def _cuda_llc_target() -> str:
         if torch.cuda.is_available():
             major, minor = torch.cuda.get_device_capability(0)
             if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
-                return f"sm_{major}{minor}"
+                requested = f"sm_{major}{minor}"
+                effective = _choose_supported(requested)
+                supported = list(_llc_supported_sms())
+                return {
+                    "requested_sm": requested,
+                    "effective_sm": str(effective),
+                    "supported_sms": [str(x) for x in supported],
+                    "downleveled": bool(requested and effective and requested != effective),
+                }
     except Exception:
         pass
-    return "sm_80"
+    effective = _choose_supported("sm_80")
+    supported = list(_llc_supported_sms())
+    return {
+        "requested_sm": "sm_80",
+        "effective_sm": str(effective),
+        "supported_sms": [str(x) for x in supported],
+        "downleveled": bool(effective != "sm_80"),
+    }
+
+
+def _cuda_llc_target() -> str:
+    return str(_cuda_llc_target_info().get("effective_sm") or "sm_80")
 
 
 def _cuda_ptx_cache_enabled() -> bool:
@@ -418,6 +512,8 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
 
     We currently rewrite:
     - LLVM intrinsics: `llvm.exp/exp2/log/sin/cos/pow.f32` -> internal helpers backed by NVVM approx intrinsics.
+    - Libdevice FMA calls: `__nv_fmaf` -> `llvm.fma.f32` to recover inline PTX FMA.
+    - Libdevice reciprocal sqrt: `__nv_rsqrtf` -> `llvm.nvvm.rsqrt.approx.f` to recover inline PTX rsqrt.
     - External libcalls: `acosf/atanf/tanf/erff` -> internal helpers (no unresolved externs).
     """
 
@@ -430,6 +526,8 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
     rewrite_sin = "@llvm.sin.f32(" in text
     rewrite_cos = "@llvm.cos.f32(" in text
     rewrite_pow = "@llvm.pow.f32(" in text
+    rewrite_fma = "@__nv_fmaf(" in text
+    rewrite_rsqrt = "@__nv_rsqrtf(" in text
     rewrite_acos = "@acosf(" in text
     rewrite_atan = "@atanf(" in text
     rewrite_tan = "@tanf(" in text
@@ -460,6 +558,26 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
             out,
             flags=re.MULTILINE,
         )
+    if rewrite_fma:
+        out = out.replace("@__nv_fmaf(", "@llvm.fma.f32(")
+        out = re.sub(r"^declare[^\n]*@__nv_fmaf\([^\n]*\)\s*[^\n]*\n", "", out, flags=re.MULTILINE)
+        if "declare float @llvm.fma.f32(float, float, float)" not in out:
+            decl_anchor = out.find("define ")
+            decl_line = "declare float @llvm.fma.f32(float, float, float)\n"
+            if decl_anchor >= 0:
+                out = out[:decl_anchor] + decl_line + out[decl_anchor:]
+            else:
+                out = decl_line + out
+    if rewrite_rsqrt:
+        out = out.replace("@__nv_rsqrtf(", "@llvm.nvvm.rsqrt.approx.f(")
+        out = re.sub(r"^declare[^\n]*@__nv_rsqrtf\([^\n]*\)\s*[^\n]*\n", "", out, flags=re.MULTILINE)
+        if "declare float @llvm.nvvm.rsqrt.approx.f(float)" not in out:
+            decl_anchor = out.find("define ")
+            decl_line = "declare float @llvm.nvvm.rsqrt.approx.f(float)\n"
+            if decl_anchor >= 0:
+                out = out[:decl_anchor] + decl_line + out[decl_anchor:]
+            else:
+                out = decl_line + out
     if rewrite_acos:
         out = out.replace("@acosf(", "@intentir_nvvm_acosf_approx(")
         out = re.sub(r"^declare[^\n]*@acosf\([^\n]*\)\s*[^\n]*\n", "", out, flags=re.MULTILINE)
@@ -503,6 +621,8 @@ def _rewrite_nvptx_math_intrinsics_for_llc(llvm_ir_text: str) -> str:
         or rewrite_sin
         or rewrite_cos
         or rewrite_pow
+        or rewrite_fma
+        or rewrite_rsqrt
         or rewrite_acos
         or rewrite_atan
         or rewrite_tan
@@ -835,6 +955,18 @@ def _compile_llvm_ir_to_cuda_ptx(
             # Fall back to compilation on any cache I/O error.
             cache_meta["cuda_ptx_cache_hit"] = False
 
+    def _sanitize_llc_ptx(text: str) -> str:
+        out = str(text or "")
+        if not out:
+            return out
+        out = out.replace(", debug", "")
+        for marker in ("\n\t.file", "\n.file"):
+            idx = out.find(marker)
+            if idx >= 0:
+                out = out[:idx].rstrip() + "\n"
+                break
+        return out
+
     with tempfile.TemporaryDirectory(prefix="intentir_cuda_llc_") as td:
         ll_path = Path(td) / "kernel.ll"
         ll_path.write_text(ll_text, encoding="utf-8")
@@ -892,6 +1024,13 @@ def _compile_llvm_ir_to_cuda_ptx(
             raise RuntimeError(
                 f"llc nvptx compile failed rc={cp.returncode}: {cp.stderr or cp.stdout}"
             )
+        try:
+            raw_ptx = out_path.read_text(encoding="utf-8", errors="ignore")
+            sanitized_ptx = _sanitize_llc_ptx(raw_ptx)
+            if sanitized_ptx and sanitized_ptx != raw_ptx:
+                out_path.write_text(sanitized_ptx, encoding="utf-8")
+        except Exception:
+            pass
     if cache_enabled:
         try:
             tmp = cache_path.with_suffix(f".tmp.{os.getpid()}.ptx")
@@ -1060,12 +1199,17 @@ def _materialize_executable(
                 "toolchain_fingerprint": str(fingerprint),
                 "invocation": {"shape_bindings": dict(shape_bindings), "ptx_compiler": "llc_nvptx"},
             }
+            llc_target_info = _cuda_llc_target_info()
             artifacts = {
                 "cuda_ptx_path": str(ptx_path),
                 "cuda_ptx_origin": "llvm_llc",
                 "cuda_llvm_target_triple": str(llvm_target_triple),
                 "cuda_llvm_origin": str(llvm_origin),
-                "cuda_sm": str(_cuda_llc_target()),
+                "cuda_sm": str(llc_target_info.get("effective_sm") or ""),
+                "cuda_requested_sm": str(llc_target_info.get("requested_sm") or ""),
+                "cuda_effective_sm": str(llc_target_info.get("effective_sm") or ""),
+                "cuda_target_downleveled": bool(llc_target_info.get("downleveled")),
+                "cuda_supported_sms": [str(x) for x in list(llc_target_info.get("supported_sms") or [])],
             }
             artifacts.update(dict(cache_meta or {}))
             artifacts["intentir_evidence_mode"] = str(evidence_mode())

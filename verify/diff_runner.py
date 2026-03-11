@@ -652,6 +652,16 @@ def _binding_int(bindings: Dict[str, Any], key: str) -> int | None:
 
 
 def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
+    n_dim = _binding_int(bindings, "N")
+    m_dim = _binding_int(bindings, "M")
+    if n_dim is not None:
+        for alias in ("n_cols", "ncols", "num_cols", "numcols", "cols", "stride"):
+            bindings.setdefault(alias, n_dim)
+    if m_dim is not None:
+        for alias in ("n_rows", "nrows", "num_rows", "numrows", "rows"):
+            bindings.setdefault(alias, m_dim)
+    bindings.setdefault("offset", 0.0)
+
     c_in = _binding_int(bindings, "C_IN")
     groups = _binding_int(bindings, "GROUPS")
     c_per_g = _binding_int(bindings, "C_PER_G")
