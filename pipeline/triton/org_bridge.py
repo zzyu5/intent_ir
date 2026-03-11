@@ -35,6 +35,16 @@ ROOT = Path(__file__).resolve().parents[2]
 ORG_RUNTIME_ROOT = ROOT / "ORG-Migrate"
 
 
+def _org_blindfold_enabled() -> bool:
+    raw = str(os.getenv("INTENTIR_ORG_BLINDFOLD", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _org_blindfold_label() -> str:
+    raw = str(os.getenv("INTENTIR_ORG_BLINDFOLD_LABEL", "") or "").strip()
+    return raw or "target_kernel_func"
+
+
 def _ensure_org_runtime_on_path() -> None:
     sp = str(ORG_RUNTIME_ROOT)
     if sp not in sys.path:
@@ -425,12 +435,13 @@ def run_org_sidecar(
             (getattr(getattr(desc, "artifacts", None), "extra", {}) or {}).get("cubin_path"),
             (getattr(desc, "meta", {}) or {}).get("cubin_original_path"),
         )
+        facts_kernel_name = _org_blindfold_label() if _org_blindfold_enabled() else str(spec_name)
         if ttgir_text.strip():
-            ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=str(spec_name), artifact_path=(ttgir_path or None))
+            ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=facts_kernel_name, artifact_path=(ttgir_path or None))
             extra_evidence["ttgir_facts"] = dict(ttgir_facts)
             ttgir_facts_path.write_text(json.dumps(ttgir_facts, indent=2, ensure_ascii=False), encoding="utf-8")
             org_report["ttgir_facts_path"] = str(ttgir_facts_path)
-        ptx_facts = extract_ptx_mechanism_facts(ptx_text, kernel_name=str(spec_name), artifact_path=(ptx_path or None))
+        ptx_facts = extract_ptx_mechanism_facts(ptx_text, kernel_name=facts_kernel_name, artifact_path=(ptx_path or None))
         extra_evidence["ptx_facts"] = dict(ptx_facts)
         ptx_facts_path.write_text(json.dumps(ptx_facts, indent=2, ensure_ascii=False), encoding="utf-8")
         org_report["ptx_facts_path"] = str(ptx_facts_path)
@@ -446,26 +457,11 @@ def run_org_sidecar(
             "ttir_available": bool((ttir_summary or {}).get("available")),
         }
 
-    if mode in {"apply", "strict"} and str(spec_name) in {
-        "flash_attention2d",
-        "matmul_fused_epilogue2d",
-        "_attn_fwd",
-        "masked_softmax2d",
-        "softmax_inner",
-        "row_sum",
-        "row_max",
-        "layer_norm_persistent",
-        "add2d",
-        "exp2d",
-        "group_norm_kernel",
-        "ai_bench_softmax",
-        "ai_bench_matmul",
-        "masked_attention2d",
-    } and ttgir_facts is None:
+    if mode in {"apply", "strict"} and ttgir_facts is None and not bool((ptx_facts or {}).get("mechanisms")):
         org_report["ok"] = False
-        org_report["error"] = "ttgir_missing"
+        org_report["error"] = "insufficient_schedule_evidence"
         if mode == "strict":
-            raise RuntimeError("ttgir_missing")
+            raise RuntimeError("insufficient_schedule_evidence")
         return
 
     org_doc = None

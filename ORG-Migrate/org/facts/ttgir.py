@@ -216,6 +216,17 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
     row_vec_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_vector_row_")]
     mask_apply_refs = [e["id"] for e in evidence if str(e["id"]).startswith("ttgir_mask_apply_")]
 
+    generic_row_style = bool(has_reduce and has_tile_load and not has_dot)
+    if generic_row_style and not has_row_tile_resident:
+        has_row_tile_resident = True
+    if generic_row_style and not has_row_reduction:
+        has_row_reduction = True
+    if generic_row_style and not has_vector_row_path:
+        has_vector_row_path = any(
+            any(int(x) > 1 for x in list(layout.get("size_per_thread") or []))
+            for layout in list(blocked_layouts or [])
+        )
+
     mechanisms = {
         "tiling.blocked_layout": {
             "present": bool(blocked_layouts),
@@ -366,7 +377,7 @@ def extract_ttgir_mechanism_facts(ttgir_text: str, *, kernel_name: str, artifact
             "attrs": {"dot_like": bool(has_dot)},
             "evidence_refs": dot_refs,
         }
-    if str(kernel_name) in {"softmax_inner", "masked_softmax2d", "ai_bench_softmax"}:
+    if bool(generic_row_style) or str(kernel_name) in {"softmax_inner", "masked_softmax2d", "ai_bench_softmax"}:
         mechanisms["staging.row_tile_resident"] = {
             "present": bool(has_row_tile_resident),
             "attrs": {

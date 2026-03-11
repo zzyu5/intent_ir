@@ -462,6 +462,7 @@ def _graph_profile(
     dim_candidates = collect_dim_candidate_ints_normalized(org)
     blocked_threads_hint, blocked_vector_hint = _blocked_layout_hints(ttgir_facts)
     reduction_scope = str(_fact_attr(ttgir_facts, "communication.reduction", "reduction_scope", "") or "")
+    program_axes = list(_fact_attr(ttgir_facts, "mapping.program_axes", "axes", []) or [])
     schedule_relations = {
         _norm_token(getattr(edge, "relation", ""))
         for edge in list(getattr(org, "schedule_edges", []) or [])
@@ -523,6 +524,8 @@ def _graph_profile(
         signal_names.add("vector_path")
     if "persistent_row_state" in goal_tags:
         signal_names.add("persistent_path")
+    if len(program_axes) >= 2:
+        signal_names.add("multi_program_axis")
     if _blocked_layout_full_row_hint(
         row_width=int(row_width),
         blocked_threads_hint=blocked_threads_hint,
@@ -786,6 +789,7 @@ def _graph_profile(
         f"topology_pipeline_depth={int(pipeline_depth)}",
         f"topology_pipeline_path={bool('async_pipeline' in signal_names)}",
         f"topology_shared_stage_path={bool(('stream_shared' in resource_groups and resource_groups['stream_shared'].bytes_hint > 0) or ('row_shared' in resource_groups and resource_groups['row_shared'].bytes_hint > 0))}",
+        f"topology_program_axes={len(program_axes)}",
     ]
     if resident_window_scope:
         notes.append(f"topology_resident_window_scope={resident_window_scope}")
@@ -903,14 +907,8 @@ def _resolve_family_spec(
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
 ) -> tuple[FamilySpec, str]:
-    direct = specs.get(str(kernel_name))
-    if direct is not None:
-        return direct, f"family_exact={kernel_name}"
-
-    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
-    source_spec = specs.get(source_kind)
-    if source_spec is not None and _shape_keys_present(shape_bindings, tuple(source_spec.required_shape_keys or ())):
-        return source_spec, f"family_source_oracle={source_kind}"
+    del kernel_name
+    del source_oracle
 
     scored: list[tuple[float, str, str]] = []
 
@@ -955,8 +953,8 @@ def _resolve_family_spec(
             norm_score += 1.0
         _consider("layer_norm_persistent", norm_score, "graph:mean+rstd_norm")
     if profile.has_signal("reduction_path") and profile.has_signal("fused_epilogue"):
-        if _shape_keys_present(shape_bindings, ("N", "GROUP_SIZE")):
-            _consider("group_norm_kernel", 108.0, "graph:group_norm")
+        if profile.has_signal("multi_program_axis") and profile.has_signal("mean_state") and profile.has_signal("rms_state"):
+            _consider("group_norm_kernel", 108.0, "graph:multi_axis_norm")
         if profile.has_signal("rms_state") and not profile.has_signal("mean_state"):
             _consider("rms_norm2d", 107.0, "graph:rms_norm")
         _consider("layer_norm_persistent", 106.0, "graph:norm")
@@ -973,7 +971,7 @@ def _resolve_family_spec(
                 scored.append((0.0, str(name), "graph:shape_compatible"))
 
     if not scored:
-        raise ValueError(f"no graph-driven family matches kernel={kernel_name!r}")
+        raise ValueError("no graph-driven family matches structure")
     scored.sort(key=lambda item: (-float(item[0]), str(item[1])))
     _, family_name, reason = scored[0]
     return specs[family_name], f"family_inferred={family_name};reason={reason}"

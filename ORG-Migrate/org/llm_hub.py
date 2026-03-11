@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,11 +20,51 @@ from pipeline.interfaces import KernelDescriptor
 
 from intent_ir.llm import DEFAULT_MODEL, LLMClientError, extract_json_object_with_trace
 from org.schema import OrgDoc, OrgValidationError, validate_org_doc
-from org.types import ORG_GOAL_TAGS, ORG_GOAL_TAGS_BY_KERNEL, ORG_MECHANISM_CATEGORIES
+from org.types import ORG_GOAL_TAGS, ORG_MECHANISM_CATEGORIES
 
 
 def _norm_token(value: Any) -> str:
     return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _blindfold_enabled() -> bool:
+    raw = str(os.getenv("INTENTIR_ORG_BLINDFOLD", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _blindfold_label() -> str:
+    raw = str(os.getenv("INTENTIR_ORG_BLINDFOLD_LABEL", "") or "").strip()
+    return raw or "target_kernel_func"
+
+
+_BLINDFOLD_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bliger[_a-z0-9]*\b",
+        r"\bgroup_norm(?:_kernel|_fwd)?\b",
+        r"\blayer_norm(?:_persistent|_fwd)?\b",
+        r"\brms_norm(?:_fwd)?\b",
+        r"\bsoftmax(?:_inner|_fwd)?\b",
+        r"\bmasked_softmax2d\b",
+        r"\bai_bench_softmax\b",
+        r"\bgeglu\b",
+        r"\bswiglu\b",
+        r"\bcross_entropy\b",
+        r"\brope\b",
+        r"\bmrope\b",
+        r"\bdyt\b",
+    )
+]
+
+
+def _blindfold_text(text: str) -> str:
+    out = str(text or "")
+    if not _blindfold_enabled() or not out:
+        return out
+    replacement = _blindfold_label()
+    for pattern in _BLINDFOLD_PATTERNS:
+        out = pattern.sub(replacement, out)
+    return out
 
 
 def _canonical_reuse_window(value: Any, *, storage: Any = "") -> str:
@@ -39,24 +80,14 @@ def _canonical_reuse_window(value: Any, *, storage: Any = "") -> str:
     return raw
 
 
-def _canonical_goal_tag(value: Any, *, kernel: str = "") -> str:
+def _canonical_goal_tag(value: Any) -> str:
     raw = str(value or "").strip()
     token = _norm_token(raw)
-    allowed = set(ORG_GOAL_TAGS_BY_KERNEL.get(str(kernel).strip()) or ORG_GOAL_TAGS)
+    allowed = set(ORG_GOAL_TAGS)
     if raw in allowed:
         return raw
     alias_map = {
-        "softmax": "streaming_softmax_state",
-        "row_softmax": "streaming_softmax_state",
-        "online_softmax": "streaming_softmax_state",
         "streaming_state": "streaming_softmax_state",
-        "group_norm": "resident_working_set",
-        "group_norm_fwd": "resident_working_set",
-        "layer_norm": "resident_working_set",
-        "layer_norm_fwd": "resident_working_set",
-        "rms_norm": "resident_working_set",
-        "normalization": "resident_working_set",
-        "norm_stats": "reduction_tree_balance",
         "statistics": "reduction_tree_balance",
         "vectorized_io": "memory_coalescing",
         "vector_io": "memory_coalescing",
@@ -84,8 +115,6 @@ def _canonical_goal_tag(value: Any, *, kernel: str = "") -> str:
         "mask_pruning": "mask_causal_pruning",
         "causal_mask": "mask_causal_pruning",
     }
-    if token.endswith("_fwd") and ("group_norm" in token or "layer_norm" in token or "rms_norm" in token):
-        return "resident_working_set"
     mapped = alias_map.get(token, raw)
     return mapped if mapped in allowed else raw
 
@@ -314,12 +343,12 @@ def _preferred_source_text(descriptor: KernelDescriptor) -> str:
         run_info = dict(remote_source.get("run_info") or {})
         remote_src = str(run_info.get("source_attr") or "").strip()
         if remote_src:
-            return remote_src
-    return str(getattr(descriptor, "source_text", "") or "")
+            return _blindfold_text(remote_src)
+    return _blindfold_text(str(getattr(descriptor, "source_text", "") or ""))
 
 
 def _slice_artifact_text(path_like: Any, *, kind: str) -> list[str]:
-    text = _read_text_path(path_like)
+    text = _blindfold_text(_read_text_path(path_like))
     if not text:
         return []
     if kind == "ttgir":
@@ -407,7 +436,7 @@ def _ordered_evidence_blob(
 ) -> str:
     extra_dict = dict(extra or {}) if isinstance(extra, Mapping) else {}
     ordered: dict[str, Any] = {
-        "kernel": descriptor.name,
+        "kernel": (_blindfold_label() if _blindfold_enabled() else descriptor.name),
         "frontend": descriptor.frontend,
     }
     for key in ("ttgir_facts", "ptx_facts", "source_oracle_facts", "ttir_summary"):
@@ -460,7 +489,7 @@ def _ordered_evidence_blob(
         }
     if runtime_extra:
         ordered["extra"] = runtime_extra
-    return json.dumps(ordered, ensure_ascii=False)
+    return _blindfold_text(json.dumps(ordered, ensure_ascii=False))
 
 
 def _build_source_context(
@@ -494,7 +523,7 @@ def _build_source_oracle(extra_evidence: Mapping[str, Any] | None) -> dict[str, 
     if isinstance(facts, Mapping):
         oracle = dict((dict(facts).get("oracle") or {}))
         return {
-            "kernel_kind": str(oracle.get("kernel_kind") or ""),
+            "kernel_kind": ("" if _blindfold_enabled() else str(oracle.get("kernel_kind") or "")),
             "bindings": {str(k): int(v) for k, v in dict(oracle.get("bindings") or {}).items() if str(k).strip()},
             "arch": str(oracle.get("arch") or ""),
             "compiler_stack": str(oracle.get("compiler_stack") or ""),
@@ -511,7 +540,8 @@ def _build_source_oracle(extra_evidence: Mapping[str, Any] | None) -> dict[str, 
 
 def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]:
     obj = dict(raw_json or {})
-    kernel_name = str(obj.get("kernel") or "").strip()
+    if _blindfold_enabled():
+        obj["kernel"] = _blindfold_label()
     schema_version = str(obj.get("schema_version") or "").strip().lower()
     if schema_version in {"org_v1", "intent_ir_org_v1", "intentir_org", "intentir_org_v1"}:
         obj["schema_version"] = "intentir_org_v1"
@@ -560,7 +590,7 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
             goal["tag"] = str(goal.get("kind") or "")
         if not str(goal.get("summary") or "").strip() and str(goal.get("description") or "").strip():
             goal["summary"] = str(goal.get("description") or "")
-        goal["tag"] = _canonical_goal_tag(goal.get("tag"), kernel=kernel_name)
+        goal["tag"] = _canonical_goal_tag(goal.get("tag"))
         if not str(goal.get("scope") or "").strip():
             goal["scope"] = "kernel"
         goal["evidence_refs"] = [
@@ -951,7 +981,15 @@ class LLMOrgHub:
         if descriptor.frontend == "triton":
             from org.frontends.triton.llm_org import build_messages  # noqa: PLC0415
 
-            messages = build_messages(src, kernel_name=descriptor.name, extra_instruction=extra_instruction, compact=compact)
+            prompt_kernel_name = _blindfold_label() if _blindfold_enabled() else descriptor.name
+            if _blindfold_enabled():
+                extra_instruction = (
+                    str(extra_instruction).strip()
+                    + "\n\nBlindfold rule: all operator names in source/evidence were anonymized to `"
+                    + _blindfold_label()
+                    + "`. Infer topology only from dataflow, residency, reduction, layout, and control evidence."
+                ).strip()
+            messages = build_messages(src, kernel_name=prompt_kernel_name, extra_instruction=extra_instruction, compact=compact)
         else:
             raise NotImplementedError(f"LLMOrgHub does not support frontend={descriptor.frontend}")
 

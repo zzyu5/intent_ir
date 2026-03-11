@@ -36,6 +36,11 @@ DEFAULT_KERNELS = [
 ]
 
 
+def _env_flag(name: str) -> bool:
+    raw = str(os.environ.get(str(name)) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _torch_dtype(dt: str) -> torch.dtype:
     raw = str(dt).strip().lower()
     if raw == "f16":
@@ -740,7 +745,23 @@ def _bootstrap_seed_file(*, kernel: str, out_dir: Path, suffix: str) -> bool:
     ]
     if candidates:
         source = max(candidates, key=lambda p: p.stat().st_mtime)
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        text = source.read_text(encoding="utf-8")
+        if suffix == "org_seed.json":
+            try:
+                payload = json.loads(text)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and _env_flag("INTENTIR_ORG_BLINDFOLD"):
+                label = str(os.environ.get("INTENTIR_ORG_BLINDFOLD_LABEL") or "").strip() or "target_kernel_func"
+                payload["kernel"] = label
+                if isinstance(payload.get("org"), dict):
+                    payload["org"] = dict(payload["org"])
+                    payload["org"]["kernel"] = label
+                if isinstance(payload.get("raw_json"), dict):
+                    payload["raw_json"] = dict(payload["raw_json"])
+                    payload["raw_json"]["kernel"] = label
+                text = json.dumps(payload, indent=2, ensure_ascii=False)
+        target.write_text(text, encoding="utf-8")
         return True
     if suffix == "org_seed.json":
         org_candidates = [
@@ -752,10 +773,19 @@ def _bootstrap_seed_file(*, kernel: str, out_dir: Path, suffix: str) -> bool:
             return False
         source = max(org_candidates, key=lambda p: p.stat().st_mtime)
         org_payload = json.loads(source.read_text(encoding="utf-8"))
+        if _env_flag("INTENTIR_ORG_BLINDFOLD"):
+            label = str(os.environ.get("INTENTIR_ORG_BLINDFOLD_LABEL") or "").strip() or "target_kernel_func"
+            if isinstance(org_payload, dict):
+                org_payload = dict(org_payload)
+                org_payload["kernel"] = label
         seed_payload = {
             "schema_version": "org_seed_v1",
             "generated_at": "",
-            "kernel": str(kernel),
+            "kernel": (
+                str(os.environ.get("INTENTIR_ORG_BLINDFOLD_LABEL") or "").strip() or "target_kernel_func"
+                if _env_flag("INTENTIR_ORG_BLINDFOLD")
+                else str(kernel)
+            ),
             "triton_provider": "native",
             "backend_target": "cuda_5090d",
             "org": org_payload,
