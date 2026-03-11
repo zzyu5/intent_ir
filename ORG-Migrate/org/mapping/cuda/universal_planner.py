@@ -511,8 +511,11 @@ def _graph_profile(
     full_row_ids: list[str] = []
     has_weight_like = False
     has_bias_like = False
+    has_scalar_param = False
 
     if "resident_working_set" in goal_tags:
+        signal_names.add("resident_state")
+    if "operand_reuse" in goal_tags:
         signal_names.add("resident_state")
     if "streaming_softmax_state" in goal_tags:
         signal_names.add("online_state")
@@ -591,6 +594,8 @@ def _graph_profile(
         role_tokens = set(tensor_roles.get(tensor_id) or set())
         mech_tokens = lifetime_mechanism_tags(org, lifetime)
         all_tokens = set(role_tokens) | set(mech_tokens)
+        if any(tok in role_tokens for tok in {"scalar_param", "scalar", "alpha"}):
+            has_scalar_param = True
         if any(tok in role_tokens for tok in {"weight", "w", "gamma", "scale"}):
             has_weight_like = True
         if any(tok in role_tokens for tok in {"bias", "b", "beta", "shift"}):
@@ -689,6 +694,8 @@ def _graph_profile(
         signal_names.add("stateful_recurrence")
     if has_weight_like and has_bias_like and signal_names >= {"mean_state", "rms_state", "output_accumulator"}:
         signal_names.add("fused_epilogue")
+    if has_scalar_param and (has_weight_like or has_bias_like) and "vector_path" in signal_names:
+        signal_names.add("resident_state")
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
     if _fact_present(ptx_facts, "pipeline.async_copy") and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False)):
@@ -1703,6 +1710,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             optional_modules=(
                 OptionalModuleSpec(module_id="elementwise_add_vector_global_io", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="elementwise_add_masked_edge_handling", signals=("sync_path", "vector_path")),
+                OptionalModuleSpec(module_id="elementwise_add_broadcast_param_resident", signals=("resident_state",)),
             ),
             params=(
                 ParamSpec(name="ELEMENTWISE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(128, 256, 512), allowed_values=(64, 128, 256, 512)),
@@ -1716,6 +1724,13 @@ def _family_specs() -> dict[str, FamilySpec]:
                     required_signals=("resident_state", "vector_path"),
                     signal_weights={"vector_path": 20.0},
                 ),
+                TemplateSpec(
+                    kernel_kind="elementwise_v2",
+                    module_id="elementwise_add_backend_v2",
+                    param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
+                    required_signals=("resident_state", "vector_path", "full_row_path"),
+                    signal_weights={"vector_path": 20.0, "full_row_path": 36.0},
+                ),
             ),
         ),
         "exp2d": FamilySpec(
@@ -1726,6 +1741,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             optional_modules=(
                 OptionalModuleSpec(module_id="elementwise_exp_vector_global_io", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="elementwise_exp_masked_edge_handling", signals=("sync_path", "vector_path")),
+                OptionalModuleSpec(module_id="elementwise_exp_broadcast_param_resident", signals=("resident_state",)),
             ),
             params=(
                 ParamSpec(name="ELEMENTWISE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(128, 256, 512), allowed_values=(64, 128, 256, 512)),
@@ -1738,6 +1754,13 @@ def _family_specs() -> dict[str, FamilySpec]:
                     param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
                     required_signals=("resident_state", "vector_path"),
                     signal_weights={"vector_path": 20.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="elementwise_v2",
+                    module_id="elementwise_exp_backend_v2",
+                    param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
+                    required_signals=("resident_state", "vector_path", "full_row_path"),
+                    signal_weights={"vector_path": 20.0, "full_row_path": 36.0},
                 ),
             ),
         ),

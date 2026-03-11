@@ -537,6 +537,27 @@ def elementwise2d_catalog(
             constraints=[],
         ),
         BackendModule(
+            id=f"{prefix}_broadcast_param_resident",
+            kind="staging",
+            provides=[f"{prefix}.broadcast_param_resident"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_full_row_vector_resident",
+            kind="staging",
+            provides=[f"{prefix}.full_row_vector_resident"],
+            params=["ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_fast_unary_math",
+            kind="primitive",
+            provides=[f"{prefix}.fast_unary_math"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
             id=primitive_tag,
             kind="primitive",
             provides=[f"{prefix}.{primitive_tag}"],
@@ -555,6 +576,20 @@ def elementwise2d_catalog(
             params=["ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"],
             constraints=[],
         ),
+        BackendModule(
+            id=f"{prefix}_backend_v2",
+            kind="template",
+            provides=["backend.kernel_kind.elementwise_v2"],
+            requires=[
+                f"{prefix}.tile_resident",
+                f"{prefix}.two_axis_grid_mapping",
+                f"{prefix}.full_row_vector_resident",
+                f"{prefix}.{primitive_tag}",
+                f"{prefix}.fast_unary_math",
+            ],
+            params=["ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"],
+            constraints=[],
+        ),
     ]
     edges = [
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_tile_resident", edge_type="uses"),
@@ -562,6 +597,15 @@ def elementwise2d_catalog(
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=primitive_tag, edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_vector_global_io", edge_type="optional"),
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_masked_edge_handling", edge_type="optional"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_broadcast_param_resident", edge_type="optional"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_two_axis_grid_mapping", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_full_row_vector_resident", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=primitive_tag, edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_fast_unary_math", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_vector_global_io", edge_type="optional"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_broadcast_param_resident", edge_type="optional"),
+        BackendModuleEdge(src=f"{prefix}_backend_v2", dst=f"{prefix}_masked_edge_handling", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 

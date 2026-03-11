@@ -650,12 +650,20 @@ def lower_intent_to_cuda_gpu_kernel(
             return False
         if int(out_total) % int(elems) != 0:
             return False
-        # First cut: only contiguous elementwise + scalar broadcasts, no row/col addressing.
-        if need_out_rowcol:
+        has_rank2_rowcol_ops = any(
+            str(getattr(op, "op", "")).strip() in {"concat", "pad", "transpose"} for op in list(intent.ops or [])
+        )
+        if has_rank2_rowcol_ops:
             return False
         for spec in arg_specs.values():
-            if str(spec.get("broadcast") or "") not in {"scalar", "elementwise"}:
+            bcast = str(spec.get("broadcast") or "")
+            if bcast not in {"scalar", "elementwise", "broadcast_n", "broadcast_m"}:
                 return False
+            if bcast in {"broadcast_n", "broadcast_m"}:
+                if int(out_rank or 0) != 2 or int(out_n or 0) <= 0:
+                    return False
+                if int(out_n) % int(elems) != 0:
+                    return False
             if str(spec.get("scalar_ty") or "") != "f32":
                 return False
             if str(spec.get("memref_elem_ty") or "") != "f32":
@@ -683,6 +691,7 @@ def lower_intent_to_cuda_gpu_kernel(
             "sqrt",
             "sub",
             "tan",
+            "tanh",
         }
         # Vector path is intentionally narrow; bail out on anything we don't explicitly lower.
         for op in list(intent.ops or []):
@@ -1470,6 +1479,89 @@ def lower_intent_to_cuda_gpu_kernel(
     out_memref_elem_ty = str(out_spec.get("memref_elem_ty") or "")
 
     vec_ty = f"vector<{int(elems_per_thread)}xf32>"
+    use_fast_unary_math = False
+
+    def _emit_fast_tanh_scalar(x_ssa: str, *, indent: str = "        ") -> tuple[list[str], str]:
+        lines_local: list[str] = []
+        inner = f"{indent}  "
+        abs_x = _fresh("tanh_abs")
+        c_small = _fresh("tanh_small")
+        p_small = _fresh("tanh_small_p")
+        result = _fresh("tanh_fast")
+        lines_local.append(f"{indent}{abs_x} = math.absf {x_ssa}{fm} : f32")
+        lines_local.append(f"{indent}{c_small} = arith.constant 6.00000024e-01 : f32")
+        lines_local.append(f"{indent}{p_small} = arith.cmpf olt, {abs_x}, {c_small}{fm} : f32")
+        lines_local.append(f"{indent}{result} = scf.if {p_small} -> (f32) {{")
+        x2 = _fresh("tanh_x2")
+        c3 = _fresh("tanh_c3")
+        c2 = _fresh("tanh_c2")
+        c1 = _fresh("tanh_c1")
+        c0f = _fresh("tanh_c0")
+        poly0 = _fresh("tanh_poly0")
+        poly1 = _fresh("tanh_poly1")
+        poly2 = _fresh("tanh_poly2")
+        poly3 = _fresh("tanh_poly3")
+        poly = _fresh("tanh_poly")
+        lines_local.append(f"{inner}{x2} = arith.mulf {x_ssa}, {x_ssa}{fm} : f32")
+        lines_local.append(f"{inner}{c3} = arith.constant -5.39682545e-02 : f32")
+        lines_local.append(f"{inner}{c2} = arith.constant 1.33333340e-01 : f32")
+        lines_local.append(f"{inner}{c1} = arith.constant -3.33333343e-01 : f32")
+        lines_local.append(f"{inner}{c0f} = arith.constant 0.0 : f32")
+        lines_local.append(f"{inner}{poly0} = llvm.intr.fma({c3}, {x2}, {c2}) : (f32, f32, f32) -> f32")
+        lines_local.append(f"{inner}{poly1} = llvm.intr.fma({poly0}, {x2}, {c1}) : (f32, f32, f32) -> f32")
+        lines_local.append(f"{inner}{poly2} = llvm.intr.fma({poly1}, {x2}, {c0f}) : (f32, f32, f32) -> f32")
+        lines_local.append(f"{inner}{poly3} = llvm.intr.fma({poly2}, {x_ssa}, {x_ssa}) : (f32, f32, f32) -> f32")
+        lines_local.append(f"{inner}scf.yield {poly3} : f32")
+        lines_local.append(f"{indent}}} else {{")
+        c_scale = _fresh("tanh_scale")
+        scaled = _fresh("tanh_scaled")
+        expv = _fresh("tanh_exp")
+        c_one = _fresh("tanh_one")
+        denom = _fresh("tanh_denom")
+        recip = _fresh("tanh_recip")
+        c_neg_two = _fresh("tanh_neg_two")
+        large = _fresh("tanh_large")
+        c_sat = _fresh("tanh_sat")
+        p_sat = _fresh("tanh_sat_p")
+        mag = _fresh("tanh_mag")
+        c_zero = _fresh("tanh_zero")
+        p_neg = _fresh("tanh_neg_p")
+        neg_mag = _fresh("tanh_neg")
+        signed = _fresh("tanh_signed")
+        lines_local.append(f"{inner}{c_scale} = arith.constant 2.88539004 : f32")
+        lines_local.append(f"{inner}{scaled} = arith.mulf {abs_x}, {c_scale}{fm} : f32")
+        lines_local.append(f"{inner}{expv} = math.exp2 {scaled}{fm} : f32")
+        lines_local.append(f"{inner}{c_one} = arith.constant 1.0 : f32")
+        lines_local.append(f"{inner}{denom} = arith.addf {expv}, {c_one}{fm} : f32")
+        lines_local.append(f"{inner}{recip} = arith.divf {c_one}, {denom}{fm} : f32")
+        lines_local.append(f"{inner}{c_neg_two} = arith.constant -2.0 : f32")
+        lines_local.append(f"{inner}{large} = llvm.intr.fma({recip}, {c_neg_two}, {c_one}) : (f32, f32, f32) -> f32")
+        lines_local.append(f"{inner}{c_sat} = arith.constant 9.01091385 : f32")
+        lines_local.append(f"{inner}{p_sat} = arith.cmpf oge, {abs_x}, {c_sat}{fm} : f32")
+        lines_local.append(f"{inner}{mag} = arith.select {p_sat}, {c_one}, {large} : f32")
+        lines_local.append(f"{inner}{c_zero} = arith.constant 0.0 : f32")
+        lines_local.append(f"{inner}{p_neg} = arith.cmpf olt, {x_ssa}, {c_zero}{fm} : f32")
+        lines_local.append(f"{inner}{neg_mag} = arith.negf {mag}{fm} : f32")
+        lines_local.append(f"{inner}{signed} = arith.select {p_neg}, {neg_mag}, {mag} : f32")
+        lines_local.append(f"{inner}scf.yield {signed} : f32")
+        lines_local.append(f"{indent}}}")
+        return lines_local, str(result)
+
+    def _emit_fast_tanh_vector(x_vec_ssa: str, *, indent: str = "        ") -> tuple[list[str], str]:
+        lines_local: list[str] = []
+        c0f = _fresh("tanh_zero")
+        cur = _fresh("tanh_vec0")
+        lines_local.append(f"{indent}{c0f} = arith.constant 0.0 : f32")
+        lines_local.append(f"{indent}{cur} = vector.splat {c0f} : {vec_ty}")
+        for lane in range(int(elems_per_thread)):
+            lane_val = _fresh(f"tanh_lane_{lane}")
+            next_vec = _fresh(f"tanh_vec_{lane}")
+            lines_local.append(f"{indent}{lane_val} = vector.extract {x_vec_ssa}[{lane}] : f32 from {vec_ty}")
+            lane_lines, lane_out = _emit_fast_tanh_scalar(str(lane_val), indent=indent)
+            lines_local.extend(lane_lines)
+            lines_local.append(f"{indent}{next_vec} = vector.insert {lane_out}, {cur}[{lane}] : f32 into {vec_ty}")
+            cur = str(next_vec)
+        return lines_local, cur
 
     def _emit_elementwise_vector_for_base(base_idx_ssa: str) -> list[str]:
         if not vectorize:
@@ -1513,6 +1605,32 @@ def lower_intent_to_cuda_gpu_kernel(
                 ssa_vec = _fresh(f"{name}_vec")
                 lines = [
                     f"        {ssa_vec} = vector.load {arg_ssa[str(name)]}[{base_idx_ssa}] : {memref}, {vec_ty}",
+                ]
+                loaded[name] = ssa_vec
+                loaded_ty[name] = str(vec_ty)
+                return lines
+            if bcast == "broadcast_n":
+                if int(out_rank or 0) != 2:
+                    raise RuntimeError("broadcast_n vectorize requires rank-2 output")
+                col_base = _fresh(f"{name}_col_base")
+                ssa_vec = _fresh(f"{name}_vec")
+                lines = [
+                    f"        {col_base} = arith.remui {base_idx_ssa}, %cN : index",
+                    f"        {ssa_vec} = vector.load {arg_ssa[str(name)]}[{col_base}] : {memref}, {vec_ty}",
+                ]
+                loaded[name] = ssa_vec
+                loaded_ty[name] = str(vec_ty)
+                return lines
+            if bcast == "broadcast_m":
+                if int(out_rank or 0) != 2:
+                    raise RuntimeError("broadcast_m vectorize requires rank-2 output")
+                row_base = _fresh(f"{name}_row_base")
+                ssa_scalar = _fresh(f"{name}_scalar")
+                ssa_vec = _fresh(f"{name}_splat")
+                lines = [
+                    f"        {row_base} = arith.divui {base_idx_ssa}, %cN : index",
+                    f"        {ssa_scalar} = memref.load {arg_ssa[str(name)]}[{row_base}] : {memref}",
+                    f"        {ssa_vec} = vector.splat {ssa_scalar} : {vec_ty}",
                 ]
                 loaded[name] = ssa_vec
                 loaded_ty[name] = str(vec_ty)
@@ -1660,8 +1778,12 @@ def lower_intent_to_cuda_gpu_kernel(
             if op_name == "tanh":
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("tanh vectorize expects vector<f32>")
-                dst = _fresh("tanh")
-                out_lines.append(f"        {dst} = math.tanh {in_ssa[0]}{fm} : {vec_ty}")
+                if use_fast_unary_math:
+                    tanh_lines, dst = _emit_fast_tanh_vector(str(in_ssa[0]), indent="        ")
+                    out_lines.extend(tanh_lines)
+                else:
+                    dst = _fresh("tanh")
+                    out_lines.append(f"        {dst} = math.tanh {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -2622,8 +2744,12 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1:
                     raise RuntimeError("tanh expects 1 input")
                 x = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
-                dst = _fresh("tanh")
-                out_lines.append(f"        {dst} = math.tanh {x}{fm} : f32")
+                if use_fast_unary_math:
+                    tanh_lines, dst = _emit_fast_tanh_scalar(str(x), indent="        ")
+                    out_lines.extend(tanh_lines)
+                else:
+                    dst = _fresh("tanh")
+                    out_lines.append(f"        {dst} = math.tanh {x}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -7364,6 +7490,10 @@ def lower_intent_to_cuda_gpu_kernel(
         )
     )
     kernel_kind_override = str((module.meta or {}).get("intentir_kernel_kind_override") or "").strip()
+    use_fast_unary_math = bool(
+        kernel_kind_override == "elementwise_v2"
+        and _env_flag("INTENTIR_CUDA_REAL_MLIR_ELEMENTWISE_FAST_UNARY", default=False)
+    )
     if row_rms_norm2d is None and out_m is not None and out_n is not None:
         def _struct_first_present(*names: str) -> str | None:
             for cand in names:
@@ -7550,9 +7680,11 @@ def lower_intent_to_cuda_gpu_kernel(
         allowed_by_intent: dict[str, set[str]] = {
             "add2d": {
                 "elementwise_v1",
+                "elementwise_v2",
             },
             "exp2d": {
                 "elementwise_v1",
+                "elementwise_v2",
             },
             "rms_norm2d": {
                 "rms_norm_axis1_v2",
@@ -7652,7 +7784,7 @@ def lower_intent_to_cuda_gpu_kernel(
         if allowed is None and rope_v1 is not None:
             allowed = {"rope_v1"}
         if allowed is None and elementwise_override_compatible:
-            allowed = {"elementwise_v1"}
+            allowed = {"elementwise_v1", "elementwise_v2"}
         if allowed is None:
             supported = ", ".join(sorted(allowed_by_intent))
             raise RuntimeError(
@@ -7991,19 +8123,34 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(
                         f"rms_norm_axis1_v4 requires chunk_count<=32 for full-row residency; got {chunk_count}"
                     )
-        if intent_name in {"add2d", "exp2d"}:
+        if intent_name in {"add2d", "exp2d"} or (
+            elementwise_override_compatible and kernel_kind_override in {"elementwise_v1", "elementwise_v2"}
+        ):
             req_threads = int(bindings.get("ELEMENTWISE_BLOCK_THREADS") or 256)
             req_vec = int(bindings.get("ELEMENTWISE_VECTOR_WIDTH") or 1)
             if req_threads not in {64, 128, 256, 512}:
                 raise RuntimeError(
-                    "elementwise_v1 requires ELEMENTWISE_BLOCK_THREADS in {64,128,256,512}; "
+                    f"{kernel_kind_override or 'elementwise_v1'} requires ELEMENTWISE_BLOCK_THREADS in {{64,128,256,512}}; "
                     f"got {req_threads}"
                 )
             if req_vec not in {1, 2, 4}:
                 raise RuntimeError(
-                    "elementwise_v1 requires ELEMENTWISE_VECTOR_WIDTH in {1,2,4}; "
+                    f"{kernel_kind_override or 'elementwise_v1'} requires ELEMENTWISE_VECTOR_WIDTH in {{1,2,4}}; "
                     f"got {req_vec}"
                 )
+            if kernel_kind_override == "elementwise_v2":
+                row_width = int(out_n or out_total or 0)
+                lane_width = int(req_threads * max(1, req_vec))
+                if lane_width <= 0 or row_width <= 0 or (row_width % lane_width) != 0:
+                    raise RuntimeError(
+                        "elementwise_v2 requires row width divisible by ELEMENTWISE_BLOCK_THREADS*ELEMENTWISE_VECTOR_WIDTH; "
+                        f"got row_width={row_width} threads={req_threads} vec={req_vec}"
+                    )
+                chunk_count = int(row_width // lane_width)
+                if chunk_count > 32:
+                    raise RuntimeError(
+                        f"elementwise_v2 requires chunk_count<=32 for full-row residency; got {chunk_count}"
+                    )
         if kernel_kind_override == "group_norm_v1":
             if group_norm_kernel_v1 is None:
                 raise RuntimeError(
@@ -25421,19 +25568,20 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        memref.store {acc}, {arg_ssa[out_name2]}[%lin] : {out_memref}")
         lines.append("      }")
     else:
-        if kernel_kind_override_enabled and kernel_kind_override == "elementwise_v1" and (
+        if kernel_kind_override_enabled and kernel_kind_override in {"elementwise_v1", "elementwise_v2"} and (
             intent_name in {"add2d", "exp2d"} or elementwise_override_compatible
         ):
             req_threads = int(bindings.get("ELEMENTWISE_BLOCK_THREADS") or 256)
             req_vec = int(bindings.get("ELEMENTWISE_VECTOR_WIDTH") or 1)
             if req_threads not in {64, 128, 256, 512}:
                 raise RuntimeError(
-                    f"elementwise_v1 requires ELEMENTWISE_BLOCK_THREADS in {{64,128,256,512}}; got {req_threads}"
+                    f"{kernel_kind_override} requires ELEMENTWISE_BLOCK_THREADS in {{64,128,256,512}}; got {req_threads}"
                 )
             if req_vec not in {1, 2, 4}:
                 raise RuntimeError(
-                    f"elementwise_v1 requires ELEMENTWISE_VECTOR_WIDTH in {{1,2,4}}; got {req_vec}"
+                    f"{kernel_kind_override} requires ELEMENTWISE_VECTOR_WIDTH in {{1,2,4}}; got {req_vec}"
                 )
+            kernel_kind = str(kernel_kind_override)
             elems_per_thread = int(req_vec)
             elems_per_thread_source = "binding:ELEMENTWISE_VECTOR_WIDTH"
             vectorize = bool(int(req_vec) > 1 and _eligible_for_vectorization_with(int(req_vec)))

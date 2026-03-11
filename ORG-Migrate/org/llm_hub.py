@@ -93,6 +93,8 @@ def _canonical_goal_tag(value: Any) -> str:
         "vector_io": "memory_coalescing",
         "coalesced_io": "memory_coalescing",
         "coalesced_memory": "memory_coalescing",
+        "operand_reuse": "resident_working_set",
+        "register_residency": "resident_working_set",
         "warp_reduction": "reduction_tree_balance",
         "row_reduction": "reduction_tree_balance",
         "reduction": "reduction_tree_balance",
@@ -163,6 +165,9 @@ def _canonical_mechanism_tag(value: Any, *, category: Any = "", goal_tags: set[s
     token = _norm_token(raw)
     category_token = _norm_token(category)
     goals = set(goal_tags or set())
+    token_tail = token.split(".")[-1]
+    token_compound = token.replace(".", "_")
+    normalized_tokens = {token, token_tail, token_compound}
     if token in {
         "row_tile_resident",
         "group_tile_resident",
@@ -183,31 +188,43 @@ def _canonical_mechanism_tag(value: Any, *, category: Any = "", goal_tags: set[s
         "activation_then_mul_fusion",
     }:
         return token
-    if token in {"blocked_tiling", "row_tiling", "row_resident", "resident_tile", "tile_resident"}:
+    if normalized_tokens & {"blocked_tiling", "row_tiling", "row_resident", "resident_tile", "tile_resident"}:
         return "row_tile_resident"
-    if token.startswith("warp_reduction_"):
+    if token.startswith("warp_reduction_") or token_tail.startswith("warp_reduction_"):
         return "warp_reduction"
-    if token.startswith("row_reduction_"):
+    if token.startswith("row_reduction_") or token_tail.startswith("row_reduction_"):
         return "row_reduction"
-    if token in {"vectorized_load", "vectorized_store", "vector_load", "vector_store", "coalesced_io", "vector_io"}:
+    if normalized_tokens & {"vectorized_load", "vectorized_store", "vector_load", "vector_store", "coalesced_io", "vector_io", "vec4_load", "vec2_load"}:
         return "vector_row_path" if "reduction_tree_balance" in goals or "streaming_softmax_state" in goals else "vector_global_io"
-    if token in {"tile_load", "tile_read"} or token.startswith("tile_load_"):
+    if normalized_tokens & {"tile_load", "tile_read"} or token.startswith("tile_load_") or token_tail.startswith("tile_load_"):
         return "tile_load_stage"
-    if token in {"warp_shuffle", "shuffle_reduce", "shuffle_tree"}:
+    if normalized_tokens & {"warp_shuffle", "shuffle_reduce", "shuffle_tree"}:
         return "warp_reduction_tree"
-    if token in {"block_sync", "barrier_sync", "block_barrier"}:
+    if normalized_tokens & {"block_sync", "barrier_sync", "block_barrier"}:
         return "block_synchronization"
-    if token in {"max_reduction", "sum_reduction", "online_max_sum", "softmax_reduction"}:
+    if normalized_tokens & {"max_reduction", "sum_reduction", "online_max_sum", "softmax_reduction"}:
         return "online_safe_math_reduction" if "streaming_softmax_state" in goals else "row_reduction"
-    if token in {"mean_reduction", "var_reduction", "variance_reduction", "stats_reduction"}:
+    if normalized_tokens & {"mean_reduction", "var_reduction", "variance_reduction", "stats_reduction"}:
         return "warp_reduction"
-    if token in {"stats_resident", "mean_rstd_resident", "multi_stats", "multi_output_stats"} or token.startswith("stats_resident") or token.startswith("multi_output_stats"):
+    if (
+        normalized_tokens & {"stats_resident", "mean_rstd_resident", "multi_stats", "multi_output_stats"}
+        or token.startswith("stats_resident")
+        or token.startswith("multi_output_stats")
+        or token_tail.startswith("stats_resident")
+        or token_tail.startswith("multi_output_stats")
+    ):
         return "multi_output_stats_resident"
-    if token in {"affine_fusion", "affine_output", "affine_writeback", "affine_scale_shift"} or token.startswith("affine_epilogue") or token.startswith("affine_out"):
+    if (
+        normalized_tokens & {"affine_fusion", "affine_output", "affine_writeback", "affine_scale_shift", "conditional_beta", "optional_bias", "bias_add"}
+        or token.startswith("affine_epilogue")
+        or token.startswith("affine_out")
+        or token_tail.startswith("affine_epilogue")
+        or token_tail.startswith("affine_out")
+    ):
         return "affine_epilogue"
-    if token in {"blocked_layout", "register_blocked_layout"}:
+    if normalized_tokens & {"blocked_layout", "register_blocked_layout"}:
         return "blocked_register_layout"
-    if token in {"activation_fusion", "gelu_mul", "geglu_fusion", "swiglu_fusion", "activation_then_mul"}:
+    if normalized_tokens & {"activation_fusion", "gelu_mul", "geglu_fusion", "swiglu_fusion", "activation_then_mul"}:
         return "activation_then_mul_fusion"
     if category_token == "communication.reduction":
         return "online_safe_math_reduction" if "streaming_softmax_state" in goals else "row_reduction"
