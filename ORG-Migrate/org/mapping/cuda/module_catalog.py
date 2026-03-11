@@ -218,8 +218,15 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
             id=f"{prefix}_vector_row_path",
             kind="mapping",
             provides=[f"{prefix}.vector_row_path"],
-            params=["SOFTMAX_BLOCK_THREADS"],
+            params=["SOFTMAX_BLOCK_THREADS", "SOFTMAX_VECTOR_WIDTH"],
             constraints=[],
+        ),
+        BackendModule(
+            id=f"{prefix}_full_row_vector_resident",
+            kind="primitive",
+            provides=[f"{prefix}.full_row_vector_resident"],
+            params=["SOFTMAX_FULL_ROW_VECTOR", "SOFTMAX_BLOCK_THREADS", "SOFTMAX_VECTOR_WIDTH"],
+            constraints=["SOFTMAX_FULL_ROW_VECTOR in {1}", "SOFTMAX_VECTOR_WIDTH in {4}"],
         ),
         BackendModule(
             id=f"{prefix}_mask_apply",
@@ -245,6 +252,23 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
             constraints=[],
         ),
     ]
+    if not masked:
+        modules.append(
+            BackendModule(
+                id=f"{prefix}_backend_fullrow_v2",
+                kind="template",
+                provides=["backend.kernel_kind.row_softmax_axis1_v2"],
+                requires=[
+                    f"{prefix}.row_tile_resident",
+                    f"{prefix}.row_reduction",
+                    f"{prefix}.online_safe_math_reduction",
+                    f"{prefix}.vector_row_path",
+                    f"{prefix}.full_row_vector_resident",
+                ],
+                params=["SOFTMAX_BLOCK_THREADS", "SOFTMAX_VECTOR_WIDTH", "SOFTMAX_FULL_ROW_VECTOR"],
+                constraints=["SOFTMAX_FULL_ROW_VECTOR in {1}", "SOFTMAX_VECTOR_WIDTH in {4}"],
+            )
+        )
     edges = [
         BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
@@ -253,6 +277,16 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_online_safe_math_reduction", edge_type="uses"),
     ]
+    if not masked:
+        edges.extend(
+            [
+                BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_row_tile_resident", edge_type="uses"),
+                BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_row_reduction", edge_type="uses"),
+                BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_online_safe_math_reduction", edge_type="uses"),
+                BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_vector_row_path", edge_type="uses"),
+                BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_full_row_vector_resident", edge_type="uses"),
+            ]
+        )
     if masked:
         edges.append(BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_mask_apply", edge_type="uses"))
         edges.append(BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_mask_apply", edge_type="uses"))
@@ -563,6 +597,13 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
             constraints=["LAYER_NORM_VECTOR_WIDTH in {1,2,4}"],
         ),
         BackendModule(
+            id="layer_norm_full_row_vector_resident",
+            kind="primitive",
+            provides=["layer_norm.full_row_vector_resident"],
+            params=["LAYER_NORM_FULL_ROW_VECTOR", "LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH"],
+            constraints=["LAYER_NORM_FULL_ROW_VECTOR in {1}", "LAYER_NORM_VECTOR_WIDTH in {4}"],
+        ),
+        BackendModule(
             id="layer_norm_persistent_row_cache",
             kind="staging",
             provides=["layer_norm.persistent_row_cache"],
@@ -589,6 +630,20 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
             params=["LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_PERSISTENT_ROW"],
             constraints=[],
         ),
+        BackendModule(
+            id="layer_norm_backend_v2",
+            kind="template",
+            provides=["backend.kernel_kind.layer_norm_axis1_v2"],
+            requires=[
+                "layer_norm.row_tile_resident",
+                "layer_norm.warp_statistics",
+                "layer_norm.multi_output_stats_resident",
+                "layer_norm.full_row_vector_resident",
+                "layer_norm.affine_epilogue",
+            ],
+            params=["LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_FULL_ROW_VECTOR"],
+            constraints=["LAYER_NORM_FULL_ROW_VECTOR in {1}", "LAYER_NORM_VECTOR_WIDTH in {4}"],
+        ),
     ]
     edges = [
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_row_tile_resident", edge_type="uses"),
@@ -597,6 +652,12 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_register_stage", edge_type="optional"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_persistent_row_cache", edge_type="optional"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_warp_statistics", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_multi_output_stats_resident", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_full_row_vector_resident", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_register_stage", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 

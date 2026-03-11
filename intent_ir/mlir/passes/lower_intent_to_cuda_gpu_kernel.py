@@ -1096,6 +1096,371 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      }")
         return launch
 
+    def _emit_layer_norm_full_row_vector_body(
+        *,
+        req_block_threads: int,
+        req_vector_width: int,
+        out_m_val: int,
+        out_n_val: int,
+        in_ssa_name: str,
+        in_memref_ty: str,
+        w_ssa_name: str,
+        w_memref_ty: str,
+        b_ssa_name: str,
+        b_memref_ty: str,
+        out_ssa_name: str,
+        out_memref_ty: str,
+        mean_ssa_name: str,
+        mean_memref_ty: str,
+        rstd_ssa_name: str,
+        rstd_memref_ty: str,
+        eps_tensor_name: str,
+        eps_memref_ty: str,
+        eps_const_value: float,
+    ) -> dict[str, list[int]]:
+        if int(req_block_threads) <= 0 or (int(req_block_threads) % 32) != 0 or int(req_block_threads) > 1024:
+            raise RuntimeError(
+                "layer_norm_axis1_v2 requires LAYER_NORM_BLOCK_THREADS to be a positive multiple of 32 and <=1024; "
+                f"got {int(req_block_threads)}"
+            )
+        if int(req_vector_width) != 4:
+            raise RuntimeError(
+                f"layer_norm_axis1_v2 requires LAYER_NORM_VECTOR_WIDTH==4; got {int(req_vector_width)}"
+            )
+        chunk_span = int(req_block_threads * req_vector_width)
+        if int(out_n_val) <= 0 or (int(out_n_val) % int(chunk_span)) != 0:
+            raise RuntimeError(
+                "layer_norm_axis1_v2 requires N divisible by LAYER_NORM_BLOCK_THREADS*LAYER_NORM_VECTOR_WIDTH; "
+                f"got N={int(out_n_val)} threads={int(req_block_threads)} vec={int(req_vector_width)}"
+            )
+        chunk_count = int(out_n_val // chunk_span)
+        if int(chunk_count) > 32:
+            raise RuntimeError(
+                f"layer_norm_axis1_v2 requires chunk_count<=32 for full-row residency; got {int(chunk_count)}"
+            )
+        launch = {"block": [int(req_block_threads), 1, 1], "grid": [int(out_m_val), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<64xf32, 3>"
+        vty = "vector<4xf32>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        lines.append("      %c32_sum = arith.constant 32 : index")
+        for off in (16, 8, 4, 2, 1):
+            lines.append(f"      %c{int(off)}_i32 = arith.constant {int(off)} : i32")
+        lines.append(f"      %cM = arith.constant {int(out_m_val)} : index")
+        lines.append(f"      %cN = arith.constant {int(out_n_val)} : index")
+        lines.append(f"      %cVec = arith.constant {int(req_vector_width)} : index")
+        lines.append(f"      %cWarps = arith.constant {int(max(1, req_block_threads // 32))} : index")
+        lines.append("      %warp = arith.divui %tid, %c32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32 : index")
+        lines.append("      %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("      %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("      %is_tid0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN : index")
+        eps_ssa = "%eps"
+        if eps_tensor_name:
+            eps_ssa = _fresh("ln_full_eps")
+            lines.append(f"        {eps_ssa} = memref.load {arg_ssa[eps_tensor_name]}[%c0] : {eps_memref_ty}")
+        else:
+            lines.append(f"        %eps = arith.constant {_as_f32_const(eps_const_value)} : f32")
+        lines.append("        %c0f = arith.constant 0.0 : f32")
+        lines.append("        %j_lane = arith.muli %tid, %cVec : index")
+        lines.append(f"        %sum_acc0 = vector.splat %c0f : {vty}")
+        lines.append(f"        %sumsq_acc0 = vector.splat %c0f : {vty}")
+        sum_acc = "%sum_acc0"
+        sumsq_acc = "%sumsq_acc0"
+        resident_chunks: list[tuple[str, str, str]] = []
+        for chunk in range(int(chunk_count)):
+            chunk_off = _fresh("ln_full_chunk_off")
+            j_ssa = _fresh("ln_full_j")
+            idx_ssa = _fresh("ln_full_idx")
+            x_ssa = _fresh("ln_full_x")
+            next_sum = _fresh("ln_full_sum")
+            next_sumsq = _fresh("ln_full_sumsq")
+            lines.append(f"        {chunk_off} = arith.constant {int(chunk * chunk_span)} : index")
+            lines.append(f"        {j_ssa} = arith.addi %j_lane, {chunk_off} : index")
+            lines.append(f"        {idx_ssa} = arith.addi %base, {j_ssa} : index")
+            lines.append(f"        {x_ssa} = vector.load {in_ssa_name}[{idx_ssa}] : {in_memref_ty}, {vty}")
+            lines.append(f"        {next_sum} = arith.addf {sum_acc}, {x_ssa}{fm} : {vty}")
+            lines.append(f"        {next_sumsq} = math.fma {x_ssa}, {x_ssa}, {sumsq_acc} : {vty}")
+            sum_acc = str(next_sum)
+            sumsq_acc = str(next_sumsq)
+            resident_chunks.append((str(j_ssa), str(idx_ssa), str(x_ssa)))
+        lines.append(f"        %partial_sum = vector.reduction <add>, {sum_acc} : {vty} into f32")
+        lines.append(f"        %partial_sumsq = vector.reduction <add>, {sumsq_acc} : {vty} into f32")
+
+        sum_cur = "%partial_sum"
+        sumsq_cur = "%partial_sumsq"
+        for off in (16, 8, 4, 2, 1):
+            sh_sum = _fresh(f"ln_full_sum_sh_{off}")
+            ok_sum = _fresh(f"ln_full_sum_ok_{off}")
+            next_sum = _fresh(f"ln_full_sum_{off}")
+            sh_sumsq = _fresh(f"ln_full_sumsq_sh_{off}")
+            ok_sumsq = _fresh(f"ln_full_sumsq_ok_{off}")
+            next_sumsq = _fresh(f"ln_full_sumsq_{off}")
+            lines.append(f"        {sh_sum}, {ok_sum} = gpu.shuffle xor {sum_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"        {next_sum} = arith.addf {sum_cur}, {sh_sum}{fm} : f32")
+            lines.append(f"        {sh_sumsq}, {ok_sumsq} = gpu.shuffle xor {sumsq_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"        {next_sumsq} = arith.addf {sumsq_cur}, {sh_sumsq}{fm} : f32")
+            sum_cur = str(next_sum)
+            sumsq_cur = str(next_sumsq)
+
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {sum_cur}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("          %warp_sumsq = arith.addi %warp, %c32_sum : index")
+        lines.append(f"          memref.store {sumsq_cur}, %sh[%warp_sumsq] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in_range = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %warp_sum = scf.if %lane_in_range -> (f32) {")
+        lines.append(f"            %wv = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %wv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        lines.append("          %warp_sumsq_idx = arith.addi %lane, %c32_sum : index")
+        lines.append("          %warp_sumsq = scf.if %lane_in_range -> (f32) {")
+        lines.append(f"            %wv2 = memref.load %sh[%warp_sumsq_idx] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %wv2 : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        blk_sum = "%warp_sum"
+        blk_sumsq = "%warp_sumsq"
+        for off in (16, 8, 4, 2, 1):
+            sh_sum = _fresh(f"ln_full_blk_sum_sh_{off}")
+            ok_sum = _fresh(f"ln_full_blk_sum_ok_{off}")
+            next_sum = _fresh(f"ln_full_blk_sum_{off}")
+            sh_sumsq = _fresh(f"ln_full_blk_sumsq_sh_{off}")
+            ok_sumsq = _fresh(f"ln_full_blk_sumsq_ok_{off}")
+            next_sumsq = _fresh(f"ln_full_blk_sumsq_{off}")
+            lines.append(f"          {sh_sum}, {ok_sum} = gpu.shuffle xor {blk_sum}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"          {next_sum} = arith.addf {blk_sum}, {sh_sum}{fm} : f32")
+            lines.append(f"          {sh_sumsq}, {ok_sumsq} = gpu.shuffle xor {blk_sumsq}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"          {next_sumsq} = arith.addf {blk_sumsq}, {sh_sumsq}{fm} : f32")
+            blk_sum = str(next_sum)
+            blk_sumsq = str(next_sumsq)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {blk_sum}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"            memref.store {blk_sumsq}, %sh[%c32_sum] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append(f"        %sumv = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"        %sumsqv = memref.load %sh[%c32_sum] : {shared_global_memref_ty}")
+        lines.append(f"        %n_f = arith.constant {_as_f32_const(int(out_n_val))} : f32")
+        lines.append(f"        %mean_v = arith.divf %sumv, %n_f{fm} : f32")
+        lines.append(f"        %ex2 = arith.divf %sumsqv, %n_f{fm} : f32")
+        lines.append(f"        %mean_sq = arith.mulf %mean_v, %mean_v{fm} : f32")
+        lines.append(f"        %var_raw = arith.subf %ex2, %mean_sq{fm} : f32")
+        lines.append("        %c0f_var = arith.constant 0.0 : f32")
+        lines.append(f"        %var = arith.maximumf %var_raw, %c0f_var{fm} : f32")
+        lines.append(f"        %var_eps = arith.addf %var, {eps_ssa}{fm} : f32")
+        lines.append(f"        %rstd_v = math.rsqrt %var_eps{fm} : f32")
+        lines.append("        scf.if %is_tid0 {")
+        lines.append(f"          memref.store %mean_v, {mean_ssa_name}[%bid] : {mean_memref_ty}")
+        lines.append(f"          memref.store %rstd_v, {rstd_ssa_name}[%bid] : {rstd_memref_ty}")
+        lines.append("        }")
+        lines.append(f"        %mean_vec = vector.splat %mean_v : {vty}")
+        lines.append(f"        %rstd_vec = vector.splat %rstd_v : {vty}")
+        for j_ssa, idx_ssa, x_ssa in resident_chunks:
+            w_ssa = _fresh("ln_full_w")
+            b_ssa = _fresh("ln_full_b")
+            dx_ssa = _fresh("ln_full_dx")
+            xn_ssa = _fresh("ln_full_xn")
+            y_ssa = _fresh("ln_full_y")
+            lines.append(f"        {w_ssa} = vector.load {w_ssa_name}[{j_ssa}] : {w_memref_ty}, {vty}")
+            lines.append(f"        {b_ssa} = vector.load {b_ssa_name}[{j_ssa}] : {b_memref_ty}, {vty}")
+            lines.append(f"        {dx_ssa} = arith.subf {x_ssa}, %mean_vec{fm} : {vty}")
+            lines.append(f"        {xn_ssa} = arith.mulf {dx_ssa}, %rstd_vec{fm} : {vty}")
+            lines.append(f"        {y_ssa} = math.fma {xn_ssa}, {w_ssa}, {b_ssa} : {vty}")
+            lines.append(f"        vector.store {y_ssa}, {out_ssa_name}[{idx_ssa}] : {out_memref_ty}, {vty}")
+        lines.append("      }")
+        return launch
+
+    def _emit_row_softmax_full_row_online_body(
+        *,
+        req_block_threads: int,
+        req_vector_width: int,
+        out_m_val: int,
+        out_n_val: int,
+        in_ssa_name: str,
+        in_memref_ty: str,
+        out_ssa_name: str,
+        out_memref_ty: str,
+    ) -> dict[str, list[int]]:
+        if int(req_block_threads) <= 0 or (int(req_block_threads) % 32) != 0 or int(req_block_threads) > 1024:
+            raise RuntimeError(
+                "row_softmax_axis1_v2 requires SOFTMAX_BLOCK_THREADS to be a positive multiple of 32 and <=1024; "
+                f"got {int(req_block_threads)}"
+            )
+        if int(req_vector_width) != 4:
+            raise RuntimeError(
+                f"row_softmax_axis1_v2 requires SOFTMAX_VECTOR_WIDTH==4; got {int(req_vector_width)}"
+            )
+        chunk_span = int(req_block_threads * req_vector_width)
+        if int(out_n_val) <= 0 or (int(out_n_val) % int(chunk_span)) != 0:
+            raise RuntimeError(
+                "row_softmax_axis1_v2 requires N divisible by SOFTMAX_BLOCK_THREADS*SOFTMAX_VECTOR_WIDTH; "
+                f"got N={int(out_n_val)} threads={int(req_block_threads)} vec={int(req_vector_width)}"
+            )
+        chunk_count = int(out_n_val // chunk_span)
+        if int(chunk_count) > 32:
+            raise RuntimeError(
+                f"row_softmax_axis1_v2 requires chunk_count<=32 for full-row residency; got {int(chunk_count)}"
+            )
+        launch = {"block": [int(req_block_threads), 1, 1], "grid": [int(out_m_val), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<32xf32, 3>"
+        vty = "vector<4xf32>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c0_i32 = arith.constant 0 : i32")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        for off in (16, 8, 4, 2, 1):
+            lines.append(f"      %c{int(off)}_i32 = arith.constant {int(off)} : i32")
+        lines.append(f"      %cM = arith.constant {int(out_m_val)} : index")
+        lines.append(f"      %cN = arith.constant {int(out_n_val)} : index")
+        lines.append(f"      %cVec = arith.constant {int(req_vector_width)} : index")
+        lines.append(f"      %cWarps = arith.constant {int(max(1, req_block_threads // 32))} : index")
+        lines.append("      %neg_inf = arith.constant -3.402823466e+38 : f32")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %cLOG2E = arith.constant 1.44269504 : f32")
+        lines.append("      %warp = arith.divui %tid, %c32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32 : index")
+        lines.append("      %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("      %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append("        %base = arith.muli %bid, %cN : index")
+        lines.append("        %j_lane = arith.muli %tid, %cVec : index")
+        resident_chunks: list[tuple[str, str, str, str]] = []
+        max_seed = "%neg_inf"
+        for chunk in range(int(chunk_count)):
+            chunk_off = _fresh("sm_full_chunk_off")
+            j_ssa = _fresh("sm_full_j")
+            idx_ssa = _fresh("sm_full_idx")
+            x_ssa = _fresh("sm_full_x")
+            part_max = _fresh("sm_full_part_max")
+            next_max = _fresh("sm_full_max")
+            lines.append(f"        {chunk_off} = arith.constant {int(chunk * chunk_span)} : index")
+            lines.append(f"        {j_ssa} = arith.addi %j_lane, {chunk_off} : index")
+            lines.append(f"        {idx_ssa} = arith.addi %base, {j_ssa} : index")
+            lines.append(f"        {x_ssa} = vector.load {in_ssa_name}[{idx_ssa}] : {in_memref_ty}, {vty}")
+            lines.append(f"        {part_max} = vector.reduction <maximumf>, {x_ssa} : {vty} into f32")
+            lines.append(f"        {next_max} = arith.maximumf {max_seed}, {part_max}{fm} : f32")
+            max_seed = str(next_max)
+            resident_chunks.append((str(j_ssa), str(idx_ssa), str(x_ssa), ""))
+
+        max_cur = max_seed
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"sm_full_max_sh_{off}")
+            ok = _fresh(f"sm_full_max_ok_{off}")
+            nxt = _fresh(f"sm_full_max_{off}")
+            lines.append(f"        {sh}, {ok} = gpu.shuffle xor {max_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"        {nxt} = arith.maximumf {max_cur}, {sh}{fm} : f32")
+            max_cur = str(nxt)
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {max_cur}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in_range = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %warp_max = scf.if %lane_in_range -> (f32) {")
+        lines.append(f"            %wv = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %wv : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %neg_inf : f32")
+        lines.append("          }")
+        blk_max = "%warp_max"
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"sm_full_blk_max_sh_{off}")
+            ok = _fresh(f"sm_full_blk_max_ok_{off}")
+            nxt = _fresh(f"sm_full_blk_max_{off}")
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {blk_max}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"          {nxt} = arith.maximumf {blk_max}, {sh}{fm} : f32")
+            blk_max = str(nxt)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {blk_max}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append(f"        %maxv = memref.load %sh[%c0] : {shared_global_memref_ty}")
+
+        lines.append(f"        %maxv_vec = vector.splat %maxv : {vty}")
+        lines.append(f"        %log2e_vec = vector.splat %cLOG2E : {vty}")
+        sum_acc = "%c0f"
+        exp_chunks: list[tuple[str, str, str]] = []
+        for idx, (j_ssa, idx_ssa, x_ssa, _) in enumerate(resident_chunks):
+            xc = _fresh(f"sm_full_xc_{idx}")
+            xcl2 = _fresh(f"sm_full_xcl2_{idx}")
+            ev = _fresh(f"sm_full_ev_{idx}")
+            part_sum = _fresh(f"sm_full_part_sum_{idx}")
+            next_sum = _fresh(f"sm_full_sum_{idx}")
+            lines.append(f"        {xc} = arith.subf {x_ssa}, %maxv_vec{fm} : {vty}")
+            lines.append(f"        {xcl2} = arith.mulf {xc}, %log2e_vec{fm} : {vty}")
+            lines.append(f"        {ev} = math.exp2 {xcl2}{fm} : {vty}")
+            lines.append(f"        {part_sum} = vector.reduction <add>, {ev} : {vty} into f32")
+            lines.append(f"        {next_sum} = arith.addf {sum_acc}, {part_sum}{fm} : f32")
+            sum_acc = str(next_sum)
+            exp_chunks.append((str(j_ssa), str(idx_ssa), str(ev)))
+
+        sum_cur = sum_acc
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"sm_full_sum_sh_{off}")
+            ok = _fresh(f"sm_full_sum_ok_{off}")
+            nxt = _fresh(f"sm_full_sum_{off}")
+            lines.append(f"        {sh}, {ok} = gpu.shuffle xor {sum_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"        {nxt} = arith.addf {sum_cur}, {sh}{fm} : f32")
+            sum_cur = str(nxt)
+        lines.append("        scf.if %is_lane0 {")
+        lines.append(f"          memref.store {sum_cur}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.if %is_warp0 {")
+        lines.append("          %lane_in_range_sum = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("          %warp_sum = scf.if %lane_in_range_sum -> (f32) {")
+        lines.append(f"            %wv2 = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("            scf.yield %wv2 : f32")
+        lines.append("          } else {")
+        lines.append("            scf.yield %c0f : f32")
+        lines.append("          }")
+        blk_sum = "%warp_sum"
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"sm_full_blk_sum_sh_{off}")
+            ok = _fresh(f"sm_full_blk_sum_ok_{off}")
+            nxt = _fresh(f"sm_full_blk_sum_{off}")
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {blk_sum}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"          {nxt} = arith.addf {blk_sum}, {sh}{fm} : f32")
+            blk_sum = str(nxt)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {blk_sum}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append(f"        %sumv = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"        %inv = arith.divf %c1f, %sumv{fm} : f32")
+        lines.append(f"        %inv_vec = vector.splat %inv : {vty}")
+        for j_ssa, idx_ssa, ev_ssa in exp_chunks:
+            y_ssa = _fresh("sm_full_y")
+            lines.append(f"        {y_ssa} = arith.mulf {ev_ssa}, %inv_vec{fm} : {vty}")
+            lines.append(f"        vector.store {y_ssa}, {out_ssa_name}[{idx_ssa}] : {out_memref_ty}, {vty}")
+        lines.append("      }")
+        return launch
+
     out_spec = arg_specs[out_name]
     out_memref = str(out_spec["memref"])
     out_memref_elem_ty = str(out_spec.get("memref_elem_ty") or "")
@@ -7221,10 +7586,12 @@ def lower_intent_to_cuda_gpu_kernel(
                 "row_softmax_axis1_triton_v1",
                 "row_softmax_axis1_vec4_v2",
                 "row_softmax_axis1_v1",
+                "row_softmax_axis1_v2",
             },
             "softmax_inner": {
                 "row_softmax_axis1_triton_v1",
                 "row_softmax_axis1_v1",
+                "row_softmax_axis1_v2",
             },
             "masked_softmax2d": {
                 "row_masked_softmax_axis1_v1",
@@ -7237,6 +7604,7 @@ def lower_intent_to_cuda_gpu_kernel(
             },
             "layer_norm_persistent": {
                 "layer_norm_axis1_v1",
+                "layer_norm_axis1_v2",
             },
             "group_norm_kernel": {
                 "group_norm_v1",
@@ -7268,9 +7636,10 @@ def lower_intent_to_cuda_gpu_kernel(
                 "row_softmax_axis1_triton_v1",
                 "row_softmax_axis1_v1",
                 "row_softmax_axis1_vec4_v2",
+                "row_softmax_axis1_v2",
             }
         if allowed is None and row_layer_norm_persistent is not None:
-            allowed = {"layer_norm_axis1_v1"}
+            allowed = {"layer_norm_axis1_v1", "layer_norm_axis1_v2"}
         if allowed is None and rope_dual_v1 is not None:
             allowed = {"rope_dual_v1"}
         if allowed is None and cross_entropy_loss_v1 is not None:
@@ -7436,6 +7805,7 @@ def lower_intent_to_cuda_gpu_kernel(
             "row_softmax_axis1_triton_v1",
             "row_softmax_axis1_v1",
             "row_softmax_axis1_vec4_v2",
+            "row_softmax_axis1_v2",
         }:
             if row_softmax_axis1 is None:
                 raise RuntimeError(
@@ -7453,6 +7823,25 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(
                         "row_softmax_axis1_vec4_v2 requires SOFTMAX_VEC4==1; "
                         f"got {req_vec4}"
+                    )
+            if kernel_kind_override == "row_softmax_axis1_v2":
+                req_threads = int(bindings.get("SOFTMAX_BLOCK_THREADS") or 256)
+                req_vec = int(bindings.get("SOFTMAX_VECTOR_WIDTH") or 4)
+                req_full_row = int(bindings.get("SOFTMAX_FULL_ROW_VECTOR") or 1)
+                if req_threads not in {32, 64, 128, 256, 512, 1024}:
+                    raise RuntimeError(
+                        "row_softmax_axis1_v2 requires SOFTMAX_BLOCK_THREADS in {32,64,128,256,512,1024}; "
+                        f"got {req_threads}"
+                    )
+                if req_vec != 4:
+                    raise RuntimeError(
+                        "row_softmax_axis1_v2 requires SOFTMAX_VECTOR_WIDTH==4; "
+                        f"got {req_vec}"
+                    )
+                if req_full_row != 1:
+                    raise RuntimeError(
+                        "row_softmax_axis1_v2 requires SOFTMAX_FULL_ROW_VECTOR==1; "
+                        f"got {req_full_row}"
                     )
         if intent_name == "row_sum":
             if row_reduce_sum_axis1 is None:
@@ -7506,7 +7895,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 )
             if req_threads > 32 and req_shared != 1:
                 raise RuntimeError("row_max_axis1_v2 requires shared_stage=1 when block_threads>32")
-        if kernel_kind_override == "layer_norm_axis1_v1":
+        if kernel_kind_override in {"layer_norm_axis1_v1", "layer_norm_axis1_v2"}:
             if row_layer_norm_persistent is None:
                 raise RuntimeError(
                     f"intentir_kernel_kind_override={kernel_kind_override!r} requires layer_norm matcher; "
@@ -7515,7 +7904,24 @@ def lower_intent_to_cuda_gpu_kernel(
             req_threads = int(bindings.get("LAYER_NORM_BLOCK_THREADS") or 64)
             req_vec = int(bindings.get("LAYER_NORM_VECTOR_WIDTH") or 1)
             req_persistent = int(bindings.get("LAYER_NORM_PERSISTENT_ROW") or 0)
-            if req_threads not in {32, 64, 128, 256}:
+            if kernel_kind_override == "layer_norm_axis1_v2":
+                if req_threads not in {32, 64, 128, 256, 512, 1024}:
+                    raise RuntimeError(
+                        "layer_norm_axis1_v2 requires LAYER_NORM_BLOCK_THREADS in {32,64,128,256,512,1024}; "
+                        f"got {req_threads}"
+                    )
+                if req_vec != 4:
+                    raise RuntimeError(
+                        "layer_norm_axis1_v2 requires LAYER_NORM_VECTOR_WIDTH==4; "
+                        f"got {req_vec}"
+                    )
+                req_full_row = int(bindings.get("LAYER_NORM_FULL_ROW_VECTOR") or 1)
+                if req_full_row != 1:
+                    raise RuntimeError(
+                        "layer_norm_axis1_v2 requires LAYER_NORM_FULL_ROW_VECTOR==1; "
+                        f"got {req_full_row}"
+                    )
+            elif req_threads not in {32, 64, 128, 256}:
                 raise RuntimeError(
                     "layer_norm_axis1_v1 requires LAYER_NORM_BLOCK_THREADS in {32,64,128,256}; "
                     f"got {req_threads}"
@@ -11299,6 +11705,40 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"          memref.store {y_elem}, {arg_ssa[out_name2]}[{idx}] : {out_memref}")
                 lines.append("        }")
         lines.append("      }")
+    elif (
+        row_softmax_axis1 is not None
+        and kernel_kind_override_enabled
+        and kernel_kind_override == "row_softmax_axis1_v2"
+    ):
+        kernel_kind = "row_softmax_axis1_v2"
+        assert out_m is not None
+        assert out_n is not None
+        inp_name = str(row_softmax_axis1["inp"])
+        out_name2 = str(row_softmax_axis1["out"])
+        red_n = int(row_softmax_axis1["reduce_n"])
+        in_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        if red_n <= 0:
+            raise RuntimeError("softmax2d reduce_n must be > 0")
+        req_block_threads = int(bindings.get("SOFTMAX_BLOCK_THREADS") or 256)
+        req_vector_width = int(bindings.get("SOFTMAX_VECTOR_WIDTH") or 4)
+        in_aligned = f"%{_mlir_ident(inp_name)}_aligned"
+        out_aligned = f"%{_mlir_ident(out_name2)}_aligned"
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<32xf32, 3>"
+        lines.append(f"      {in_aligned} = memref.assume_alignment {arg_ssa[inp_name]}, 16 : {in_memref}")
+        lines.append(f"      {out_aligned} = memref.assume_alignment {arg_ssa[out_name2]}, 16 : {out_memref}")
+        launch_override = _emit_row_softmax_full_row_online_body(
+            req_block_threads=int(req_block_threads),
+            req_vector_width=int(req_vector_width),
+            out_m_val=int(out_m),
+            out_n_val=int(red_n),
+            in_ssa_name=str(in_aligned),
+            in_memref_ty=str(in_memref),
+            out_ssa_name=str(out_aligned),
+            out_memref_ty=str(out_memref),
+        )
     elif row_softmax_axis1 is not None:
         kernel_kind = "row_softmax_axis1_v1"
         assert out_m is not None
@@ -12379,6 +12819,65 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          memref.store %y, {arg_ssa['output_1']}[%idx3] : {y_memref}")
         lines.append("        }")
         lines.append("      }")
+    elif (
+        row_layer_norm_persistent is not None
+        and kernel_kind_override_enabled
+        and kernel_kind_override == "layer_norm_axis1_v2"
+    ):
+        kernel_kind = "layer_norm_axis1_v2"
+        assert out_m is not None
+        assert out_n is not None
+
+        in_name = str(row_layer_norm_persistent.get("inp") or "in_ptr")
+        w_name = str(row_layer_norm_persistent.get("weight") or "weight_ptr")
+        b_name = str(row_layer_norm_persistent.get("bias") or "bias_ptr")
+        out_name2 = str(row_layer_norm_persistent.get("out") or "out_ptr")
+        mean_name = str(row_layer_norm_persistent.get("mean") or "out_mean_ptr")
+        rstd_name = str(row_layer_norm_persistent.get("rstd") or "out_rstd_ptr")
+        eps_tensor_name = str(row_layer_norm_persistent.get("eps_tensor_name") or "").strip()
+        eps_const = float(row_layer_norm_persistent.get("eps_const") or 0.0)
+
+        in_memref = str(arg_specs[in_name]["memref"])
+        w_memref = str(arg_specs[w_name]["memref"])
+        b_memref = str(arg_specs[b_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        mean_memref = str(arg_specs[mean_name]["memref"])
+        rstd_memref = str(arg_specs[rstd_name]["memref"])
+        eps_memref = str(arg_specs[eps_tensor_name]["memref"]) if eps_tensor_name else ""
+
+        req_block_threads = int(bindings.get("LAYER_NORM_BLOCK_THREADS") or 256)
+        req_vector_width = int(bindings.get("LAYER_NORM_VECTOR_WIDTH") or 4)
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<64xf32, 3>"
+        in_aligned = f"%{_mlir_ident(in_name)}_aligned"
+        w_aligned = f"%{_mlir_ident(w_name)}_aligned"
+        b_aligned = f"%{_mlir_ident(b_name)}_aligned"
+        out_aligned = f"%{_mlir_ident(out_name2)}_aligned"
+        lines.append(f"      {in_aligned} = memref.assume_alignment {arg_ssa[in_name]}, 16 : {in_memref}")
+        lines.append(f"      {w_aligned} = memref.assume_alignment {arg_ssa[w_name]}, 16 : {w_memref}")
+        lines.append(f"      {b_aligned} = memref.assume_alignment {arg_ssa[b_name]}, 16 : {b_memref}")
+        lines.append(f"      {out_aligned} = memref.assume_alignment {arg_ssa[out_name2]}, 16 : {out_memref}")
+        launch_override = _emit_layer_norm_full_row_vector_body(
+            req_block_threads=int(req_block_threads),
+            req_vector_width=int(req_vector_width),
+            out_m_val=int(out_m),
+            out_n_val=int(out_n),
+            in_ssa_name=str(in_aligned),
+            in_memref_ty=str(in_memref),
+            w_ssa_name=str(w_aligned),
+            w_memref_ty=str(w_memref),
+            b_ssa_name=str(b_aligned),
+            b_memref_ty=str(b_memref),
+            out_ssa_name=str(out_aligned),
+            out_memref_ty=str(out_memref),
+            mean_ssa_name=str(arg_ssa[mean_name]),
+            mean_memref_ty=str(mean_memref),
+            rstd_ssa_name=str(arg_ssa[rstd_name]),
+            rstd_memref_ty=str(rstd_memref),
+            eps_tensor_name=str(eps_tensor_name),
+            eps_memref_ty=str(eps_memref),
+            eps_const_value=float(eps_const),
+        )
     elif row_layer_norm_persistent is not None:
         kernel_kind = "layer_norm_axis1_v1"
         assert out_m is not None

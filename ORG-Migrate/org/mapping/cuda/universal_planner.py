@@ -231,7 +231,23 @@ def _tensor_role_tokens(org: OrgDoc) -> dict[str, set[str]]:
             tokens.add("view")
         for alias in list(getattr(tensor, "aliases", []) or []):
             tokens.add(_norm_token(alias))
-        out[str(tensor_id)] = {x for x in tokens if x}
+        expanded = set(tokens)
+        for token in list(tokens):
+            if not token:
+                continue
+            if "mean" in token:
+                expanded.update({"mean", "mean_state", "row_mean"})
+            if "rstd" in token or "inv_rms" in token or "rms" in token:
+                expanded.update({"rstd", "rms_state"})
+            if token in {"output_tile", "output", "output_accumulator"} or token.endswith("_out") or token.endswith("_output"):
+                expanded.update({"output", "output_accumulator"})
+            if token in {"input_tile", "input_row"} or token.startswith("x_"):
+                expanded.add("input_row")
+            if token in {"param_tile", "weight"}:
+                expanded.add("weight")
+            if token in {"bias", "b_tile"}:
+                expanded.add("bias")
+        out[str(tensor_id)] = {x for x in expanded if x}
     return out
 
 
@@ -295,6 +311,23 @@ def _is_full_row_reuse_window(value: Any) -> bool:
         "row_normalization",
         "row_normalization_epilogue",
     }
+
+
+def _blocked_layout_full_row_hint(
+    *,
+    row_width: int,
+    blocked_threads_hint: int | None,
+    blocked_vector_hint: int | None,
+) -> bool:
+    threads = int(blocked_threads_hint or 0)
+    vector_width = int(blocked_vector_hint or 0)
+    if row_width <= 0 or threads <= 0 or vector_width <= 0:
+        return False
+    lane_width = int(threads * vector_width)
+    if lane_width <= 0 or (int(row_width) % lane_width) != 0:
+        return False
+    chunk_count = int(row_width // lane_width)
+    return 0 < chunk_count <= 32
 
 
 @dataclass(frozen=True)
@@ -490,6 +523,16 @@ def _graph_profile(
         signal_names.add("vector_path")
     if "persistent_row_state" in goal_tags:
         signal_names.add("persistent_path")
+    if _blocked_layout_full_row_hint(
+        row_width=int(row_width),
+        blocked_threads_hint=blocked_threads_hint,
+        blocked_vector_hint=blocked_vector_hint,
+    ) and (
+        "vector_path" in signal_names
+        or "memory_coalescing" in goal_tags
+        or mechanism_tags & {"blocked_register_layout", "tile_load_stage"}
+    ):
+        signal_names.add("full_row_path")
 
     if mechanism_tags & {"shared_staging", "block_synchronization"}:
         signal_names.add("sync_path")
@@ -722,6 +765,20 @@ def _graph_profile(
             total_work *= int(iv)
     if int(row_width) == 64:
         signal_names.add("row_width_64")
+    if (
+        "full_row_path" in signal_names
+        and "full_row_register" in resource_groups
+        and int(resource_groups["full_row_register"].bytes_hint or 0) == 0
+        and int(row_width) > 0
+    ):
+        resource_groups["full_row_register"] = ResourceGroup(
+            name="full_row_register",
+            lifetime_ids=tuple(resource_groups["full_row_register"].lifetime_ids),
+            bytes_hint=int(row_width * 4),
+            reuse_scope="loop",
+            storage="register",
+            tensor_count=max(1, int(resource_groups["full_row_register"].tensor_count or 0)),
+        )
     head_dim = int(_coerce_int(shape_bindings.get("HEAD_DIM")) or 0)
 
     notes = [
@@ -1007,7 +1064,7 @@ def _resource_fit(
     if any(_norm_token(x) == "mma_async_copy" for x in enabled_flag_names):
         shared_bytes += _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="operand_stage", hardware_model=hardware_model)
         shared_bytes *= max(1, int(profile.pipeline_depth))
-    if any(_norm_token(x) == "rms_norm_full_row_vector" for x in enabled_flag_names):
+    if any("full_row_vector" in _norm_token(x) for x in enabled_flag_names):
         if int(profile.row_width or 0) < 1024:
             return ResourceFit(
                 allowed=False,
@@ -1037,6 +1094,8 @@ def _resource_fit(
                 shared_ratio=float(shared_bytes) / float(max(1, shared_budget)),
                 register_ratio=float(full_row_register_bytes) / float(max(1, register_budget_bytes)),
             )
+        if profile.has_signal("online_state"):
+            full_row_register_bytes = max(int(full_row_register_bytes), int(profile.row_width or 0) * 8)
         register_bytes = max(int(profile.register_bytes or 0), int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
     else:
         register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
@@ -1504,9 +1563,24 @@ def _family_specs() -> dict[str, FamilySpec]:
             catalog_builder=lambda hw: row_softmax_catalog(hw, masked=False),
             required_shape_keys=("M", "N"),
             base_modules=("softmax_inner_row_tile_resident", "softmax_inner_row_reduction", "softmax_inner_online_safe_math_reduction"),
-            optional_modules=(OptionalModuleSpec(module_id="softmax_inner_vector_row_path", signals=("vector_path",)),),
-            params=(ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(64, 128), allowed_values=(32, 64, 128), cap_mode="softmax_threads"),),
+            optional_modules=(
+                OptionalModuleSpec(module_id="softmax_inner_vector_row_path", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="softmax_inner_full_row_vector_resident", signals=("full_row_path",), gate_param="SOFTMAX_FULL_ROW_VECTOR"),
+            ),
+            params=(
+                ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(256, 128, 64), allowed_values=(32, 64, 128, 256)),
+                ParamSpec(name="SOFTMAX_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(4, 1), allowed_values=(1, 4)),
+                ParamSpec(name="SOFTMAX_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
+            ),
             templates=(
+                TemplateSpec(
+                    kernel_kind="row_softmax_axis1_v2",
+                    module_id="softmax_inner_backend_fullrow_v2",
+                    param_names=("SOFTMAX_BLOCK_THREADS", "SOFTMAX_VECTOR_WIDTH", "SOFTMAX_FULL_ROW_VECTOR"),
+                    enabled_flags=("SOFTMAX_FULL_ROW_VECTOR",),
+                    required_signals=("reduction_path", "online_state", "vector_path", "full_row_path"),
+                    signal_weights={"vector_path": 14.0, "online_state": 18.0, "stateful_recurrence": 8.0, "full_row_path": 36.0},
+                ),
                 TemplateSpec(
                     kernel_kind="row_softmax_axis1_triton_v1",
                     module_id="softmax_inner_backend_triton_v1",
@@ -1736,13 +1810,23 @@ def _family_specs() -> dict[str, FamilySpec]:
             optional_modules=(
                 OptionalModuleSpec(module_id="layer_norm_register_stage", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="layer_norm_persistent_row_cache", signals=("persistent_path",), gate_param="LAYER_NORM_PERSISTENT_ROW"),
+                OptionalModuleSpec(module_id="layer_norm_full_row_vector_resident", signals=("full_row_path",), gate_param="LAYER_NORM_FULL_ROW_VECTOR"),
             ),
             params=(
                 ParamSpec(name="LAYER_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(32, 64, 128, 256), allowed_values=(32, 64, 128, 256)),
                 ParamSpec(name="LAYER_NORM_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(1, 2, 4), allowed_values=(1, 2, 4)),
                 ParamSpec(name="LAYER_NORM_PERSISTENT_ROW", role="persistent_stage", dim_aliases=("persistent_row",), defaults=(1, 0), allowed_values=(0, 1)),
+                ParamSpec(name="LAYER_NORM_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
             ),
             templates=(
+                TemplateSpec(
+                    kernel_kind="layer_norm_axis1_v2",
+                    module_id="layer_norm_backend_v2",
+                    param_names=("LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_FULL_ROW_VECTOR"),
+                    enabled_flags=("LAYER_NORM_FULL_ROW_VECTOR",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "mean_state", "rms_state", "full_row_path"),
+                    signal_weights={"vector_path": 16.0, "mean_state": 10.0, "rms_state": 10.0, "stateful_recurrence": 8.0, "full_row_path": 36.0},
+                ),
                 TemplateSpec(
                     kernel_kind="layer_norm_axis1_v1",
                     module_id="layer_norm_backend_v1",

@@ -555,6 +555,13 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
         if not isinstance(raw_dim, Mapping):
             continue
         dim = dict(raw_dim)
+        constraints_out: list[str] = []
+        for raw_constraint in list(dim.get("constraints") or []):
+            text = str(raw_constraint or "").strip()
+            if text:
+                constraints_out.append(text)
+        if constraints_out or "constraints" in dim:
+            dim["constraints"] = constraints_out
         dim["evidence_refs"] = [
             ref for ref in [str(x).strip() for x in list(dim.get("evidence_refs") or []) if str(x).strip()] if ref in evidence_ids
         ]
