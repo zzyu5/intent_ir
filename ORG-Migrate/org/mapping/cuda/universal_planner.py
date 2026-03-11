@@ -10,6 +10,7 @@ from org.mapping.cuda.module_catalog import (
     ai_bench_matmul_catalog,
     ai_bench_softmax_catalog,
     attn_fwd_catalog,
+    cfg_masked_row_reduce_catalog,
     cross_entropy_loss_catalog,
     elementwise2d_catalog,
     flash_attention2d_catalog,
@@ -188,6 +189,9 @@ class GraphProfile:
     cfg_shared_bytes: int = 0
     cfg_register_bytes: int = 0
     cfg_path_bytes: dict[str, int] = field(default_factory=dict)
+    cfg_path_count: int = 0
+    cfg_uniform_branch: bool = False
+    cfg_divergence_penalty_bytes: int = 0
     resource_groups: dict[str, ResourceGroup] = field(default_factory=dict)
     resident_window_scope: str = ""
     full_row_bytes: int = 0
@@ -327,6 +331,9 @@ def _graph_profile(
     cfg_shared_bytes = 0
     cfg_register_bytes = 0
     cfg_path_bytes: dict[str, int] = {}
+    cfg_path_count = 0
+    cfg_uniform_branch = False
+    cfg_divergence_penalty_bytes = 0
     resident_window_scope = ""
     stream_shared_ids: list[str] = []
     row_shared_ids: list[str] = []
@@ -374,6 +381,13 @@ def _graph_profile(
     if mechanism_tags & {"branch_mask", "ignore_mask"}:
         signal_names.add("cfg_path")
         signal_names.add("branch_mask")
+    branch_mechanisms = [
+        mechanism
+        for mechanism in list(getattr(org, "mechanisms", []) or [])
+        if _norm_token(getattr(mechanism, "tag", "")) in {"branch_mask", "ignore_mask"}
+    ]
+    if branch_mechanisms and all(bool((dict(getattr(mechanism, "attrs", {}) or {})).get("early_exit")) for mechanism in branch_mechanisms):
+        cfg_uniform_branch = True
 
     def _ensure_group(name: str, *, lifetimes: list[OrgTensorLifetime], storage: str = "", reuse_scope: str = "") -> None:
         nonlocal resource_groups
@@ -531,10 +545,13 @@ def _graph_profile(
             path_register[path_id] = int(register_acc)
         cfg_shared_bytes = max([0, *path_shared.values()])
         cfg_register_bytes = max([0, *path_register.values()])
+        cfg_path_count = int(len(set(path_shared) | set(path_register)))
         cfg_path_bytes = {
             str(path_id): int(path_shared.get(path_id, 0)) + int(path_register.get(path_id, 0))
             for path_id in sorted(set(path_shared) | set(path_register))
         }
+    if cfg_path_bytes and not cfg_uniform_branch:
+        cfg_divergence_penalty_bytes = int(max(cfg_path_bytes.values()) - min(cfg_path_bytes.values()))
     _ensure_group("stream_shared", lifetimes=[lifetimes_by_id[x] for x in stream_shared_ids if x in lifetimes_by_id], storage="shared", reuse_scope="tile")
     _ensure_group("row_shared", lifetimes=[lifetimes_by_id[x] for x in row_shared_ids if x in lifetimes_by_id], storage="shared", reuse_scope=resident_window_scope or "tile")
     _ensure_group("operand_stage", lifetimes=[lifetimes_by_id[x] for x in operand_ids if x in lifetimes_by_id], storage="shared", reuse_scope="tile")
@@ -571,6 +588,7 @@ def _graph_profile(
         notes.append(f"topology_full_row_bytes={full_row_bytes}")
     if cfg_path_bytes:
         notes.append(f"topology_cfg_max_path_bytes={int(max(cfg_path_bytes.values()))}")
+        notes.append(f"topology_cfg_uniform_branch={bool(cfg_uniform_branch)}")
         notes.append(
             "topology_cfg_paths="
             + ";".join(f"{path_id}:{int(bytes_hint)}" for path_id, bytes_hint in sorted(cfg_path_bytes.items()))
@@ -590,6 +608,9 @@ def _graph_profile(
         cfg_shared_bytes=int(cfg_shared_bytes),
         cfg_register_bytes=int(cfg_register_bytes),
         cfg_path_bytes={str(k): int(v) for k, v in dict(cfg_path_bytes or {}).items()},
+        cfg_path_count=int(cfg_path_count),
+        cfg_uniform_branch=bool(cfg_uniform_branch),
+        cfg_divergence_penalty_bytes=int(cfg_divergence_penalty_bytes),
         resource_groups=resource_groups,
         resident_window_scope=str(resident_window_scope),
         full_row_bytes=int(full_row_bytes),
@@ -712,7 +733,12 @@ def _resolve_family_spec(
             _consider("ai_bench_softmax", 112.0, "graph:vector_softmax")
         _consider("softmax_inner", 110.0, "graph:softmax")
     if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.has_signal("reduction_path"):
-        _consider("cross_entropy_loss2d", 116.0, "graph:cfg+gather+reduction")
+        base_score = 116.0
+        if profile.has_signal("resident_state"):
+            base_score += 6.0
+        if profile.cfg_uniform_branch:
+            base_score += 10.0
+        _consider("cfg_masked_row_reduce2d", base_score, "graph:cfg+gather+reduction")
     if profile.has_signal("reduction_path") and profile.has_signal("fused_epilogue"):
         if _shape_keys_present(shape_bindings, ("N", "GROUP_SIZE")):
             _consider("group_norm_kernel", 108.0, "graph:group_norm")
@@ -805,7 +831,9 @@ def _resource_fit(
 ) -> ResourceFit:
     # Region-graph resource calculus:
     #   bytes(path pi) = sum_{g in active_groups(pi)} bytes(g)
-    #   resource_cfg = max_{pi in Paths(region_graph)} bytes(path pi)
+    #   divergence(pi) = 0                                 if predicate is CTA-uniform early-exit
+    #                 = bytes(path pi) - min_j bytes(path j) otherwise
+    #   resource_cfg = max_{pi in Paths(region_graph)} (bytes(path pi) + divergence(pi))
     # When no RegionGraph is present, the system collapses to a single static path and
     # the equations below evaluate that degenerate case directly.
     shared_budget = int(hardware_model.shared_mem_kb) * 1024
@@ -854,6 +882,7 @@ def _resource_fit(
         register_bytes = max(int(profile.register_bytes or 0), int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
     else:
         register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
+    register_bytes += int(profile.cfg_divergence_penalty_bytes or 0)
     if any(_norm_token(x).endswith("shared_stage") for x in enabled_flag_names) and not profile.has_signal("async_evidence") and profile.has_signal("async_pipeline"):
         shared_bytes = max(shared_bytes, _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="stream_shared", hardware_model=hardware_model))
     shared_bytes = max(shared_bytes, int(profile.cfg_shared_bytes or 0))
@@ -921,6 +950,16 @@ def _score_param(
         if profile.has_signal("reduction_path") and profile.reduction_scope == "warp" and iv in {32, 64, 128}:
             score += 6.0
             reasons.append("warp_reduction_threads")
+        if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.row_width >= 1024:
+            if profile.cfg_uniform_branch and iv == 1024:
+                score += 34.0
+                reasons.append("cfg_uniform_full_cta")
+            elif iv == 512:
+                score += 12.0
+                reasons.append("cfg_half_cta")
+            elif iv < 256:
+                score -= 28.0
+                reasons.append("cfg_underthreaded")
     elif param.role == "vector_width":
         if profile.blocked_vector_hint is not None and int(profile.blocked_vector_hint) == iv:
             score += 10.0
@@ -939,6 +978,13 @@ def _score_param(
             score += {4: 16.0, 2: 8.0}.get(iv, 0.0)
             if iv > 1:
                 reasons.append("bandwidth_vector")
+        if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.row_width >= 1024:
+            if iv == 4:
+                score += 18.0
+                reasons.append("cfg_vec4")
+            elif iv == 1:
+                score -= 10.0
+                reasons.append("cfg_scalar")
         group_size = _coerce_int(_lookup_binding(shape_bindings, "GROUP_SIZE"))
         if group_size is not None and profile.has_signal("vector_path"):
             if int(group_size) == 1 and iv > 1:
@@ -1462,24 +1508,45 @@ def _family_specs() -> dict[str, FamilySpec]:
                 ),
             ),
         ),
-        "cross_entropy_loss2d": FamilySpec(
-            kernel="cross_entropy_loss2d",
-            catalog_builder=cross_entropy_loss_catalog,
+        "cfg_masked_row_reduce2d": FamilySpec(
+            kernel="cfg_masked_row_reduce2d",
+            catalog_builder=cfg_masked_row_reduce_catalog,
             required_shape_keys=("BT", "V"),
-            base_modules=("ce_row_reduction", "ce_label_gather", "ce_branch_mask", "ce_loss_finalize", "ce_backend_v1"),
+            base_modules=(
+                "cfg_masked_row_reduction",
+                "cfg_masked_label_gather",
+                "cfg_masked_branch_predicate",
+                "cfg_masked_atomic_finalize",
+                "cfg_masked_row_backend_v1",
+            ),
             optional_modules=(
-                OptionalModuleSpec(module_id="ce_row_tile_resident", signals=("resident_state",)),
+                OptionalModuleSpec(module_id="cfg_masked_row_tile_resident", signals=("resident_state",)),
+                OptionalModuleSpec(module_id="cfg_masked_vector_io", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="cfg_masked_register_residency", signals=("resident_state", "cfg_path")),
             ),
             params=(
-                ParamSpec(name="CE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(64, 128, 256), allowed_values=(32, 64, 128, 256)),
+                ParamSpec(
+                    name="CFG_ROW_BLOCK_THREADS",
+                    role="threads",
+                    dim_aliases=("block_threads", "threads_per_block", "num_warps"),
+                    defaults=(1024, 512, 256, 128),
+                    allowed_values=(128, 256, 512, 1024),
+                ),
+                ParamSpec(
+                    name="CFG_ROW_VECTOR_WIDTH",
+                    role="vector_width",
+                    dim_aliases=("vector_width", "vec_width"),
+                    defaults=(4, 2, 1),
+                    allowed_values=(1, 2, 4),
+                ),
             ),
             templates=(
                 TemplateSpec(
-                    kernel_kind="cross_entropy_loss_v1",
-                    module_id="ce_backend_v1",
-                    param_names=("CE_BLOCK_THREADS",),
+                    kernel_kind="cfg_masked_row_reduce_v1",
+                    module_id="cfg_masked_row_backend_v1",
+                    param_names=("CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"),
                     required_signals=("cfg_path", "gather_path", "reduction_path"),
-                    signal_weights={"online_state": 8.0, "branch_mask": 10.0, "resident_state": 4.0},
+                    signal_weights={"online_state": 8.0, "branch_mask": 10.0, "resident_state": 8.0, "vector_path": 6.0},
                 ),
             ),
         ),

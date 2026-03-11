@@ -383,6 +383,103 @@ def _sanitize_raw_org_json(raw_json: Mapping[str, Any] | None) -> dict[str, Any]
             ]
             edges_out.append(edge)
         obj["region_graph"] = {"regions": regions_out, "edges": edges_out}
+    elif not region_graph:
+        branch_mechanisms = [
+            dict(item)
+            for item in list(obj.get("mechanisms") or [])
+            if isinstance(item, Mapping) and _norm_token(item.get("tag")) in {"branch_mask", "ignore_mask"}
+        ]
+        if branch_mechanisms:
+            mechanism_ids = {
+                str(item.get("id") or "").strip(): dict(item)
+                for item in list(obj.get("mechanisms") or [])
+                if isinstance(item, Mapping) and str(item.get("id") or "").strip()
+            }
+            reduction_mechs = {
+                mech_id
+                for mech_id, mech in mechanism_ids.items()
+                if _norm_token(mech.get("tag")) in {"row_reduction", "warp_reduction", "warp_reduction_tree", "online_softmax_reduce", "online_normalization"}
+            }
+            gather_mechs = {
+                mech_id
+                for mech_id, mech in mechanism_ids.items()
+                if _norm_token(mech.get("tag")) in {"label_gather", "index_gather"}
+            }
+            finalize_mechs = {
+                mech_id
+                for mech_id, mech in mechanism_ids.items()
+                if _norm_token(mech.get("tag")) in {"loss_finalize", "gradient_fused_epilogue", "argmax_tracking"}
+            }
+            lifetimes = [dict(item) for item in list(obj.get("tensor_lifetimes") or []) if isinstance(item, Mapping)]
+            active_lifetimes = [
+                str(item.get("id") or "").strip()
+                for item in lifetimes
+                if str(item.get("id") or "").strip()
+                and (
+                    any(str(x).strip() in reduction_mechs for x in list(item.get("consumer_mechanisms") or []))
+                    or any(str(x).strip() in gather_mechs for x in list(item.get("consumer_mechanisms") or []))
+                    or any(str(x).strip() in finalize_mechs for x in list(item.get("consumer_mechanisms") or []))
+                )
+            ]
+            skip_lifetimes = [
+                str(item.get("id") or "").strip()
+                for item in lifetimes
+                if str(item.get("id") or "").strip()
+                and any(str(x).strip() in {str(m.get("id") or "").strip() for m in branch_mechanisms} for x in list(item.get("consumer_mechanisms") or []))
+            ]
+            branch_mech_ids = [str(item.get("id") or "").strip() for item in branch_mechanisms if str(item.get("id") or "").strip()]
+            predicate = str(((branch_mechanisms[0].get("attrs") or {}).get("predicate")) or "").strip() or "branch_mask"
+            obj["region_graph"] = {
+                "regions": [
+                    {
+                        "id": "cfg_entry",
+                        "kind": "region",
+                        "path_id": "pi_entry",
+                        "entry_mechanisms": branch_mech_ids,
+                        "exit_mechanisms": branch_mech_ids,
+                    },
+                    {
+                        "id": "cfg_active",
+                        "kind": "if_true",
+                        "parent": "cfg_entry",
+                        "path_id": "pi_active",
+                        "predicate": f"not ({predicate})",
+                        "entry_mechanisms": branch_mech_ids,
+                        "exit_mechanisms": sorted(reduction_mechs | gather_mechs | finalize_mechs),
+                    },
+                    {
+                        "id": "cfg_masked",
+                        "kind": "if_false",
+                        "parent": "cfg_entry",
+                        "path_id": "pi_masked",
+                        "predicate": str(predicate),
+                        "entry_mechanisms": branch_mech_ids,
+                        "exit_mechanisms": branch_mech_ids,
+                    },
+                ],
+                "edges": [
+                    {
+                        "id": "cfg_edge_active",
+                        "src": "cfg_entry",
+                        "dst": "cfg_active",
+                        "relation": "branch",
+                        "path_id": "pi_active",
+                        "predicate": f"not ({predicate})",
+                        "lifetimes": [x for x in active_lifetimes if x],
+                        "mechanisms": sorted(reduction_mechs | gather_mechs | finalize_mechs),
+                    },
+                    {
+                        "id": "cfg_edge_masked",
+                        "src": "cfg_entry",
+                        "dst": "cfg_masked",
+                        "relation": "branch",
+                        "path_id": "pi_masked",
+                        "predicate": str(predicate),
+                        "lifetimes": [x for x in skip_lifetimes if x],
+                        "mechanisms": branch_mech_ids,
+                    },
+                ],
+            }
     return obj
 
 

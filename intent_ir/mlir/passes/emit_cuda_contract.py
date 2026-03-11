@@ -8,6 +8,47 @@ from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.module import IntentMLIRModule
 
 
+def _merge_cuda_io_spec_patch(io_spec: Mapping[str, Any], patch: Mapping[str, Any] | None) -> dict[str, Any]:
+    out = dict(io_spec or {})
+    if not isinstance(patch, Mapping):
+        return out
+    raw_patch = dict(patch or {})
+    patch_tensors = raw_patch.get("tensors")
+    if isinstance(patch_tensors, Mapping):
+        tensors = out.get("tensors") if isinstance(out.get("tensors"), Mapping) else {}
+        merged_tensors = {str(k): dict(v) for k, v in dict(tensors or {}).items() if str(k).strip() and isinstance(v, Mapping)}
+        for key, value in dict(patch_tensors or {}).items():
+            name = str(key).strip()
+            if not name or not isinstance(value, Mapping):
+                continue
+            merged_tensors[name] = dict(value)
+        out["tensors"] = merged_tensors
+    patch_outputs = raw_patch.get("outputs")
+    if isinstance(patch_outputs, list):
+        out["outputs"] = [str(x) for x in list(patch_outputs) if str(x).strip()]
+    patch_scalars = raw_patch.get("scalars")
+    if isinstance(patch_scalars, Mapping):
+        scalars = out.get("scalars") if isinstance(out.get("scalars"), Mapping) else {}
+        merged_scalars = {str(k): str(v) for k, v in dict(scalars or {}).items() if str(k).strip()}
+        for key, value in dict(patch_scalars or {}).items():
+            name = str(key).strip()
+            if not name:
+                continue
+            merged_scalars[name] = str(value)
+        out["scalars"] = merged_scalars
+    for key in ("arg_names", "output_postprocess", "output_init", "logical_outputs"):
+        value = raw_patch.get(key)
+        if value is None:
+            continue
+        if isinstance(value, Mapping):
+            out[key] = dict(value)
+        elif isinstance(value, list):
+            out[key] = [str(x) for x in list(value) if str(x).strip()]
+        else:
+            out[key] = value
+    return out
+
+
 def _infer_cuda_launch_from_meta(meta: Mapping[str, Any]) -> dict[str, Any]:
     """
     Real-MLIR CUDA kernels are specialized to concrete shape bindings at compile time.
@@ -168,6 +209,7 @@ def build_cuda_contract_from_intent(
     for name, tensor in dict(intent.tensors or {}).items():
         tensor_shapes[str(name)] = [_dim_to_json(d) for d in list(getattr(tensor, "shape", []) or [])]
     artifacts: dict[str, Any] = {}
+    io_spec_patch: dict[str, Any] = {}
     if source_module is not None:
         artifacts["dialect_version"] = str(source_module.dialect_version)
         artifacts["symbols"] = [str(x) for x in list(source_module.symbols or []) if str(x).strip()]
@@ -181,6 +223,7 @@ def build_cuda_contract_from_intent(
             "cuda_real_mlir_launch_override",
             "cuda_real_mlir_attention_cfg",
             "cuda_real_mlir_matmul_cfg",
+            "cuda_real_mlir_io_spec_patch",
         ):
             if key not in meta:
                 continue
@@ -195,6 +238,10 @@ def build_cuda_contract_from_intent(
             elif key in {"cuda_real_mlir_launch_override", "cuda_real_mlir_attention_cfg", "cuda_real_mlir_matmul_cfg"}:
                 if isinstance(val, Mapping):
                     artifacts[key] = dict(val)
+            elif key == "cuda_real_mlir_io_spec_patch":
+                if isinstance(val, Mapping):
+                    artifacts[key] = dict(val)
+                    io_spec_patch = dict(val)
             elif key in {"compiler_stack", "lowering_kind"}:
                 artifacts[key] = str(val)
             else:
@@ -209,10 +256,14 @@ def build_cuda_contract_from_intent(
         executable=executable,
     )
     launch = _infer_cuda_launch_from_meta(dict(source_module.meta or {}) if source_module is not None else {})
+    io_spec = _merge_cuda_io_spec_patch(
+        {"tensors": _tensor_io_spec(intent.tensors), "outputs": [str(x) for x in list(intent.outputs or [])]},
+        io_spec_patch,
+    )
     return MlirBackendContract(
         backend="cuda",
         kernel_name=str(intent.name),
-        io_spec={"tensors": _tensor_io_spec(intent.tensors), "outputs": [str(x) for x in list(intent.outputs or [])]},
+        io_spec=io_spec,
         launch=dict(launch),
         schedule=_schedule_to_json(intent.schedule),
         artifacts=artifacts,

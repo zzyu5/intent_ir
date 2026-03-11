@@ -84,28 +84,82 @@ def _build_guided_tensors(*, io_spec: dict[str, Any], baseline: dict[str, np.nda
         head, _sep, _tail = raw.partition("__")
         return head if head else raw
 
+    def _descriptor_suffix(name: str, base_name: str) -> str:
+        raw = str(name).strip()
+        prefix = f"{base_name}__"
+        return raw[len(prefix) :] if raw.startswith(prefix) else ""
+
+    def _size_slot_count(base_name: str) -> int:
+        prefix = f"{base_name}__size"
+        return sum(1 for x in arg_names if str(x).startswith(prefix))
+
+    def _stride_slot_count(base_name: str) -> int:
+        prefix = f"{base_name}__stride"
+        return sum(1 for x in arg_names if str(x).startswith(prefix))
+
+    def _resolve_tensor(base_name: str, spec: dict[str, Any]) -> torch.Tensor:
+        dt = _torch_dtype(str(spec.get("dtype") or "f32"))
+        if base_name in outputs_torch:
+            return outputs_torch[base_name]
+        if base_name in inputs_torch:
+            return inputs_torch[base_name]
+        if base_name in output_set:
+            shape = _resolve_tensor_shape(list(spec.get("shape") or []), bindings)
+            t = torch.empty(shape, device="cuda", dtype=dt)
+            outputs_torch[base_name] = t
+            return t
+        if base_name not in baseline:
+            raise KeyError(f"missing baseline input for {base_name}")
+        t = torch.as_tensor(np.asarray(baseline[base_name]), device="cuda", dtype=dt).contiguous()
+        inputs_torch[base_name] = t
+        return t
+
+    def _descriptor_value(name: str, base_name: str, tensor: torch.Tensor) -> int:
+        suffix = _descriptor_suffix(name, base_name)
+        if suffix == "offset":
+            return int(bindings.get(name, 0))
+        if suffix.startswith("size"):
+            idx = int(suffix[len("size") :])
+            if name in bindings:
+                return int(bindings[name])
+            size_slots = _size_slot_count(base_name)
+            if size_slots == 1:
+                return int(tensor.numel()) if int(tensor.dim()) > 0 else 1
+            shape = list(tensor.shape)
+            if 0 <= idx < len(shape):
+                return int(shape[idx])
+            if not shape and idx == 0:
+                return 1
+            raise KeyError(f"cannot resolve {name} for tensor {base_name}")
+        if suffix.startswith("stride"):
+            idx = int(suffix[len("stride") :])
+            if name in bindings:
+                return int(bindings[name])
+            stride_slots = _stride_slot_count(base_name)
+            if stride_slots == 1:
+                return 1
+            strides = list(tensor.stride())
+            if 0 <= idx < len(strides):
+                return int(strides[idx])
+            if not strides and idx == 0:
+                return 1
+            raise KeyError(f"cannot resolve {name} for tensor {base_name}")
+        raise KeyError(f"unsupported tensor descriptor arg {name}")
+
     for name in arg_names:
         if name in tensors:
             spec = tensors[name] if isinstance(tensors.get(name), dict) else {}
-            dt = _torch_dtype(str(spec.get("dtype") or "f32"))
             base_name = _tensor_alias_base(name)
-            if base_name in output_set:
-                shape = _resolve_tensor_shape(list(spec.get("shape") or []), bindings)
-                t = torch.empty(shape, device="cuda", dtype=dt)
-                outputs_torch[base_name] = t
-                args.append(t)
+            args.append(_resolve_tensor(base_name, spec))
+        elif _tensor_alias_base(name) in tensors:
+            base_name = _tensor_alias_base(name)
+            spec = tensors[base_name] if isinstance(tensors.get(base_name), dict) else {}
+            tensor = _resolve_tensor(base_name, spec)
+            suffix = _descriptor_suffix(name, base_name)
+            if suffix == "aligned":
+                args.append(tensor)
             else:
-                if base_name in outputs_torch:
-                    args.append(outputs_torch[base_name])
-                    continue
-                if base_name in inputs_torch:
-                    args.append(inputs_torch[base_name])
-                    continue
-                if base_name not in baseline:
-                    raise KeyError(f"missing baseline input for {name}")
-                t = torch.as_tensor(np.asarray(baseline[base_name]), device="cuda", dtype=dt).contiguous()
-                inputs_torch[base_name] = t
-                args.append(t)
+                args.append(_descriptor_value(name, base_name, tensor))
         elif name in scalars:
             dt = str(scalars[name])
             if name not in bindings:
@@ -119,6 +173,72 @@ def _build_guided_tensors(*, io_spec: dict[str, Any], baseline: dict[str, np.nda
                 raise KeyError(f"missing binding for {name}")
             args.append(int(bindings[name]))
     return args, inputs_torch, outputs_torch
+
+
+def _guided_postprocess_spec(io_spec: dict[str, Any]) -> dict[str, Any]:
+    raw = io_spec.get("output_postprocess") if isinstance(io_spec.get("output_postprocess"), dict) else {}
+    return {str(k): dict(v) for k, v in dict(raw or {}).items() if str(k).strip() and isinstance(v, dict)}
+
+
+def _apply_guided_postprocess(
+    *,
+    io_spec: dict[str, Any],
+    baseline: dict[str, np.ndarray],
+    guided_outputs: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    out = {str(k): np.asarray(v) for k, v in dict(guided_outputs or {}).items()}
+    for logical_name, spec in _guided_postprocess_spec(io_spec).items():
+        op = str(spec.get("op") or "").strip().lower()
+        if op != "masked_row_mean":
+            continue
+        source = str(spec.get("source") or logical_name).strip()
+        target_name = str(spec.get("target") or "").strip()
+        ignore_name = str(spec.get("ignore_index") or "").strip()
+        if source not in out or target_name not in baseline or ignore_name not in baseline:
+            continue
+        row_values = np.asarray(out[source], dtype=np.float32)
+        target = np.asarray(baseline[target_name])
+        ignore_index = np.asarray(baseline[ignore_name]).reshape(-1)
+        ignore_value = int(ignore_index[0]) if ignore_index.size else 0
+        valid_mask = np.asarray(target != ignore_value)
+        denom = float(np.count_nonzero(valid_mask))
+        if denom <= 0.0:
+            denom = 1.0
+        out[logical_name] = np.asarray(np.sum(row_values, dtype=np.float32) / denom, dtype=np.float32)
+    return out
+
+
+def _make_guided_postprocess_runner(
+    *,
+    io_spec: dict[str, Any],
+    baseline: dict[str, np.ndarray],
+    outputs_torch: dict[str, torch.Tensor],
+) -> Any | None:
+    spec = _guided_postprocess_spec(io_spec)
+    if not spec:
+        return None
+    target_cache: dict[str, torch.Tensor] = {}
+    for logical_name, cfg in spec.items():
+        op = str(cfg.get("op") or "").strip().lower()
+        if op != "masked_row_mean":
+            continue
+        source = str(cfg.get("source") or logical_name).strip()
+        target_name = str(cfg.get("target") or "").strip()
+        ignore_name = str(cfg.get("ignore_index") or "").strip()
+        if source not in outputs_torch or target_name not in baseline or ignore_name not in baseline:
+            continue
+        target_cache[target_name] = torch.as_tensor(np.asarray(baseline[target_name]), device="cuda", dtype=torch.int64).contiguous()
+        ignore_idx_arr = np.asarray(baseline[ignore_name]).reshape(-1)
+        ignore_value = int(ignore_idx_arr[0]) if ignore_idx_arr.size else 0
+        valid_count = max(1, int(np.count_nonzero(np.asarray(baseline[target_name]) != ignore_value)))
+        denom = torch.tensor(float(valid_count), device="cuda", dtype=torch.float32)
+        source_tensor = outputs_torch[source]
+
+        def _runner(source_tensor=source_tensor, denom=denom):
+            _ = torch.sum(source_tensor) / denom
+
+        return _runner
+    return None
 
 
 def _load_guided_realizations(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -174,16 +294,20 @@ def _load_guided_realizations(report: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaLaunch, warmup: int, iters: int, repeats: int) -> tuple[float, list[float]]:
+def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaLaunch, warmup: int, iters: int, repeats: int, postprocess_runner: Any | None = None) -> tuple[float, list[float]]:
     launch_args = [*args, int(launch.grid[0]), int(launch.grid[1]), int(launch.grid[2]), int(launch.block[0]), int(launch.block[1]), int(launch.block[2]), int(launch.shared_mem)]
     for _ in range(int(warmup)):
         compiled_module.launch(*launch_args)
+        if postprocess_runner is not None:
+            postprocess_runner()
     torch.cuda.synchronize()
     g = torch.cuda.CUDAGraph()
     try:
         with torch.cuda.graph(g):
             for _ in range(int(iters)):
                 compiled_module.launch(*launch_args)
+                if postprocess_runner is not None:
+                    postprocess_runner()
         torch.cuda.synchronize()
     except Exception:
         g = None
@@ -197,6 +321,8 @@ def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaL
         else:
             for _ in range(int(iters)):
                 compiled_module.launch(*launch_args)
+                if postprocess_runner is not None:
+                    postprocess_runner()
         end.record()
         torch.cuda.synchronize()
         times_ns.append(float(start.elapsed_time(end)) * 1.0e6 / float(iters))
@@ -382,6 +508,11 @@ def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int) -> 
                 bindings=dict(realization.get("shape_bindings") or {}),
                 outputs=output_names,
             )
+            postprocess_runner = _make_guided_postprocess_runner(
+                io_spec=dict(realization.get("io_spec") or {}),
+                baseline=baseline_for_candidate,
+                outputs_torch=outputs_torch,
+            )
             ns_guided, guided_repeats = _bench_module_launch(
                 compiled_module=compiled_module,
                 args=args,
@@ -389,10 +520,16 @@ def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int) -> 
                 warmup=warmup,
                 iters=iters,
                 repeats=repeats,
+                postprocess_runner=postprocess_runner,
             )
             torch.cuda.synchronize()
             guided_outputs = {str(k): v.detach().cpu().numpy() for k, v in outputs_torch.items()}
             guided_outputs = _with_io_aliases_for_names(sorted(set(list(guided_outputs.keys()) + list(output_names))), guided_outputs)
+            guided_outputs = _apply_guided_postprocess(
+                io_spec=dict(realization.get("io_spec") or {}),
+                baseline=baseline_for_candidate,
+                guided_outputs=guided_outputs,
+            )
             max_abs = _compare_guided_outputs(kernel=spec.name, baseline=baseline_for_candidate, guided_outputs=guided_outputs)
             guided_rows.append(
                 {

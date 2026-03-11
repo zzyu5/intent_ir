@@ -1064,7 +1064,18 @@ def lower_cuda_contract_to_kernel(
             # For prebuilt PTX materialized from CUDA codegen, runtime launch needs
             # arg_names/scalars metadata that semantic-level contracts may not carry.
             if not isinstance(io_spec.get("arg_names"), list):
-                io_spec = dict(inv_io)
+                merged_io = dict(inv_io)
+                for key in ("tensors", "outputs", "output_postprocess", "output_init", "logical_outputs"):
+                    value = io_spec.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, Mapping):
+                        merged_io[key] = dict(value)
+                    elif isinstance(value, list):
+                        merged_io[key] = list(value)
+                    else:
+                        merged_io[key] = value
+                io_spec = merged_io
         # Historical templates are a last-resort compatibility fallback. Do not
         # override an explicit arg_names list, otherwise we can silently
         # corrupt PTX param ordering (which is positional).

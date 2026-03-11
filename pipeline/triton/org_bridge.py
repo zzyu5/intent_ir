@@ -285,7 +285,7 @@ def _run_compile_check_candidates(
         contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
         if not error:
             error = str(run_error or "")
-        ok = bool(ok and contract_path)
+        ok = bool(ok and contract_path and ptx_path and entry)
         check = CompileCheck(
             candidate=str(cand_line),
             kernel_kind=str(getattr(candidate, "kernel_kind")),

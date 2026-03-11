@@ -39,6 +39,35 @@ class CudaLaunch:
     shared_mem: int = 0
 
 
+def _ptx_entry_param_count(*, ptx_text: str, entry: str) -> int:
+    text = str(ptx_text or "")
+    wanted = str(entry or "").strip()
+    if not text.strip() or not wanted:
+        return 0
+    m = re.search(rf"\.visible\s+\.entry\s+{re.escape(wanted)}\s*\((.*?)\)\s*\{{", text, re.S)
+    if m is None:
+        return 0
+    sig = str(m.group(1) or "")
+    return int(len(re.findall(r"\.param\s+\.[A-Za-z0-9_]+(?:\s+\.ptr\s+\.[A-Za-z0-9_]+\s+\.align\s+\d+)?\s+[A-Za-z_.$][\w.$]*", sig)))
+
+
+def _infer_ptx_tensor_abi(*, io_spec: Mapping[str, Any], ptx_text: str, entry: str) -> str:
+    arg_names = [str(x) for x in list(io_spec.get("arg_names") or []) if str(x).strip()]
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
+    if not arg_names or not isinstance(tensors, Mapping):
+        return "raw_pointer"
+    param_count = _ptx_entry_param_count(ptx_text=ptx_text, entry=entry)
+    if param_count <= 0:
+        return "raw_pointer"
+    raw_count = int(len(arg_names))
+    flat_memref_count = 0
+    for name in arg_names:
+        flat_memref_count += 5 if str(name) in tensors else 1
+    if param_count == flat_memref_count and flat_memref_count != raw_count:
+        return "flat_rank1_memref"
+    return "raw_pointer"
+
+
 def _torch() -> Any:
     import torch  # noqa: PLC0415
 
@@ -713,6 +742,12 @@ class _NvrtcCudaModule:
             ptx_payload = ptx
         else:
             ptx_payload = str(ptx).encode("utf-8")
+        self._ptx_text = ptx_payload.decode("utf-8", errors="ignore")
+        self._tensor_abi = _infer_ptx_tensor_abi(
+            io_spec=self._io_spec,
+            ptx_text=self._ptx_text,
+            entry=self._kernel_name,
+        )
         err, mod = cuda.cuModuleLoadData(ptx_payload)
         if int(err) != 0:
             raise CudaRuntimeError(f"cuModuleLoadData failed: {err}")
@@ -755,7 +790,20 @@ class _NvrtcCudaModule:
             if name in tensors:
                 if not isinstance(v, torch.Tensor):
                     raise CudaRuntimeError(f"nvrtc module launch: expected torch.Tensor for {name}")
-                c_values.append(ctypes.c_void_p(int(v.data_ptr())))
+                if str(self._tensor_abi) == "flat_rank1_memref":
+                    ptr = int(v.data_ptr())
+                    numel = int(v.numel()) if int(v.dim()) > 0 else 1
+                    c_values.extend(
+                        [
+                            ctypes.c_void_p(ptr),
+                            ctypes.c_void_p(ptr),
+                            ctypes.c_ulonglong(0),
+                            ctypes.c_ulonglong(numel),
+                            ctypes.c_ulonglong(1),
+                        ]
+                    )
+                else:
+                    c_values.append(ctypes.c_void_p(int(v.data_ptr())))
                 continue
             if name in scalars:
                 dt = str(scalars[name])
@@ -1390,6 +1438,76 @@ def run_cuda_kernel_io(
                 return base
         return n
 
+    def _tensor_descriptor_suffix(name: str, base_name: str) -> str:
+        raw = str(name).strip()
+        prefix = f"{base_name}__"
+        return raw[len(prefix) :] if raw.startswith(prefix) else ""
+
+    def _tensor_slot_count(base_name: str, kind: str) -> int:
+        prefix = f"{base_name}__{kind}"
+        return sum(1 for x in arg_names if str(x).startswith(prefix))
+
+    def _resolve_tensor_arg(base_name: str, spec: Mapping[str, Any]) -> Any:
+        dt = str(spec.get("dtype") or "f32")
+        shape_tpl = spec.get("shape") if isinstance(spec.get("shape"), list) else None
+        if base_name in outputs_torch:
+            return outputs_torch[base_name]
+        if base_name in inputs_torch:
+            return inputs_torch[base_name]
+        if base_name in out_set:
+            if shape_tpl is None:
+                raise CudaRuntimeError(f"missing output tensor shape for {base_name} in io_spec")
+            shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
+            t = torch.empty(shape, device=device, dtype=_dtype_to_torch(dt))
+            outputs_torch[base_name] = t
+            return t
+        if base_name in inputs_np:
+            arr = np.asarray(inputs_np[base_name])
+            t = torch.from_numpy(arr).to(device=device)
+            if t.dtype != _dtype_to_torch(dt):
+                t = t.to(dtype=_dtype_to_torch(dt))
+            t = t.contiguous()
+            inputs_torch[base_name] = t
+            return t
+        if shape_tpl == [] and (base_name in bindings):
+            val = bindings[base_name]
+            if dt == "f32":
+                return torch.tensor(float(val), device=device, dtype=torch.float32)
+            return torch.tensor(int(val), device=device, dtype=_dtype_to_torch(dt))
+        raise CudaRuntimeError(f"missing input {base_name} for CUDA baseline; have keys={sorted(inputs_np.keys())}")
+
+    def _resolve_tensor_descriptor_arg(name: str, base_name: str, tensor: Any) -> Any:
+        suffix = _tensor_descriptor_suffix(name, base_name)
+        if suffix == "aligned":
+            return tensor
+        if suffix == "offset":
+            return int(bindings.get(name, 0))
+        if suffix.startswith("size"):
+            idx = int(suffix[len("size") :])
+            if name in bindings:
+                return int(bindings[name])
+            if _tensor_slot_count(base_name, "size") == 1:
+                return int(tensor.numel()) if int(tensor.dim()) > 0 else 1
+            dims = list(tensor.shape)
+            if 0 <= idx < len(dims):
+                return int(dims[idx])
+            if not dims and idx == 0:
+                return 1
+            raise CudaRuntimeError(f"cannot resolve tensor descriptor arg {name}")
+        if suffix.startswith("stride"):
+            idx = int(suffix[len("stride") :])
+            if name in bindings:
+                return int(bindings[name])
+            if _tensor_slot_count(base_name, "stride") == 1:
+                return 1
+            strides = list(tensor.stride())
+            if 0 <= idx < len(strides):
+                return int(strides[idx])
+            if not strides and idx == 0:
+                return 1
+            raise CudaRuntimeError(f"cannot resolve tensor descriptor arg {name}")
+        raise CudaRuntimeError(f"unsupported tensor descriptor arg {name}")
+
     # Build torch args in kernel param order.
     args: list[Any] = []
     outputs_torch: Dict[str, Any] = {}
@@ -1398,45 +1516,16 @@ def run_cuda_kernel_io(
         for name in arg_names:
             if name in tensors:
                 spec = tensors[name] if isinstance(tensors.get(name), dict) else {}
-                dt = str(spec.get("dtype") or "f32")
-                shape_tpl = spec.get("shape") if isinstance(spec.get("shape"), list) else None
-                if name in out_set:
-                    # Scalar outputs use shape=[], which is valid and should not be treated as missing.
-                    if shape_tpl is None:
-                        raise CudaRuntimeError(f"missing output tensor shape for {name} in io_spec")
-                    shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
-                    t = torch.empty(shape, device=device, dtype=_dtype_to_torch(dt))
-                    outputs_torch[name] = t
-                    args.append(t)
-                else:
-                    base_name = _tensor_alias_base(name)
-                    if base_name in outputs_torch:
-                        args.append(outputs_torch[base_name])
-                    elif base_name in inputs_torch:
-                        args.append(inputs_torch[base_name])
-                    elif base_name in inputs_np:
-                        arr = np.asarray(inputs_np[base_name])
-                        t = torch.from_numpy(arr).to(device=device)
-                        if t.dtype != _dtype_to_torch(dt):
-                            t = t.to(dtype=_dtype_to_torch(dt))
-                        t = t.contiguous()
-                        inputs_torch[base_name] = t
-                        args.append(t)
-                    else:
-                        # Convenience: scalar-tensors (shape=[]) can be materialized from bindings.
-                        # This matches the IntentIR convention of modeling scalar params as 0-d tensors.
-                        if shape_tpl == [] and (name in bindings or base_name in bindings):
-                            key = name if name in bindings else base_name
-                            val = bindings[key]
-                            if dt == "f32":
-                                t = torch.tensor(float(val), device=device, dtype=torch.float32)
-                            else:
-                                t = torch.tensor(int(val), device=device, dtype=_dtype_to_torch(dt))
-                            args.append(t)
-                        else:
-                            raise CudaRuntimeError(
-                                f"missing input {name} for CUDA baseline; have keys={sorted(inputs_np.keys())}"
-                            )
+                base_name = _tensor_alias_base(name)
+                tensor = _resolve_tensor_arg(base_name, spec)
+                if base_name in out_set:
+                    outputs_torch[base_name] = tensor
+                args.append(tensor)
+            elif _tensor_alias_base(name) in tensors:
+                base_name = _tensor_alias_base(name)
+                spec = tensors[base_name] if isinstance(tensors.get(base_name), dict) else {}
+                tensor = _resolve_tensor_arg(base_name, spec)
+                args.append(_resolve_tensor_descriptor_arg(name, base_name, tensor))
             elif name in scalars:
                 if name not in bindings:
                     raise CudaRuntimeError(f"missing scalar binding {name}; have {sorted(bindings.keys())}")

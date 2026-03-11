@@ -845,61 +845,86 @@ def rope_view_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule
     return modules, edges, list(PASS_SEQUENCE)
 
 
-def cross_entropy_loss_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+def cfg_masked_row_reduce_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
     del hardware_model
     modules = [
         BackendModule(
-            id="ce_row_tile_resident",
+            id="cfg_masked_row_tile_resident",
             kind="staging",
-            provides=["ce.row_tile_resident"],
-            params=["CE_BLOCK_THREADS"],
+            provides=["cfg_masked_row.row_tile_resident"],
+            params=["CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"],
             constraints=[],
         ),
         BackendModule(
-            id="ce_row_reduction",
+            id="cfg_masked_row_reduction",
             kind="communication",
-            provides=["ce.row_reduction"],
-            params=["CE_BLOCK_THREADS"],
+            provides=["cfg_masked_row.row_reduction"],
+            params=["CFG_ROW_BLOCK_THREADS"],
             constraints=[],
         ),
         BackendModule(
-            id="ce_label_gather",
+            id="cfg_masked_vector_io",
+            kind="mapping",
+            provides=["cfg_masked_row.masked_vector_io"],
+            params=["CFG_ROW_VECTOR_WIDTH"],
+            constraints=["CFG_ROW_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id="cfg_masked_label_gather",
             kind="primitive",
-            provides=["ce.label_gather"],
+            provides=["cfg_masked_row.label_gather"],
             params=[],
             constraints=[],
         ),
         BackendModule(
-            id="ce_branch_mask",
+            id="cfg_masked_branch_predicate",
             kind="communication",
-            provides=["ce.branch_mask"],
+            provides=["cfg_masked_row.branch_predicate"],
             params=[],
             constraints=[],
         ),
         BackendModule(
-            id="ce_loss_finalize",
+            id="cfg_masked_register_residency",
+            kind="staging",
+            provides=["cfg_masked_row.register_residency"],
+            params=["CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="cfg_masked_atomic_finalize",
             kind="fusion",
-            provides=["ce.loss_finalize"],
+            provides=["cfg_masked_row.atomic_finalize"],
             params=[],
             constraints=[],
         ),
         BackendModule(
-            id="ce_backend_v1",
+            id="cfg_masked_row_backend_v1",
             kind="template",
-            provides=["backend.kernel_kind.cross_entropy_loss_v1"],
-            requires=["ce.row_reduction", "ce.label_gather", "ce.branch_mask", "ce.loss_finalize"],
-            params=["CE_BLOCK_THREADS"],
+            provides=["backend.kernel_kind.cfg_masked_row_reduce_v1"],
+            requires=[
+                "cfg_masked_row.row_reduction",
+                "cfg_masked_row.label_gather",
+                "cfg_masked_row.branch_predicate",
+                "cfg_masked_row.atomic_finalize",
+            ],
+            params=["CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"],
             constraints=[],
         ),
     ]
     edges = [
-        BackendModuleEdge(src="ce_backend_v1", dst="ce_row_tile_resident", edge_type="optional"),
-        BackendModuleEdge(src="ce_backend_v1", dst="ce_row_reduction", edge_type="uses"),
-        BackendModuleEdge(src="ce_backend_v1", dst="ce_label_gather", edge_type="uses"),
-        BackendModuleEdge(src="ce_backend_v1", dst="ce_branch_mask", edge_type="uses"),
-        BackendModuleEdge(src="ce_backend_v1", dst="ce_loss_finalize", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_row_tile_resident", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_vector_io", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_register_residency", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_label_gather", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_branch_predicate", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_atomic_finalize", edge_type="uses"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
+
+
+def cross_entropy_loss_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    return cfg_masked_row_reduce_catalog(hardware_model)
 
 
 __all__ = [
@@ -914,5 +939,6 @@ __all__ = [
     "group_norm_kernel_catalog",
     "matmul_fused_epilogue2d_catalog",
     "rope_view_catalog",
+    "cfg_masked_row_reduce_catalog",
     "cross_entropy_loss_catalog",
 ]
