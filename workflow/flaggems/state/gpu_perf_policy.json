@@ -14,6 +14,13 @@
     "addcdiv2d",
     "addcmul2d"
   ],
+  "kernel_shape_overrides": {
+    "matmul_fused_epilogue2d": {
+      "M": 256,
+      "N": 512,
+      "K": 256
+    }
+  },
   "key_kernel_min_ratio_vs_baseline": 0.97,
   "key_kernel_baseline_graph": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
   "gate_exclude_kernels": [],

@@ -67,6 +67,28 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _ensure_intentir_cuda_sm_env() -> None:
+    """
+    Ensure `INTENTIR_CUDA_SM` is set for local GPU perf runs.
+
+    Rationale: the C++ `intentir-apply-tuning-db-cuda-v1` pass (cpp_plugin stack)
+    currently keys off `INTENTIR_CUDA_SM` to select arch-specific tuning_db entries,
+    including `kernel_kind` overrides that are critical for focus-kernel perf.
+    """
+
+    raw = str(os.getenv("INTENTIR_CUDA_SM", "")).strip()
+    if raw:
+        return
+    try:
+        if not torch.cuda.is_available():
+            return
+        major, minor = torch.cuda.get_device_capability(0)
+        if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
+            os.environ["INTENTIR_CUDA_SM"] = f"sm_{int(major)}{int(minor)}"
+    except Exception:
+        return
+
+
 def _to_repo_rel(path: Path) -> str:
     try:
         return str(path.resolve().relative_to(ROOT))
@@ -359,6 +381,71 @@ def _coerce_int_dict(raw: Any) -> dict[str, int]:
     return out
 
 
+def _parse_shape_overrides(raw: list[str] | None) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for item in list(raw or []):
+        s = str(item or "").strip()
+        if not s:
+            continue
+        if "=" not in s:
+            raise SystemExit(f"--shape expects KEY=INT, got: {s!r}")
+        k, v = s.split("=", 1)
+        key = str(k).strip()
+        if not key:
+            raise SystemExit(f"--shape expects KEY=INT, got: {s!r}")
+        try:
+            out[key] = int(str(v).strip())
+        except Exception as e:  # noqa: BLE001
+            raise SystemExit(f"--shape expects KEY=INT, got: {s!r} ({type(e).__name__}: {e})") from e
+    return out
+
+
+def _parse_kernel_shape_overrides(raw: Any) -> dict[str, dict[str, int]]:
+    """
+    Parse a per-kernel shape override mapping.
+
+    Expected format (JSON):
+      {
+        "matmul_fused_epilogue2d": {"M": 256, "N": 512, "K": 256}
+      }
+    """
+
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for k, v in raw.items():
+        kernel = str(k).strip()
+        if not kernel:
+            continue
+        shapes = _coerce_int_dict(v)
+        if shapes:
+            out[kernel] = shapes
+    return out
+
+
+def _policy_kernel_shape_overrides(
+    payload: dict[str, Any] | Any, *, kernel_source: str
+) -> dict[str, dict[str, int]]:
+    """
+    Load per-kernel perf shape overrides from policy JSON.
+
+    We intentionally only apply these overrides for `kernel_source=triton_native`
+    (focus suites). Coverage-batch suites should use extracted baseline inputs
+    from artifacts and must not silently change shapes.
+    """
+
+    if str(kernel_source).strip().lower() != "triton_native":
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    raw = (
+        payload.get("kernel_shape_overrides")
+        if payload.get("kernel_shape_overrides") is not None
+        else payload.get("kernel_perf_shapes")
+    )
+    return _parse_kernel_shape_overrides(raw)
+
+
 def _shape_telemetry_for_kernel(
     *,
     kernel: str,
@@ -423,10 +510,12 @@ def _apply_intentir_perf_binding_overrides(
     )
     for k, v in overrides.items():
         key = str(k)
-        prev = merged.get(key)
+        # Respect explicit bindings: perf override tables should only fill in
+        # missing values, never clobber user-provided bindings.
+        if key in merged:
+            continue
         merged[key] = v
-        if prev != v:
-            applied[key] = v
+        applied[key] = v
     return merged, applied, (override_source if applied else "none")
 
 
@@ -486,6 +575,140 @@ def _bench_graph(
     }
 
 
+class _BenchFailure(RuntimeError):
+    def __init__(self, *, side: str, mode: str, cause: BaseException) -> None:
+        super().__init__(f"{side}_{mode}_failed: {type(cause).__name__}: {cause}")
+        self.side = str(side)
+        self.mode = str(mode)
+        self.cause = cause
+
+
+def _bench_graph_pair(
+    native_fn: Callable[[], None],
+    intent_fn: Callable[[], None],
+    *,
+    warmup: int,
+    iters: int,
+    repeats: int,
+) -> tuple[dict[str, float], dict[str, float], dict[str, Any]]:
+    if int(iters) <= 0:
+        raise RuntimeError("iters must be > 0")
+
+    requested_repeats = max(1, int(repeats))
+    # Alternate order is most effective when both orders have equal samples.
+    effective_repeats = int(requested_repeats)
+    if effective_repeats >= 2 and (effective_repeats % 2) == 1:
+        effective_repeats += 1
+
+    capture_stream = torch.cuda.Stream()
+
+    def _safe_call(fn: Callable[[], None], *, side: str) -> None:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            raise _BenchFailure(side=side, mode="graph", cause=e) from e
+
+    def _capture_one(fn: Callable[[], None], *, side: str) -> tuple[torch.cuda.CUDAGraph, float]:
+        t0 = time.perf_counter()
+        g = torch.cuda.CUDAGraph()
+        try:
+            with torch.cuda.stream(capture_stream):
+                with torch.cuda.graph(g, stream=capture_stream):
+                    fn()
+            capture_stream.synchronize()
+        except Exception as e:  # noqa: BLE001
+            raise _BenchFailure(side=side, mode="graph", cause=e) from e
+        return g, float((time.perf_counter() - t0) * 1000.0)
+
+    def _time_replay(g: torch.cuda.CUDAGraph, *, side: str) -> float:
+        try:
+            capture_stream.synchronize()
+            t0 = time.perf_counter()
+            with torch.cuda.stream(capture_stream):
+                for _j in range(int(iters)):
+                    g.replay()
+            capture_stream.synchronize()
+            return float((time.perf_counter() - t0) * 1000.0)
+        except Exception as e:  # noqa: BLE001
+            raise _BenchFailure(side=side, mode="graph", cause=e) from e
+
+    # Warmup both sides on the capture stream to reduce order bias / thermal drift.
+    with torch.cuda.stream(capture_stream):
+        capture_stream.synchronize()
+        _safe_call(native_fn, side="native")
+        _safe_call(intent_fn, side="intentir")
+        capture_stream.synchronize()
+        for _ in range(max(0, int(warmup))):
+            _safe_call(native_fn, side="native")
+            _safe_call(intent_fn, side="intentir")
+        capture_stream.synchronize()
+
+    graph_native, capture_ms_native = _capture_one(native_fn, side="native")
+    graph_intent, capture_ms_intent = _capture_one(intent_fn, side="intentir")
+
+    # Graph replay warmup (graph capture can perturb caches).
+    with torch.cuda.stream(capture_stream):
+        for _ in range(2):
+            graph_native.replay()
+            graph_intent.replay()
+    capture_stream.synchronize()
+
+    native_total_ms: list[float] = []
+    intent_total_ms: list[float] = []
+    ratio_by_repeat: list[float] = []
+
+    for r in range(effective_repeats):
+        intent_first = (r % 2) == 1
+        if intent_first:
+            intent_ms = _time_replay(graph_intent, side="intentir")
+            native_ms = _time_replay(graph_native, side="native")
+        else:
+            native_ms = _time_replay(graph_native, side="native")
+            intent_ms = _time_replay(graph_intent, side="intentir")
+
+        native_total_ms.append(float(native_ms))
+        intent_total_ms.append(float(intent_ms))
+
+        qps_native_r = float(int(iters) / (native_ms / 1000.0)) if native_ms > 0.0 else 0.0
+        qps_intent_r = float(int(iters) / (intent_ms / 1000.0)) if intent_ms > 0.0 else 0.0
+        ratio_r = float(qps_intent_r / qps_native_r) if qps_native_r > 0.0 else 0.0
+        ratio_by_repeat.append(float(ratio_r))
+
+    median_native_total_ms = float(statistics.median(native_total_ms))
+    median_intent_total_ms = float(statistics.median(intent_total_ms))
+    median_native_iter_ms = float(median_native_total_ms / float(iters))
+    median_intent_iter_ms = float(median_intent_total_ms / float(iters))
+    qps_native = float(int(iters) / (median_native_total_ms / 1000.0)) if median_native_total_ms > 0.0 else 0.0
+    qps_intent = float(int(iters) / (median_intent_total_ms / 1000.0)) if median_intent_total_ms > 0.0 else 0.0
+
+    meta = {
+        "paired": True,
+        "order": "alternate_repeats",
+        "repeats_requested": int(repeats),
+        "repeats_effective": int(effective_repeats),
+        "ratio_by_repeat_geomean": float(_geom_mean(ratio_by_repeat)),
+        "ratio_by_repeat_median": float(statistics.median(ratio_by_repeat)) if ratio_by_repeat else 0.0,
+        "ratio_by_repeat_min": float(min(ratio_by_repeat)) if ratio_by_repeat else 0.0,
+        "ratio_by_repeat_max": float(max(ratio_by_repeat)) if ratio_by_repeat else 0.0,
+    }
+
+    native_out = {
+        "capture_ms": float(capture_ms_native),
+        "replay_ms_total": float(median_native_total_ms),
+        "replay_ms": float(median_native_iter_ms),
+        "qps": float(qps_native),
+        "latency_ms": float(median_native_iter_ms),
+    }
+    intent_out = {
+        "capture_ms": float(capture_ms_intent),
+        "replay_ms_total": float(median_intent_total_ms),
+        "replay_ms": float(median_intent_iter_ms),
+        "qps": float(qps_intent),
+        "latency_ms": float(median_intent_iter_ms),
+    }
+    return native_out, intent_out, meta
+
+
 def _bench_eager(
     fn: Callable[[], None],
     *,
@@ -528,6 +751,107 @@ def _bench_eager(
         "qps": float(qps),
         "latency_ms": float(median_iter_ms),
     }
+
+
+def _bench_eager_pair(
+    native_fn: Callable[[], None],
+    intent_fn: Callable[[], None],
+    *,
+    warmup: int,
+    iters: int,
+    repeats: int,
+) -> tuple[dict[str, float], dict[str, float], dict[str, Any]]:
+    if int(iters) <= 0:
+        raise RuntimeError("iters must be > 0")
+
+    requested_repeats = max(1, int(repeats))
+    effective_repeats = int(requested_repeats)
+    if effective_repeats >= 2 and (effective_repeats % 2) == 1:
+        effective_repeats += 1
+
+    def _safe_call(fn: Callable[[], None], *, side: str) -> None:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            raise _BenchFailure(side=side, mode="eager", cause=e) from e
+
+    torch.cuda.synchronize()
+    _safe_call(native_fn, side="native")
+    _safe_call(intent_fn, side="intentir")
+    torch.cuda.synchronize()
+    for _ in range(max(0, int(warmup))):
+        _safe_call(native_fn, side="native")
+        _safe_call(intent_fn, side="intentir")
+    torch.cuda.synchronize()
+
+    native_total_ms: list[float] = []
+    intent_total_ms: list[float] = []
+    ratio_by_repeat: list[float] = []
+    start_evt = torch.cuda.Event(enable_timing=True)
+    end_evt = torch.cuda.Event(enable_timing=True)
+
+    def _time_eager(fn: Callable[[], None], *, side: str) -> float:
+        try:
+            torch.cuda.synchronize()
+            start_evt.record()
+            for _j in range(int(iters)):
+                fn()
+            end_evt.record()
+            torch.cuda.synchronize()
+            return float(start_evt.elapsed_time(end_evt))
+        except Exception as e:  # noqa: BLE001
+            raise _BenchFailure(side=side, mode="eager", cause=e) from e
+
+    for r in range(effective_repeats):
+        intent_first = (r % 2) == 1
+        if intent_first:
+            intent_ms = _time_eager(intent_fn, side="intentir")
+            native_ms = _time_eager(native_fn, side="native")
+        else:
+            native_ms = _time_eager(native_fn, side="native")
+            intent_ms = _time_eager(intent_fn, side="intentir")
+
+        native_total_ms.append(float(native_ms))
+        intent_total_ms.append(float(intent_ms))
+
+        qps_native_r = float(int(iters) / (native_ms / 1000.0)) if native_ms > 0.0 else 0.0
+        qps_intent_r = float(int(iters) / (intent_ms / 1000.0)) if intent_ms > 0.0 else 0.0
+        ratio_r = float(qps_intent_r / qps_native_r) if qps_native_r > 0.0 else 0.0
+        ratio_by_repeat.append(float(ratio_r))
+
+    median_native_total_ms = float(statistics.median(native_total_ms))
+    median_intent_total_ms = float(statistics.median(intent_total_ms))
+    median_native_iter_ms = float(median_native_total_ms / float(iters))
+    median_intent_iter_ms = float(median_intent_total_ms / float(iters))
+    qps_native = float(int(iters) / (median_native_total_ms / 1000.0)) if median_native_total_ms > 0.0 else 0.0
+    qps_intent = float(int(iters) / (median_intent_total_ms / 1000.0)) if median_intent_total_ms > 0.0 else 0.0
+
+    meta = {
+        "paired": True,
+        "order": "alternate_repeats",
+        "repeats_requested": int(repeats),
+        "repeats_effective": int(effective_repeats),
+        "ratio_by_repeat_geomean": float(_geom_mean(ratio_by_repeat)),
+        "ratio_by_repeat_median": float(statistics.median(ratio_by_repeat)) if ratio_by_repeat else 0.0,
+        "ratio_by_repeat_min": float(min(ratio_by_repeat)) if ratio_by_repeat else 0.0,
+        "ratio_by_repeat_max": float(max(ratio_by_repeat)) if ratio_by_repeat else 0.0,
+    }
+
+    native_out = {
+        "capture_ms": 0.0,
+        "replay_ms_total": float(median_native_total_ms),
+        "replay_ms": float(median_native_iter_ms),
+        "qps": float(qps_native),
+        "latency_ms": float(median_native_iter_ms),
+    }
+    intent_out = {
+        "capture_ms": 0.0,
+        "replay_ms_total": float(median_intent_total_ms),
+        "replay_ms": float(median_intent_iter_ms),
+        "qps": float(qps_intent),
+        "latency_ms": float(median_intent_iter_ms),
+    }
+    return native_out, intent_out, meta
 
 
 def _geom_mean(values: list[float]) -> float:
@@ -2162,6 +2486,7 @@ def _build_intentir_launch_fn(
     kernel: str,
     artifact_dir: str | None,
     device: str,
+    shape_overrides: dict[str, int] | None = None,
 ) -> tuple[Callable[[], None], dict[str, Any]]:
     ctx = _prepare_kernel_context(
         str(kernel),
@@ -2177,11 +2502,28 @@ def _build_intentir_launch_fn(
             arch = f"sm{int(major)}{int(minor)}"
     except Exception:
         arch = ""
+    bindings_for_tuning = dict(ctx["bindings"])
+    # Shape overrides must participate in tuning_db selection so shape-scoped
+    # entries (e.g. matmul throughput buckets) can be activated in perf runs.
+    for k, v in dict(shape_overrides or {}).items():
+        key = str(k).strip()
+        if not key:
+            continue
+        bindings_for_tuning[key] = int(v)
     intent_bindings, applied_binding_overrides, tuning_source = _apply_intentir_perf_binding_overrides(
         kernel=str(kernel),
-        bindings=dict(ctx["bindings"]),
+        bindings=dict(bindings_for_tuning),
         arch=str(arch),
     )
+    applied_shape_overrides: dict[str, int] = {}
+    for k, v in dict(shape_overrides or {}).items():
+        key = str(k).strip()
+        if not key:
+            continue
+        prev = intent_bindings.get(key)
+        intent_bindings[key] = int(v)
+        if prev != int(v):
+            applied_shape_overrides[key] = int(v)
     mlir_contract_payload = dict(ctx["mlir_contract"])
     contract_artifacts = mlir_contract_payload.get("artifacts")
     contract_tuning_source = ""
@@ -2214,10 +2556,11 @@ def _build_intentir_launch_fn(
     )
     compile_ms = (time.perf_counter() - t_compile0) * 1000.0
 
+    baseline_inputs = {} if applied_shape_overrides else ctx["baseline"]
     inputs_np = _build_inputs_np(
         kernel=str(kernel),
         tensor_specs=dict(ctx["tensor_specs"]),
-        baseline=ctx["baseline"],
+        baseline=baseline_inputs,
         external_inputs=ctx["external_inputs"],
         bindings=intent_bindings,
     )
@@ -2337,6 +2680,7 @@ def _build_intentir_launch_fn(
         "strict_mode": bool(strict_fallback_enabled()),
         "fallback_policy": ("strict" if bool(strict_fallback_enabled()) else "legacy_compatible"),
         "intent_binding_overrides": dict(applied_binding_overrides),
+        "shape_overrides": dict(applied_shape_overrides),
         # Prefer provenance recorded in the MLIR backend contract artifacts (apply_tuning_db).
         # Perf-runner binding overrides only reflect the launch-time bindings we chose (and are
         # not guaranteed to have influenced the compiled PTX when using prebuilt artifacts).
@@ -2390,6 +2734,7 @@ def _bench_kernel(
     intent_artifact_dir: str | None,
     spec_map: dict[str, Any],
     device: str,
+    shape_overrides: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unavailable"
     row: dict[str, Any] = {
@@ -2441,6 +2786,7 @@ def _bench_kernel(
             kernel=str(kernel),
             artifact_dir=intent_artifact_dir,
             device=device,
+            shape_overrides=(dict(shape_overrides) if shape_overrides else None),
         )
         row["compile_ms_intentir"] = float(intent_meta.get("compile_ms", 0.0))
         row["execution_engine"] = str(intent_meta.get("execution_engine") or "")
@@ -2466,6 +2812,12 @@ def _bench_kernel(
             artifact_dir=intent_artifact_dir,
             require_baseline_npz=False,
         )
+        merged_bindings = dict(ctx.get("bindings") or {})
+        for k, v in dict(shape_overrides or {}).items():
+            key = str(k).strip()
+            if not key:
+                continue
+            merged_bindings[key] = int(v)
         contract_artifacts = {}
         try:
             contract = dict(ctx.get("mlir_contract") or {})
@@ -2474,7 +2826,7 @@ def _bench_kernel(
             contract_artifacts = {}
         row["shape"] = _shape_telemetry_for_kernel(
             kernel=str(kernel),
-            ctx_bindings=ctx.get("bindings"),
+            ctx_bindings=merged_bindings,
             spec_entry=dict(spec_map.get(str(kernel)) or {}),
         )
         row["cuda_sm"] = str(contract_artifacts.get("cuda_sm") or "")
@@ -2492,12 +2844,13 @@ def _bench_kernel(
                 tensor_specs = dict(legacy_intent.get("tensors") or {})
         if not tensor_specs:
             raise RuntimeError("invalid_kernel_context: missing tensor_specs")
+        baseline_inputs = {} if shape_overrides else ctx["baseline"]
         inputs_np = _build_inputs_np(
             kernel=str(kernel),
             tensor_specs=tensor_specs,
-            baseline=ctx["baseline"],
+            baseline=baseline_inputs,
             external_inputs=ctx["external_inputs"],
-            bindings=ctx["bindings"],
+            bindings=merged_bindings,
         )
         inputs_np = _normalize_perf_inputs_for_kernel(kernel=str(kernel), inputs_np=inputs_np)
         # Some extracted intents pre-materialize helper tensors like row/col indices and
@@ -2511,7 +2864,7 @@ def _bench_kernel(
         native_fn, native_module, native_meta = _build_native_launch_fn(
             kernel=str(kernel),
             inputs_np=inputs_np,
-            bindings=dict(ctx["bindings"]),
+            bindings=merged_bindings,
             spec_map=spec_map,
             device=device,
         )
@@ -2530,56 +2883,72 @@ def _bench_kernel(
     if mode not in {"graph", "eager", "graph_or_eager"}:
         raise RuntimeError(f"unsupported bench_mode={bench_mode!r}")
 
-    if mode == "eager":
-        bench_fn = _bench_eager
-        graph_enabled = False
-    else:
-        bench_fn = _bench_graph
-        graph_enabled = True
-
     native_bench: dict[str, float] = {}
     intent_bench: dict[str, float] = {}
+    paired_meta: dict[str, Any] = {}
+    graph_enabled = bool(mode != "eager")
     if mode == "graph_or_eager":
         try:
-            native_bench = _bench_graph(native_fn, warmup=warmup, iters=iters, repeats=repeats)
-            intent_bench = _bench_graph(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
+            native_bench, intent_bench, paired_meta = _bench_graph_pair(
+                native_fn,
+                intent_fn,
+                warmup=warmup,
+                iters=iters,
+                repeats=repeats,
+            )
             graph_enabled = True
-        except Exception:
+        except _BenchFailure:
             torch.cuda.synchronize()
             row["bench_mode"] = "eager_fallback"
             graph_enabled = False
             try:
-                native_bench = _bench_eager(native_fn, warmup=warmup, iters=iters, repeats=repeats)
-            except Exception as e:  # noqa: BLE001
-                row["reason_code"] = _reason_code_from_exception(e, native=True)
-                row["reason_detail"] = f"{type(e).__name__}: {e}"
-                row["skip_reason"] = "native_eager_failed"
-                row["native_launch_error"] = f"{type(e).__name__}: {e}"
-                return row
-            try:
-                intent_bench = _bench_eager(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
-            except Exception as e:  # noqa: BLE001
-                row["reason_code"] = _reason_code_from_exception(e, native=False)
-                row["reason_detail"] = f"{type(e).__name__}: {e}"
-                row["skip_reason"] = "intentir_eager_failed"
+                native_bench, intent_bench, paired_meta = _bench_eager_pair(
+                    native_fn,
+                    intent_fn,
+                    warmup=warmup,
+                    iters=iters,
+                    repeats=repeats,
+                )
+            except _BenchFailure as e:  # noqa: BLE001
+                row["reason_code"] = _reason_code_from_exception(e.cause, native=(str(e.side) == "native"))
+                row["reason_detail"] = f"{type(e.cause).__name__}: {e.cause}"
+                row["skip_reason"] = ("native_eager_failed" if str(e.side) == "native" else "intentir_eager_failed")
+                if str(e.side) == "native":
+                    row["native_launch_error"] = f"{type(e.cause).__name__}: {e.cause}"
                 return row
     else:
         try:
-            native_bench = bench_fn(native_fn, warmup=warmup, iters=iters, repeats=repeats)
-        except Exception as e:  # noqa: BLE001
-            row["reason_code"] = _reason_code_from_exception(e, native=True)
-            row["reason_detail"] = f"{type(e).__name__}: {e}"
-            row["skip_reason"] = ("native_eager_failed" if mode == "eager" else "native_graph_failed")
-            row["native_launch_error"] = f"{type(e).__name__}: {e}"
+            if mode == "eager":
+                native_bench, intent_bench, paired_meta = _bench_eager_pair(
+                    native_fn,
+                    intent_fn,
+                    warmup=warmup,
+                    iters=iters,
+                    repeats=repeats,
+                )
+                graph_enabled = False
+            else:
+                native_bench, intent_bench, paired_meta = _bench_graph_pair(
+                    native_fn,
+                    intent_fn,
+                    warmup=warmup,
+                    iters=iters,
+                    repeats=repeats,
+                )
+                graph_enabled = True
+        except _BenchFailure as e:  # noqa: BLE001
+            row["reason_code"] = _reason_code_from_exception(e.cause, native=(str(e.side) == "native"))
+            row["reason_detail"] = f"{type(e.cause).__name__}: {e.cause}"
+            if mode == "eager":
+                row["skip_reason"] = ("native_eager_failed" if str(e.side) == "native" else "intentir_eager_failed")
+            else:
+                row["skip_reason"] = ("native_graph_failed" if str(e.side) == "native" else "intentir_graph_failed")
+            if str(e.side) == "native":
+                row["native_launch_error"] = f"{type(e.cause).__name__}: {e.cause}"
             return row
 
-        try:
-            intent_bench = bench_fn(intent_fn, warmup=warmup, iters=iters, repeats=repeats)
-        except Exception as e:  # noqa: BLE001
-            row["reason_code"] = _reason_code_from_exception(e, native=False)
-            row["reason_detail"] = f"{type(e).__name__}: {e}"
-            row["skip_reason"] = ("intentir_eager_failed" if mode == "eager" else "intentir_graph_failed")
-            return row
+    if paired_meta:
+        row["paired_bench"] = dict(paired_meta)
 
     qps_native = float(native_bench["qps"])
     qps_intentir = float(intent_bench["qps"])
@@ -2610,13 +2979,8 @@ def _bench_kernel(
             boosted_iters = min(int(boosted_iters), 20000)
             if boosted_iters != int(iters):
                 try:
-                    native_bench_boost = _bench_graph(
+                    native_bench_boost, intent_bench_boost, paired_meta_boost = _bench_graph_pair(
                         native_fn,
-                        warmup=max(1, int(warmup)),
-                        iters=boosted_iters,
-                        repeats=max(2, int(repeats)),
-                    )
-                    intent_bench_boost = _bench_graph(
                         intent_fn,
                         warmup=max(1, int(warmup)),
                         iters=boosted_iters,
@@ -2629,9 +2993,12 @@ def _bench_kernel(
                     intent_latency_ms = float(intent_bench_boost["latency_ms"])
                     native_bench = native_bench_boost
                     intent_bench = intent_bench_boost
+                    paired_meta = dict(paired_meta_boost)
                     native_replay_total_ms = float(native_bench.get("replay_ms_total") or 0.0)
                     intent_replay_total_ms = float(intent_bench.get("replay_ms_total") or 0.0)
                     row["retimed_iters"] = int(boosted_iters)
+                    if paired_meta:
+                        row["paired_bench"] = dict(paired_meta)
                 except Exception:
                     # Keep original measurements and fall through to skip decision.
                     pass
@@ -2691,6 +3058,20 @@ def _bench_kernel(
             row["stabilized_perf_iters"] = int(stabilize_meta.get("iters") or 0)
             row["stabilized_perf_repeats"] = int(stabilize_meta.get("repeats") or 0)
             row["stabilized_ratio_initial"] = float(stabilize_meta.get("ratio_initial") or 0.0)
+
+    # Paired benches provide a more stable ratio estimate for micro-kernels by
+    # aggregating per-repeat ratios; use it when available unless we already ran
+    # a dedicated stabilization flow.
+    if "stabilized_perf_mode" not in row:
+        try:
+            pb = row.get("paired_bench")
+            if isinstance(pb, dict):
+                paired_ratio = pb.get("ratio_by_repeat_median")
+                if isinstance(paired_ratio, (int, float)) and float(paired_ratio) > 0.0:
+                    row["ratio_from_qps"] = float(ratio)
+                    ratio = float(paired_ratio)
+        except Exception:
+            pass
     row.update(
         {
             "qps_native": float(qps_native),
@@ -2965,6 +3346,13 @@ def main() -> None:
         default=[],
         help="Optional kernel alias filter (repeatable). Limits both execution and denominator to the selected kernels.",
     )
+    ap.add_argument(
+        "--shape",
+        action="append",
+        default=[],
+        help="Override a shape symbol binding for perf inputs (repeatable), e.g. --shape M=256. "
+        "Intended for single-kernel perf/tune runs; avoid using this with broad denominators.",
+    )
     ap.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--family-kernel-chunk-size", type=int, default=12)
     ap.add_argument("--threshold", type=float, default=0.80)
@@ -3022,6 +3410,11 @@ def main() -> None:
         help="Kernel alias to exclude from gpu_perf gate denominator (repeatable).",
     )
     args = ap.parse_args()
+    shape_overrides = _parse_shape_overrides(getattr(args, "shape", None))
+    if shape_overrides:
+        if not [str(k).strip() for k in list(getattr(args, "kernel", None) or []) if str(k).strip()]:
+            raise SystemExit("--shape requires --kernel (repeatable); refusing to override broad denominators")
+        print(f"[gpu-perf] shape overrides: {shape_overrides}", flush=True)
     if args.tuning_db is not None and not Path(args.tuning_db).is_file():
         raise SystemExit(f"missing tuning_db jsonl: {args.tuning_db}")
     _configure_tuning_db(Path(args.tuning_db) if args.tuning_db is not None else None)
@@ -3096,9 +3489,24 @@ def main() -> None:
 
     _set_codegen_mode_env()
     _set_runtime_backend_env(str(args.cuda_runtime_backend))
+    cuda_sm_before = str(os.getenv("INTENTIR_CUDA_SM", "")).strip()
+    _ensure_intentir_cuda_sm_env()
+    cuda_sm_after = str(os.getenv("INTENTIR_CUDA_SM", "")).strip()
+    if (not cuda_sm_before) and cuda_sm_after:
+        print(f"[gpu-perf] auto INTENTIR_CUDA_SM={cuda_sm_after}", flush=True)
     policy_excluded_kernels, policy_payload, policy_loaded = _load_gate_policy(
         Path(args.policy_json) if args.policy_json is not None else None
     )
+    policy_kernel_shapes = _policy_kernel_shape_overrides(policy_payload, kernel_source=str(kernel_source))
+    if policy_kernel_shapes:
+        applied_kernels = sorted(
+            [k for k in policy_kernel_shapes.keys() if str(k).strip()]
+        )
+        print(
+            f"[gpu-perf] policy kernel shape overrides ({len(applied_kernels)}): "
+            + ",".join(applied_kernels),
+            flush=True,
+        )
     cli_excluded_kernels = {str(k).strip() for k in list(args.gate_exclude_kernel or []) if str(k).strip()}
     excluded_gate_kernels = set(policy_excluded_kernels)
     excluded_gate_kernels.update(cli_excluded_kernels)
@@ -3239,6 +3647,13 @@ def main() -> None:
                             intent_artifact_dir=str(args.intent_artifact_dir),
                             spec_map=spec_map,
                             device=device,
+                            shape_overrides=(
+                                {
+                                    **(dict(policy_kernel_shapes.get(str(kernel)) or {})),
+                                    **(dict(shape_overrides) if shape_overrides else {}),
+                                }
+                                or None
+                            ),
                         )
                         row = _apply_gate_exclude_policy(row, excluded_kernels=excluded_gate_kernels)
                     chunk_entries.append(row)
@@ -3368,6 +3783,9 @@ def main() -> None:
         "rvv_remote": False,
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "bench_mode": str(args.bench_mode),
+        "shape_overrides": dict(shape_overrides),
+        "policy_kernel_shape_overrides": dict(policy_kernel_shapes),
+        "intent_artifact_dir": _to_repo_rel(Path(str(args.intent_artifact_dir))),
         "kernel_source": str(kernel_source),
         "kernel_expected_count": int(kernel_expected_count),
         "kernel_allowlist_enabled": bool(allowlist_enabled),
@@ -3415,6 +3833,9 @@ def main() -> None:
         "contract_schema_version": "intent_mlir_backend_contract_v2",
         "mode": str(mode_label),
         "bench_mode": str(bench_mode_label),
+        "shape_overrides": dict(shape_overrides),
+        "policy_kernel_shape_overrides": dict(policy_kernel_shapes),
+        "intent_artifact_dir": _to_repo_rel(Path(str(args.intent_artifact_dir))),
         "threshold": float(args.threshold),
         "p50_threshold": float(args.p50_threshold),
         "kernel_source": str(kernel_source),

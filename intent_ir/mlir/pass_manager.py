@@ -294,6 +294,32 @@ def _run_one_pass(
 def _tool_path(toolchain: dict[str, Any], name: str) -> str:
     return str((((toolchain.get("tools") or {}).get(name) or {}).get("path") or "")).strip()
 
+def _maybe_autoset_intentir_cuda_sm(*, pass_arg: str) -> None:
+    """
+    Best-effort quality-of-life: many C++ plugin passes (notably
+    `intentir-apply-tuning-db-cuda-v1`) key off `INTENTIR_CUDA_SM` to enable
+    arch-scoped tuning_db entries (including kernel_kind overrides).
+
+    In local CUDA runs we can infer the SM from torch and set the env var if the
+    user didn't specify it. This helps avoid silently compiling focus kernels
+    with slower default variants.
+    """
+
+    if str(os.getenv("INTENTIR_CUDA_SM", "")).strip():
+        return
+    if "intentir-apply-tuning-db-cuda-v1" not in str(pass_arg or ""):
+        return
+    try:  # pragma: no cover - depends on CUDA env
+        import torch  # type: ignore
+
+        if not torch.cuda.is_available():
+            return
+        major, minor = torch.cuda.get_device_capability(0)
+        if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
+            os.environ["INTENTIR_CUDA_SM"] = f"sm_{int(major)}{int(minor)}"
+    except Exception:
+        return
+
 
 def _extract_intentir_plugin_passes(pass_arg: str) -> list[str]:
     text = str(pass_arg or "").strip()
@@ -360,6 +386,7 @@ def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) ->
     if not arg_tokens:
         raise RuntimeError("mlir-opt pass selector missing pass argument")
     cli_args = [x if str(x).startswith("-") else f"--{x}" for x in arg_tokens]
+    _maybe_autoset_intentir_cuda_sm(pass_arg=str(pass_arg or ""))
     plugin = _resolve_intentir_mlir_pass_plugin()
     plugin_arg: list[str] = []
     if plugin:

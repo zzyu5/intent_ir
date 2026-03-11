@@ -1,11 +1,12 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-06T03:57:06+00:00
-- Commit: `26a8ef7d2ac120963354c2bbc0de11c723f523cb`
-- Lane: `workflow`
-- Summary: sm90 measured tune winner: matmul_fused_epilogue2d v3 ratio~1.004; remote cpp_plugin rebuild works with Unix Makefiles fallback
+- Timestamp: 2026-03-10T03:37:45+00:00
+- Commit: `96393bcc887ef9cc8480d9533c932ed807f571f1`
+- Lane: `backend_compiler`
+- Summary: H100(sm90) focus6 perf stabilized: paired bench + median ratio; all ratios >=1.0 under strict+llvm_llc (sw14 async=1)
+- Agent Handoff: `workflow/flaggems/state/AGENT_HANDOFF_20260310.md`
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/run_summary.json`
-- Status Converged: `artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/status_converged.json`
-- Evidence Paths: artifacts/remote_import/20260306/h100/plugin_rebuild_sm90_v1/plugin_manifest.json, artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/coverage/matmul_fused_epilogue2d.json, artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/gpu_perf_graph.json, artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/run_summary.json, artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/status_converged.json, artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/recommended.jsonl, artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/summary.json
-- Next Focus: Promote sm90 canonical winner into remote runs, then push matmul beyond parity via larger-shape sweep or WGMMA
+- Run Summary: `artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json`
+- Status Converged: `artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json`
+- Evidence Paths: artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/gpu_perf_graph.json, artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json, artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json, artifacts/remote_import/20260310/h100/tune_flash_attention2d_sm90_more_candidates_v5/summary.json, workflow/flaggems/state/tuning_db/cuda.jsonl
+- Next Focus: Refresh workflow current_status.json to reflect latest cpp_plugin full196 + focus perf evidence; consider adding RMS/masked meaningful shape overrides if needed

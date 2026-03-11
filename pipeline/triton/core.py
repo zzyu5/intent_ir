@@ -465,6 +465,18 @@ def _compiler_cpp_wave_name() -> str:
     # include aspirational kernels that are not yet implemented in the plugin.
     return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave2")).strip().lower()
 
+
+def _compiler_cpp_miss_policy() -> str:
+    """
+    Controls behavior when INTENTIR_COMPILER_STACK=cpp_plugin but the current kernel
+    is not in INTENTIR_COMPILER_CPP_WAVE allowlist.
+
+    Values:
+      - "skip" (default): do not emit LLVM/PTX for non-wave kernels.
+      - "python": fall back to the Python real-MLIR pipeline (still requires real-MLIR wave allowlist).
+    """
+    return str(os.getenv("INTENTIR_COMPILER_CPP_MISS_POLICY", "skip")).strip().lower()
+
 def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
     wave_name = str(wave or "").strip().lower()
     if not wave_name:
@@ -491,11 +503,17 @@ def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
 
 
 def _cuda_real_mlir_wave_name() -> str:
-    return str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+    raw = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+    if raw:
+        return raw
+    return "wave25" if _real_mlir_enabled() else ""
 
 
 def _rvv_real_mlir_wave_name() -> str:
-    return str(os.getenv("INTENTIR_RVV_REAL_MLIR_WAVE", "")).strip().lower()
+    raw = str(os.getenv("INTENTIR_RVV_REAL_MLIR_WAVE", "")).strip().lower()
+    if raw:
+        return raw
+    return "wave22" if _real_mlir_enabled() else ""
 
 
 def _load_cuda_real_mlir_wave_kernels(wave: str) -> set[str]:
@@ -575,7 +593,9 @@ def _downstream_llvm_pipeline(
             if target.startswith("cuda"):
                 return "downstream_cuda_std_cpp_llvm", "cuda"
             return None, None
-        return None, None
+        if _compiler_cpp_miss_policy() not in {"python", "py"}:
+            return None, None
+        # Hybrid mode: allow falling back to the Python real-MLIR stack (no cached LLVM IR).
     if target.startswith("cuda"):
         wave = _cuda_real_mlir_wave_name()
         if wave and _real_mlir_enabled():

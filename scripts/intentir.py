@@ -130,41 +130,113 @@ def _default_cuda_wave() -> str:
     return f"wave{best_n}" if best_n is not None else ""
 
 
+def _infer_compiler_cpp_wave_for_kernel(kernel: str) -> str:
+    """
+    For cpp_plugin flows, LLVM emission is gated by INTENTIR_COMPILER_CPP_WAVE.
+
+    The default in pipeline/triton/core.py is intentionally conservative ("wave2"),
+    which can exclude focus kernels we still want to tune. For `tune`, pick the
+    newest wave that explicitly contains the target kernel when the user didn't
+    set INTENTIR_COMPILER_CPP_WAVE.
+    """
+
+    env = str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "")).strip().lower()
+    if env:
+        return env
+
+    k = str(kernel or "").strip()
+    if not k:
+        return ""
+
+    state = ROOT / "workflow" / "flaggems" / "state"
+    best = ""
+    best_n = None
+    if not state.is_dir():
+        return ""
+
+    for p in state.glob("compiler_cpp_wave*_kernels.json"):
+        m = re.match(r"compiler_cpp_wave(\d+)_kernels\.json$", p.name)
+        if not m:
+            continue
+        try:
+            n = int(m.group(1))
+        except Exception:
+            continue
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        rows = payload.get("kernels")
+        if not isinstance(rows, list):
+            continue
+        kernels = {str(x).strip() for x in rows if str(x).strip()}
+        if k in kernels and (best_n is None or n > best_n):
+            best_n = n
+            best = f"wave{n}"
+    return best
+
+
 def _parse_candidate(raw: str) -> tuple[str, dict[str, int]]:
     """
     Syntax:
       <kernel_kind>
       <kernel_kind>:K=V,A=B
+
+    Backward compatible forms (used in older handoff docs):
+      kernel_kind=<kernel_kind>,K=V,A=B
+      <kernel_kind>,K=V,A=B
     """
 
     s = str(raw or "").strip()
     if not s:
         raise ValueError("empty candidate")
+
+    def _strip_kind_prefix(text: str) -> str:
+        t = str(text).strip()
+        if "=" in t:
+            k0, v0 = t.split("=", 1)
+            if str(k0).strip().lower() in {"kernel_kind", "kind"}:
+                return str(v0).strip()
+        return t
+
+    kernel_kind = ""
+    bindings: dict[str, int] = {}
+
     if ":" in s:
-        kind, rest = s.split(":", 1)
+        kind_part, rest = s.split(":", 1)
+        kernel_kind = _strip_kind_prefix(kind_part)
+        rest = str(rest).strip()
+        parts = [p.strip() for p in rest.split(",") if str(p).strip()]
+    elif "," in s:
+        parts = [p.strip() for p in s.split(",") if str(p).strip()]
+        kernel_kind = _strip_kind_prefix(parts[0])
+        parts = parts[1:]
     else:
-        kind, rest = s, ""
-    kernel_kind = str(kind).strip()
+        kernel_kind = _strip_kind_prefix(s)
+        parts = []
+
+    kernel_kind = str(kernel_kind).strip()
     if not kernel_kind:
         raise ValueError(f"invalid candidate={raw!r}: empty kernel_kind")
-    bindings: dict[str, int] = {}
-    rest = str(rest).strip()
-    if rest:
-        for part in rest.split(","):
-            item = str(part).strip()
-            if not item:
-                continue
-            if "=" not in item:
-                raise ValueError(f"invalid candidate binding {item!r} (expected K=V)")
-            k, v = item.split("=", 1)
-            key = str(k).strip()
-            val_raw = str(v).strip()
-            if not key:
-                raise ValueError(f"invalid candidate binding {item!r} (empty key)")
-            try:
-                bindings[key] = int(val_raw, 0)
-            except Exception as e:  # noqa: BLE001
-                raise ValueError(f"invalid candidate binding {item!r} (non-int value)") from e
+
+    for part in parts:
+        item = str(part).strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"invalid candidate binding {item!r} (expected K=V)")
+        k, v = item.split("=", 1)
+        key = str(k).strip()
+        val_raw = str(v).strip()
+        if not key:
+            raise ValueError(f"invalid candidate binding {item!r} (empty key)")
+        try:
+            bindings[key] = int(val_raw, 0)
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"invalid candidate binding {item!r} (non-int value)") from e
+
     return kernel_kind, bindings
 
 
@@ -329,6 +401,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
     evidence_mode = str(args.evidence_mode).strip().lower() or "off"
     if evidence_mode not in {"on", "off"}:
         raise SystemExit(f"invalid --evidence-mode={evidence_mode!r} (expected on/off)")
+    perf_shape_overrides = _parse_kv_int_args(getattr(args, "perf_shape", None), flag="--perf-shape")
 
     out_root = Path(args.out_root) if args.out_root else (ROOT / "artifacts" / "tuning_runs" / _utc_ymd() / f"{kernel}_{arch}")
     out_root.mkdir(parents=True, exist_ok=True)
@@ -346,7 +419,12 @@ def _cmd_tune(args: argparse.Namespace) -> int:
     if not candidates:
         raise SystemExit("--candidate or --candidate-file is required")
 
+    compiler_stack = str(os.getenv("INTENTIR_COMPILER_STACK", "python") or "").strip().lower()
+    if compiler_stack in {"cpp", "c++"}:
+        compiler_stack = "cpp_plugin"
+
     base_env = {
+        "INTENTIR_COMPILER_STACK": compiler_stack,
         "INTENTIR_REAL_MLIR": "1",
         "INTENTIR_FALLBACK_POLICY": "strict",
         "INTENTIR_CUDA_REQUIRE_LLVM_PTX": "1",
@@ -354,9 +432,14 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         "INTENTIR_CUDA_REAL_MLIR_WAVE": str(wave),
         "INTENTIR_MODE": str(args.intentir_mode),
     }
+    if compiler_stack == "cpp_plugin":
+        cpp_wave = _infer_compiler_cpp_wave_for_kernel(kernel)
+        if cpp_wave:
+            base_env["INTENTIR_COMPILER_CPP_WAVE"] = str(cpp_wave)
     # Preserve user-provided SM string (e.g. sm_120a) if present; otherwise set a normalized one.
     if not str(os.getenv("INTENTIR_CUDA_SM", "")).strip():
-        base_env["INTENTIR_CUDA_SM"] = str(arch)
+        digits = "".join(ch for ch in str(arch) if ch.isdigit())
+        base_env["INTENTIR_CUDA_SM"] = f"sm_{digits}" if digits else str(arch)
 
     results: list[dict[str, object]] = []
     default_when: dict[str, int] = {}
@@ -372,6 +455,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                 {
                     "schema_version": "intentir_tuning_db_entry_v1",
                     "backend": "cuda",
+                    "compiler_stack": compiler_stack,
                     "kernel": str(kernel),
                     "arch": str(arch),
                     "bindings": dict(bindings),
@@ -494,8 +578,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
             )
             continue
 
-        rc_perf = _run(
-            _python_cmd(
+        perf_cmd = _python_cmd(
                 "scripts/intentir.py",
                 "suite",
                 "--suite",
@@ -521,7 +604,12 @@ def _cmd_tune(args: argparse.Namespace) -> int:
                 "--cuda-runtime-backend",
                 str(args.cuda_runtime_backend),
                 "--stream",
-            ),
+        )
+        for item in list(getattr(args, "perf_shape", None) or []):
+            if str(item).strip():
+                perf_cmd.extend(["--gpu-perf-shape", str(item)])
+        rc_perf = _run(
+            perf_cmd,
             stream=True,
             dry_run=bool(args.dry_run),
             env_overrides=env,
@@ -556,6 +644,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
         "backend_target": str(backend_target),
         "kernel_source": str(kernel_source),
         "arch": str(arch),
+        "compiler_stack": compiler_stack,
         "wave": str(wave),
         "evidence_mode": str(evidence_mode),
         "candidates": results,
@@ -586,9 +675,10 @@ def _cmd_tune(args: argparse.Namespace) -> int:
     recommended = {
         "schema_version": "intentir_tuning_db_entry_v1",
         "backend": "cuda",
+        "compiler_stack": compiler_stack,
         "kernel": str(kernel),
         "arch": str(arch),
-        "when": (dict(default_when) if default_when else {}),
+        "when": ({**(dict(default_when) if default_when else {}), **dict(perf_shape_overrides)}),
         "bindings": dict(best.get("bindings") or {}),
         "kernel_kind": str(best.get("kernel_kind") or ""),
         "note": f"autotune_best ratio={best_ratio}",
@@ -713,6 +803,9 @@ def _cmd_suite(args: argparse.Namespace) -> int:
                 cmd.extend(["--kernel", str(kernel)])
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
+        for item in list(getattr(args, "gpu_perf_shape", None) or []):
+            if str(item).strip():
+                cmd.extend(["--shape", str(item)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "gpu-perf-triton-native":
@@ -757,6 +850,9 @@ def _cmd_suite(args: argparse.Namespace) -> int:
                 cmd.extend(["--kernel", str(kernel)])
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
+        for item in list(getattr(args, "gpu_perf_shape", None) or []):
+            if str(item).strip():
+                cmd.extend(["--shape", str(item)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "gpu-perf-wave-allowlist":
@@ -816,6 +912,9 @@ def _cmd_suite(args: argparse.Namespace) -> int:
                 cmd.extend(["--gate-exclude-kernel", str(kernel)])
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
+        for item in list(getattr(args, "gpu_perf_shape", None) or []):
+            if str(item).strip():
+                cmd.extend(["--shape", str(item)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "triton-smoke":
@@ -1177,23 +1276,27 @@ def _load_intent_payload(path: Path) -> dict:
     return payload
 
 
-def _parse_shape_bindings(raw: list[str] | None) -> dict[str, int]:
+def _parse_kv_int_args(raw: list[str] | None, *, flag: str) -> dict[str, int]:
     out: dict[str, int] = {}
     for item in list(raw or []):
         s = str(item or "").strip()
         if not s:
             continue
         if "=" not in s:
-            raise ValueError(f"invalid --shape {s!r} (expected KEY=INT)")
+            raise ValueError(f"invalid {flag} {s!r} (expected KEY=INT)")
         k, v = s.split("=", 1)
         key = str(k).strip()
         if not key:
-            raise ValueError(f"invalid --shape {s!r} (empty key)")
+            raise ValueError(f"invalid {flag} {s!r} (empty key)")
         try:
             out[key] = int(str(v).strip())
         except Exception as e:  # noqa: BLE001
-            raise ValueError(f"invalid --shape {s!r} (bad int): {type(e).__name__}: {e}") from e
+            raise ValueError(f"invalid {flag} {s!r} (bad int): {type(e).__name__}: {e}") from e
     return out
+
+
+def _parse_shape_bindings(raw: list[str] | None) -> dict[str, int]:
+    return _parse_kv_int_args(raw, flag="--shape")
 
 
 def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
@@ -1395,6 +1498,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "If empty, auto-infers from workflow state full196_last_run.",
     )
     suite.add_argument(
+        "--gpu-perf-shape",
+        action="append",
+        default=[],
+        help="Optional shape binding override forwarded to run_gpu_perf_graph.py (repeatable), e.g. "
+        "--gpu-perf-shape M=256. Intended for single-kernel perf/tune runs.",
+    )
+    suite.add_argument(
         "--pipeline-timeout-sec",
         type=int,
         default=0,
@@ -1487,6 +1597,13 @@ def _build_parser() -> argparse.ArgumentParser:
     tune.add_argument("--perf-warmup", type=int, default=10)
     tune.add_argument("--perf-iters", type=int, default=50)
     tune.add_argument("--perf-repeats", type=int, default=3)
+    tune.add_argument(
+        "--perf-shape",
+        action="append",
+        default=[],
+        help="Optional perf-only shape binding override (repeatable), e.g. --perf-shape M=256. "
+        "Applied only to the perf stage (gpu-perf-triton-native).",
+    )
     tune.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     tune.add_argument("--evidence-mode", choices=["on", "off"], default="off")
     tune.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")

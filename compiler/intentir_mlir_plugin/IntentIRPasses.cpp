@@ -2281,36 +2281,54 @@ static mlir::LogicalResult lowerCudaMatmulFusedEpilogue2dMmaTF32V1(LoweringConte
   if (!warpVectorEpilogue) {
     b.create<mlir::gpu::BarrierOp>(loc);
 
-    int64_t tileC = bm * bn;
-    auto cTileC = makeIndexConst(b, loc, tileC);
-    auto forOp = b.create<mlir::scf::ForOp>(loc, tid, cTileC, cThreads);
+    // Vectorized CTA epilogue: process 4 columns at a time to reduce scalar
+    // bias/mask traffic and store overhead.
+    auto v4f = mlir::VectorType::get({4}, f32);
+    auto v4i8 = mlir::VectorType::get({4}, b.getI8Type());
+    auto v4i1 = mlir::VectorType::get({4}, b.getI1Type());
+
+    auto c0i8 = b.create<mlir::arith::ConstantIntOp>(loc, 0, 8);
+    auto c0i8V = b.create<mlir::vector::SplatOp>(loc, v4i8, c0i8).getResult();
+    auto c0fV = b.create<mlir::vector::SplatOp>(loc, v4f, c0f).getResult();
+
+    int64_t tileGroups = (bm * bn) / 4;
+    auto cTileGroups = makeIndexConst(b, loc, tileGroups);
+    auto cBN4 = makeIndexConst(b, loc, bn / 4);
+    auto forOp = b.create<mlir::scf::ForOp>(loc, tid, cTileGroups, cThreads);
     b.setInsertionPointToStart(forOp.getBody());
-    auto t = forOp.getInductionVar();
-    auto tR = b.create<mlir::arith::DivUIOp>(loc, t, cBN);
-    auto tC = b.create<mlir::arith::RemUIOp>(loc, t, cBN);
-    auto gmE = b.create<mlir::arith::AddIOp>(loc, row0, tR);
-    auto gnE = b.create<mlir::arith::AddIOp>(loc, col0, tC);
+    auto g = forOp.getInductionVar();
+
+    auto gRow = b.create<mlir::arith::DivUIOp>(loc, g, cBN4).getResult();
+    auto gColGroup = b.create<mlir::arith::RemUIOp>(loc, g, cBN4).getResult();
+    auto gCol = b.create<mlir::arith::MulIOp>(loc, gColGroup, c4).getResult();
+
+    auto rOut = b.create<mlir::arith::AddIOp>(loc, row0, gRow).getResult();
+    auto cOut = b.create<mlir::arith::AddIOp>(loc, col0, gCol).getResult();
 
     auto val0 =
-        b.create<mlir::memref::LoadOp>(loc, Cs, mlir::ValueRange{tR, tC}).getResult();
+        b.create<mlir::vector::LoadOp>(loc, v4f, Cs, mlir::ValueRange{gRow, gCol})
+            .getResult();
     auto bias =
-        b.create<mlir::memref::LoadOp>(loc, Bias, mlir::ValueRange{gnE}).getResult();
+        b.create<mlir::vector::LoadOp>(loc, v4f, Bias, mlir::ValueRange{cOut}).getResult();
     auto val1 = b.create<mlir::arith::AddFOp>(loc, val0, bias).getResult();
 
     auto rm =
-        b.create<mlir::memref::LoadOp>(loc, RowMask, mlir::ValueRange{gmE}).getResult();
-    auto cm =
-        b.create<mlir::memref::LoadOp>(loc, ColMask, mlir::ValueRange{gnE}).getResult();
-    auto c0i8 = b.create<mlir::arith::ConstantIntOp>(loc, 0, 8);
+        b.create<mlir::memref::LoadOp>(loc, RowMask, mlir::ValueRange{rOut}).getResult();
     auto rmOk =
         b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, rm, c0i8)
             .getResult();
-    auto cmOk =
-        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, cm, c0i8)
+    auto rmOkV = b.create<mlir::vector::SplatOp>(loc, v4i1, rmOk).getResult();
+
+    auto cm =
+        b.create<mlir::vector::LoadOp>(loc, v4i8, ColMask, mlir::ValueRange{cOut})
             .getResult();
-    auto cond = b.create<mlir::arith::AndIOp>(loc, rmOk, cmOk).getResult();
-    auto val2 = b.create<mlir::arith::SelectOp>(loc, cond, val1, c0f).getResult();
-    b.create<mlir::memref::StoreOp>(loc, val2, Out2, mlir::ValueRange{gmE, gnE});
+    auto cmOk =
+        b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ne, cm, c0i8V)
+            .getResult();
+    auto cond = b.create<mlir::arith::AndIOp>(loc, rmOkV, cmOk).getResult();
+
+    auto val2 = b.create<mlir::arith::SelectOp>(loc, cond, val1, c0fV).getResult();
+    b.create<mlir::vector::StoreOp>(loc, val2, Out2, mlir::ValueRange{rOut, cOut});
 
     b.setInsertionPointAfter(forOp);
   } else {
@@ -3332,7 +3350,10 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   if (auto it = ctx.shapeBindings.find("ATTN_SCORE_WARPS"); it != ctx.shapeBindings.end()) {
     scoreWarps = static_cast<int64_t>(it->second);
   }
-  if (scoreWarps != 2 && scoreWarps != 4 && scoreWarps != 6) {
+  // NOTE: H100(sm90) tuning may benefit from more score warps; keep this list explicit
+  // to avoid accidentally accepting nonsense values that silently bloat block size.
+  if (scoreWarps != 2 && scoreWarps != 4 && scoreWarps != 6 && scoreWarps != 8 && scoreWarps != 10 &&
+      scoreWarps != 14) {
     scoreWarps = 6;
   }
   const int64_t outWarps = 2;
@@ -3345,6 +3366,7 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
 
   const int64_t qElems = HD;
   const int64_t tileElems = blockKV * HD;
+  const bool kvTail = ((KV % blockKV) != 0);
 
   bool directKV = false;
   if (auto it = ctx.shapeBindings.find("FLASH_ATTN_DIRECT_GMEM"); it != ctx.shapeBindings.end()) {
@@ -3354,10 +3376,23 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   if (auto it = ctx.shapeBindings.find("FLASH_ATTN_ASYNC_COPY"); it != ctx.shapeBindings.end()) {
     asyncCopy = (it->second != 0);
   }
+  bool bypassL1 = false;
+  if (auto it = ctx.shapeBindings.find("FLASH_ATTN_BYPASS_L1"); it != ctx.shapeBindings.end()) {
+    bypassL1 = (it->second != 0);
+  }
+  bool asyncCopyNeedsPadding = false;
   // Guardrails: async-copy uses vector<4xf32> and assumes a single KV tile (no tail).
+  //
+  // Note: when block_x does not divide tileVec4, some threads will have an out-of-range
+  // idx in the last iteration. We handle this by padding shared K/V tile buffers with a
+  // small tail and using srcElements=0 for out-of-range copies so they only write zeros
+  // into the padding (never clobbering live tile data).
   if (asyncCopy) {
     const int64_t tileVec4 = tileElems / 4;
-    asyncCopy = (!directKV) && (KV == blockKV) && ((HD % 4) == 0) && ((tileVec4 % threads) == 0);
+    asyncCopy = (!directKV) && (KV >= blockKV) && ((HD % 4) == 0) && (tileVec4 > 0);
+    if (asyncCopy) {
+      asyncCopyNeedsPadding = ((tileVec4 % threads) != 0);
+    }
   }
 
   // Shared layout:
@@ -3366,10 +3401,14 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   int64_t offK = 0;
   int64_t offV = 0;
   int64_t offScores = 0;
+  // Add a tiny padding tail when asyncCopy is enabled so out-of-range vector copies can
+  // land in the padding region without overlapping scores/weights.
+  const int64_t tileElemsPadded =
+      (!directKV && asyncCopy && asyncCopyNeedsPadding) ? (tileElems + 4) : tileElems;
   if (!directKV) {
     offK = qElems;
-    offV = offK + tileElems;
-    offScores = offV + tileElems;
+    offV = offK + tileElemsPadded;
+    offScores = offV + tileElemsPadded;
   } else {
     offScores = qElems;
   }
@@ -3501,9 +3540,10 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     if (asyncCopy) {
       // Async-copy vector<4xf32> into shared for the single-tile case.
       const int64_t tileVec4 = tileElems / 4;
-    auto c4 = makeIndexConst(b, loc, 4);
-    auto dstElements4 = b.getIndexAttr(4);
-      const int64_t iters = tileVec4 / threads;
+      auto dstElements4 = b.getIndexAttr(4);
+      auto cTileVec4 = makeIndexConst(b, loc, tileVec4);
+      const int64_t iters = (tileVec4 + threads - 1) / threads;
+      const bool fastPath = (!asyncCopyNeedsPadding) && (!kvTail);
       llvm::SmallVector<mlir::Value, 32> cpTokens;
       cpTokens.reserve(static_cast<size_t>(iters * 2));
 
@@ -3513,15 +3553,54 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
           auto off = makeIndexConst(b, loc, it * threads);
           idx = b.create<mlir::arith::AddIOp>(loc, tid, off).getResult();
         }
-        auto idx4 = b.create<mlir::arith::MulIOp>(loc, idx, c4).getResult();
-        auto kvOff = b.create<mlir::arith::DivUIOp>(loc, idx4, cHD).getResult();
-        auto d = b.create<mlir::arith::RemUIOp>(loc, idx4, cHD).getResult();
-        auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, kvOff).getResult();
-        auto base = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
-        auto src = b.create<mlir::arith::AddIOp>(loc, base, d).getResult();
-        auto dstK = b.create<mlir::arith::AddIOp>(loc, cOffK, idx4).getResult();
-        auto dstV = b.create<mlir::arith::AddIOp>(loc, cOffV, idx4).getResult();
+        mlir::Value dstK;
+        mlir::Value dstV;
+        mlir::Value src;
+        mlir::Value srcElements;
+        if (!fastPath) {
+          // General path: handle (1) thread-tiling remainders and (2) KV tail tiles via
+          // predicated copies that zero-fill the destination when out-of-range.
+          auto predIn =
+              b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, idx, cTileVec4).getResult();
+          // dstIdx = predIn ? idx : tileVec4 (padding region start).
+          auto dstIdx = b.create<mlir::arith::SelectOp>(loc, predIn, idx, cTileVec4).getResult();
+          auto idx4Dst = b.create<mlir::arith::MulIOp>(loc, dstIdx, c4).getResult();
 
+          // kv = tile0 + (idx4Dst / HD); out-of-range kv rows are zero-filled.
+          auto kvOffDst = b.create<mlir::arith::DivUIOp>(loc, idx4Dst, cHD).getResult();
+          auto kvDst = b.create<mlir::arith::AddIOp>(loc, tile0, kvOffDst).getResult();
+          auto predKV =
+              b.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::ult, kvDst, cKV).getResult();
+          auto pred = b.create<mlir::arith::AndIOp>(loc, predIn, predKV).getResult();
+
+          // srcIdx = pred ? idx : 0 (safe in-bounds src, but srcElements=0 => zero-fill).
+          auto srcIdx = b.create<mlir::arith::SelectOp>(loc, pred, idx, c0).getResult();
+          auto idx4Src = b.create<mlir::arith::MulIOp>(loc, srcIdx, c4).getResult();
+          auto kvOff = b.create<mlir::arith::DivUIOp>(loc, idx4Src, cHD).getResult();
+          auto d = b.create<mlir::arith::RemUIOp>(loc, idx4Src, cHD).getResult();
+          auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, kvOff).getResult();
+          auto base = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
+          src = b.create<mlir::arith::AddIOp>(loc, base, d).getResult();
+          dstK = b.create<mlir::arith::AddIOp>(loc, cOffK, idx4Dst).getResult();
+          dstV = b.create<mlir::arith::AddIOp>(loc, cOffV, idx4Dst).getResult();
+
+          // Copy 4 elements when in-bounds, else 0 (zero-fill into the destination slot).
+          srcElements = b.create<mlir::arith::SelectOp>(loc, pred, c4, c0).getResult();
+        } else {
+          // Fast path: no tile remainder and no KV tail => every thread copies exactly `iters`
+          // vec4 elements without any out-of-range lane.
+          auto idx4 = b.create<mlir::arith::MulIOp>(loc, idx, c4).getResult();
+          auto kvOff = b.create<mlir::arith::DivUIOp>(loc, idx4, cHD).getResult();
+          auto d = b.create<mlir::arith::RemUIOp>(loc, idx4, cHD).getResult();
+          auto kv = b.create<mlir::arith::AddIOp>(loc, tile0, kvOff).getResult();
+          auto base = b.create<mlir::arith::MulIOp>(loc, kv, cHD).getResult();
+          src = b.create<mlir::arith::AddIOp>(loc, base, d).getResult();
+          dstK = b.create<mlir::arith::AddIOp>(loc, cOffK, idx4).getResult();
+          dstV = b.create<mlir::arith::AddIOp>(loc, cOffV, idx4).getResult();
+          srcElements = c4;
+        }
+
+        auto bypassAttr = bypassL1 ? mlir::UnitAttr::get(mlirCtx) : mlir::UnitAttr();
         auto cpK = b.create<mlir::nvgpu::DeviceAsyncCopyOp>(
             loc,
             /*dst=*/Sh,
@@ -3529,8 +3608,8 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
             /*src=*/KArg,
             /*srcIndices=*/mlir::ValueRange{src},
             /*dstElements=*/dstElements4,
-            /*srcElements=*/mlir::Value(),
-            /*bypassL1=*/mlir::UnitAttr());
+            /*srcElements=*/srcElements,
+            /*bypassL1=*/bypassAttr);
         auto cpV = b.create<mlir::nvgpu::DeviceAsyncCopyOp>(
             loc,
             /*dst=*/Sh,
@@ -3538,8 +3617,8 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
             /*src=*/VArg,
             /*srcIndices=*/mlir::ValueRange{src},
             /*dstElements=*/dstElements4,
-            /*srcElements=*/mlir::Value(),
-            /*bypassL1=*/mlir::UnitAttr());
+            /*srcElements=*/srcElements,
+            /*bypassL1=*/bypassAttr);
         cpTokens.push_back(cpK.getAsyncToken());
         cpTokens.push_back(cpV.getAsyncToken());
       }
@@ -3584,6 +3663,11 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
   b.setInsertionPointToStart(&ifScoreWarp.getThenRegion().front());
   auto warpS = b.create<mlir::arith::SubIOp>(loc, warp, c2).getResult();
   auto cScoreWarps = makeIndexConst(b, loc, scoreWarps);
+  // Hoist Q loads out of the per-key loop. Q is invariant across KV tiles and
+  // score computations for this block; keeping it in registers avoids shared
+  // loads on every key score.
+  auto q0 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{lane}).getResult();
+  auto q1 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{lane2}).getResult();
   auto scoreFor = b.create<mlir::scf::ForOp>(loc, warpS, cBlockKV, cScoreWarps);
   b.setInsertionPointToStart(scoreFor.getBody());
   auto t2 = scoreFor.getInductionVar();
@@ -3611,8 +3695,6 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     k0 = b.create<mlir::memref::LoadOp>(loc, KArg, mlir::ValueRange{idxK0}).getResult();
     k1 = b.create<mlir::memref::LoadOp>(loc, KArg, mlir::ValueRange{idxK1}).getResult();
   }
-  auto q0 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{lane}).getResult();
-  auto q1 = b.create<mlir::memref::LoadOp>(loc, Sh, mlir::ValueRange{lane2}).getResult();
   auto p0 = b.create<mlir::arith::MulFOp>(loc, q0, k0).getResult();
   auto p1 = b.create<mlir::arith::MulFOp>(loc, q1, k1).getResult();
   auto partial = b.create<mlir::arith::AddFOp>(loc, p0, p1).getResult();
@@ -3907,6 +3989,7 @@ static mlir::LogicalResult lowerCudaFlashAttention2dCausalSoftmaxV6(LoweringCont
     cfg["kv_ctx"] = static_cast<int64_t>(KV);
     cfg["direct_kv"] = static_cast<bool>(directKV);
     cfg["async_copy"] = static_cast<bool>(asyncCopy);
+    cfg["bypass_l1"] = static_cast<bool>(bypassL1);
     cfg["softmax"] =
         (kernelKind == "attn2d_causal_softmax_v7") ? "online_v1_parallel_reduce" : "online_v1_serial_t0";
     meta["cuda_real_mlir_attention_cfg"] = std::move(cfg);

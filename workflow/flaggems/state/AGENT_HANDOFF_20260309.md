@@ -7,7 +7,7 @@ Snapshot:
 - Date: **2026‑03‑09**
 - Branch: `compiler-cleanup-v1`
 - HEAD: *(run `git rev-parse HEAD` for exact hash)*
-- Working tree: clean
+- Working tree: *(do not assume; check `git status` — evidence runs record `repo.dirty`)* 
 
 ---
 
@@ -43,7 +43,9 @@ This is the “map” you need to navigate quickly.
   - `intent_ir/mlir/pipelines/`: MLIR pipeline YAMLs (python stack + cpp_plugin stack)
     - `intent_ir/mlir/pipelines/downstream_cuda_std_cpp_llvm.yaml`
     - `intent_ir/mlir/pipelines/downstream_rvv_std_llvm_cpp.yaml`
-  - `intent_ir/mlir/pass_manager.py`: wrapper around `mlir-opt` etc; injects `-load-pass-plugin` when `INTENTIR_MLIR_PASS_PLUGIN` is set.
+  - `intent_ir/mlir/pass_manager.py`: wrapper around `mlir-opt` etc; injects `-load-pass-plugin` from
+    `INTENTIR_MLIR_PASS_PLUGIN` (and auto-loads the default plugin under `artifacts/mlir_plugins/intentir/` when
+    a pipeline requests `intentir-*` passes).
   - `intent_ir/mlir/passes/`: legacy + python stack passes (still exist, but direction is cpp_plugin).
 
 ### “Real mature compiler stack”: MLIR C++ pass plugin
@@ -110,7 +112,12 @@ Routing is controlled by env vars:
 
 - `INTENTIR_COMPILER_STACK=cpp_plugin|python`
 - `INTENTIR_COMPILER_CPP_WAVE=wave4` (controls which kernels are routed to cpp stack; see `workflow/flaggems/state/compiler_cpp_wave4_kernels.json`)
+- `INTENTIR_COMPILER_CPP_MISS_POLICY=skip|python` (**important for full196**)
+  - default `skip`: if a kernel is not in the cpp wave, LLVM/PTX emission is skipped (you will see `mlir.llvm_emit_ok=false` + `llvm_skip_reason=compiler_cpp_wave_excludes_kernel`).
+  - `python`: **hybrid mode** — kernels not in the cpp wave fall back to the Python real‑MLIR LLVM pipeline (still strict + llvm_llc PTX), while wave kernels use the C++ plugin pipeline.
 - `INTENTIR_MLIR_PASS_PLUGIN=$PWD/artifacts/mlir_plugins/intentir/libIntentIRPasses.so`
+  - As of **2026‑03‑09**, `intent_ir/mlir/pass_manager.py` also auto-loads this default plugin path when a pipeline
+    references `intentir-*` passes and `INTENTIR_MLIR_PASS_PLUGIN` is unset (prevents silent “pass not registered”).
 
 Pipeline YAMLs used by the cpp stack:
 
@@ -161,6 +168,13 @@ We have **real machine evidence** that CUDA full196 is green under cpp_plugin + 
   - `runtime_fallback_kernel_count=0`
   - `mlir_llvm_chain_ok=true`
 
+1b) Local sm89 (4080S) — fresh on HEAD (cpp_plugin hybrid)
+- Evidence: `artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/run_summary.json`
+  - `ok=true`
+  - `runtime_fallback_kernel_count=0`
+  - `mlir_llvm_chain_ok=true`
+  - Note: run uses `INTENTIR_COMPILER_STACK=cpp_plugin` + `INTENTIR_COMPILER_CPP_WAVE=wave4` + `INTENTIR_COMPILER_CPP_MISS_POLICY=python` (hybrid).
+
 2) Remote H100 sm90
 - Evidence: `artifacts/remote_import/20260306/h100/h100_cuda_cpp_full196_sm90_v3/run_summary.json`
   - `ok=true`
@@ -198,15 +212,22 @@ Focus kernel set used for perf evidence:
 
 All perf evidence below is: **cpp_plugin + strict + `cuda_ptx_origin=llvm_llc` + real execution**.
 
-### H100 sm90 (needs work: flash_attention2d)
-- Evidence: `artifacts/remote_import/20260306/h100/h100_cuda_cpp_triton_native_focus_covperf_sm90_4da9dd3_v1/gpu_perf_graph.json`
+### H100 sm90 (now ≥ Triton on focus)
+- Evidence: `artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/gpu_perf_graph.json`
 - Ratios vs triton-native baseline:
-  - `_attn_fwd` ≈ **1.098**
-  - `masked_attention2d` ≈ **1.020**
-  - `ai_bench_matmul` ≈ **1.081**
-  - `matmul_fused_epilogue2d` ≈ **1.002**
-  - `rms_norm2d` ≈ **1.002**
-  - `flash_attention2d` ≈ **0.972**  ← current worst focus item on H100
+  - `_attn_fwd` ≈ **1.097**
+  - `masked_attention2d` ≈ **1.036**
+  - `ai_bench_matmul` ≈ **1.079**
+  - `matmul_fused_epilogue2d` ≈ **1.011**
+  - `rms_norm2d` ≈ **1.025**
+  - `flash_attention2d` ≈ **1.002**  ← fixed (>= 1.00)
+
+Throughput sanity (recommended when assessing “超越” claims):
+
+- `matmul_fused_epilogue2d` @ `M=256, N=512, K=256`:
+  - Evidence (perf-shape override / single-kernel): `artifacts/remote_import/20260309/h100/tune_matmul_fe_sm90_m256n512k256_v1/01_matmul_fused_epilogue_mma_tf32_v3_f12fb0d1d2/perf/gpu_perf_graph.json`
+  - Ratio ≈ **1.68** (strict + llvm_llc, cpp_plugin)
+  - Winner recorded in `workflow/flaggems/state/tuning_db/cuda.jsonl` with `when:{M:256,N:512,K:256}`.
 
 ### 5090D sm120 (already ≥ Triton on focus)
 - Evidence: `artifacts/remote_import/20260306/sm120/sm120_cuda_cpp_triton_native_focus_covperf_sm120_4da9dd3_v1/gpu_perf_graph.json`
@@ -216,18 +237,20 @@ All perf evidence below is: **cpp_plugin + strict + `cuda_ptx_origin=llvm_llc` +
   - `matmul_fused_epilogue2d` ≈ **1.015**
   - others > 1.0
 
-### Local sm89 (near parity; tiny gaps remain)
-- Evidence: `artifacts/remote_perf/20260306/local_triton_native_cpp_focus_covperf_sm89_4da9dd3_v1/gpu_perf_graph.json`
-- Ratios:
-  - `flash_attention2d` ≈ **0.990**
-  - `masked_attention2d` ≈ **0.996**
-  - `rms_norm2d` ≈ **0.993**
-  - `ai_bench_matmul` ≈ **1.034**
-  - `matmul_fused_epilogue2d` ≈ **1.006**
+### Local sm89 (near parity; attention fixed after rebuilding tuned PTX)
+- Evidence: `artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v8/gpu_perf_graph.json`
+- Ratios (policy shapes enabled: `matmul_fused_epilogue2d` uses `M=256,N=512,K=256`):
+  - `masked_attention2d` ≈ **0.994**
+  - `flash_attention2d` ≈ **0.998**
+  - `_attn_fwd` ≈ **1.035**
+  - `rms_norm2d` ≈ **0.990**
+  - `ai_bench_matmul` ≈ **1.056**
+  - `matmul_fused_epilogue2d` ≈ **1.300**
 
 Takeaway:
 
-- The “超越 Triton” performance story is already true on **sm120**, mostly true on **sm89**, and **one remaining attention hotspot** exists on **H100 sm90** (`flash_attention2d`).
+- The “超越 Triton” performance story is true on **sm120**, and now also true on **H100 sm90** for the focus set.
+- Local **sm89** remains near parity with small remaining gaps (mainly attention/norm).
 
 ---
 
@@ -296,8 +319,12 @@ Remote RVV evidence requirement (when we do run it):
 ## 9) Current work (“what we are doing right now”)
 
 1) **CUDA perf on H100 sm90**
-   - Bring `flash_attention2d` from ~0.972 to **≥ 1.00** vs triton-native.
-   - Then push `matmul_fused_epilogue2d` from ~1.00 towards **≥ 1.05** (target “超越”).
+   - Done: `flash_attention2d` is now **≥ 1.00** vs triton-native (see evidence above).
+   - Note: `matmul_fused_epilogue2d` is ~1.01 on the **tiny** canonical `32^3` focus shape (noisy), but already **~1.68** on a meaningful throughput bucket `M=256,N=512,K=256` with strict+llvm_llc evidence and a shape-guarded tuning_db winner.
+   - Workflow fix (2026‑03‑09): focus‑perf now supports **per‑kernel shape overrides via policy** so we can make
+     `matmul_fused_epilogue2d` default to `M=256,N=512,K=256` instead of the noisy `32^3` canonical.
+     - Config: `workflow/flaggems/state/gpu_perf_policy.json` → `kernel_shape_overrides`.
+     - Runner: `scripts/flaggems/run_gpu_perf_graph.py` applies these only for `--kernel-source triton_native`.
 
 2) **Operational maturity**
    - Keep using `INTENTIR_EVIDENCE_MODE=off` for perf/remote to avoid I/O blowups.
@@ -305,7 +332,7 @@ Remote RVV evidence requirement (when we do run it):
    - Avoid repeated LLM usage in regressions: `--intentir-mode force_cache` + `--intentir-miss-policy strict`.
 
 3) **Workflow truth freshness**
-   - `workflow/flaggems/state/current_status.json` currently does not reflect the latest full196 cpp_plugin evidence; needs refresh.
+   - Keep `workflow/flaggems/state/current_status.json` refreshed after importing new evidence (perf/full196).
 
 ---
 
@@ -323,9 +350,21 @@ Remote RVV evidence requirement (when we do run it):
    - `workflow/flaggems/state/current_status.json` still points at older validated commits and does not capture the newer cpp_plugin full196 runs.
    - This is a bookkeeping problem, not a correctness failure, but it can confuse new agents.
 
-4) **Perf targets require meaningful shapes**
+4) **Pitfall: cpp_plugin without pass plugin**
+   - Symptom: `mlir-opt` errors like "`intentir-...` does not refer to a registered pass", downstream contract missing,
+     and evidence silently falls back to non‑cpp lanes.
+   - Fix:
+     - Prefer exporting `INTENTIR_MLIR_PASS_PLUGIN=$PWD/artifacts/mlir_plugins/intentir/libIntentIRPasses.so`.
+     - As of **2026‑03‑09**, `intent_ir/mlir/pass_manager.py` also auto-loads the default plugin path when needed.
+
+5) **Perf targets require meaningful shapes**
    - Some canonical shapes (e.g. tiny matmul `32^3`) are noisy and can hide real wins/losses.
    - For “超越” claims, prefer a large, throughput‑relevant bucket (e.g. `M=256,N=512,K=256`) in tune sweeps.
+
+6) **Pitfall: gpu-perf uses prebuilt PTX (strict hard-cut)**
+   - `scripts/flaggems/run_gpu_perf_graph.py` loads **prebuilt PTX** from the `--intent-artifact-dir` contracts; it does not recompile MLIR in perf runs.
+   - If that artifact dir was built without `INTENTIR_CUDA_SM`, the C++ pass `intentir-apply-tuning-db-cuda-v1` can’t select arch-scoped tuning_db entries, so `kernel_kind` overrides won’t apply (attention kernels will fall back to slower defaults).
+   - Fix: rebuild the intent artifacts with `INTENTIR_CUDA_SM=sm_XX` pinned (or rely on the `intent_ir/mlir/pass_manager.py` auto-detect when the tuning_db pass is present).
 
 ---
 
@@ -335,6 +374,25 @@ Remote RVV evidence requirement (when we do run it):
 ```bash
 python3 scripts/intentir/build_intentir_mlir_plugin.py --clean
 export INTENTIR_MLIR_PASS_PLUGIN=$PWD/artifacts/mlir_plugins/intentir/libIntentIRPasses.so
+```
+
+### Build focus-kernel contracts (triton-native coverage, cpp_plugin wave4)
+This produces the downstream `*.contract.json` + `*.kernel.ptx` required by the strict gpu-perf runner.
+```bash
+export INTENTIR_COMPILER_STACK=cpp_plugin
+export INTENTIR_COMPILER_CPP_WAVE=wave4
+export INTENTIR_COMPILER_CPP_MISS_POLICY=python
+export INTENTIR_REAL_MLIR=1
+export INTENTIR_FALLBACK_POLICY=strict
+export INTENTIR_CUDA_REQUIRE_LLVM_PTX=1
+export INTENTIR_EVIDENCE_MODE=off
+
+python scripts/triton/full_pipeline_verify.py --suite coverage --cases-limit 1 --backend-target cuda_h100 \
+  --intentir-mode force_cache --intentir-miss-policy strict \
+  --no-stage-c --no-mutation-kill \
+  --out-dir artifacts/validation_rounds/$(date +%Y%m%d)/triton_native_focus_cov_sm89_cpp_wave4_vN \
+  --kernel flash_attention2d --kernel masked_attention2d --kernel _attn_fwd \
+  --kernel ai_bench_matmul --kernel matmul_fused_epilogue2d --kernel rms_norm2d
 ```
 
 ### CUDA full196 correctness (cpp_plugin, strict, real execution)
@@ -358,11 +416,10 @@ python scripts/intentir.py suite --suite flaggems-full196 \
 ### CUDA focus perf (cpp_plugin, strict, triton-native baseline)
 ```bash
 python scripts/intentir.py suite --suite gpu-perf-triton-native \
-  --backend-target cuda_5090d \
   --kernel flash_attention2d --kernel masked_attention2d --kernel _attn_fwd \
   --kernel ai_bench_matmul --kernel matmul_fused_epilogue2d --kernel rms_norm2d \
   --perf-warmup 10 --perf-iters 50 --perf-repeats 3 \
-  --intentir-mode force_cache --intentir-miss-policy strict \
+  --gpu-perf-intent-artifact-dir artifacts/validation_rounds/$(date +%Y%m%d)/triton_native_focus_cov_sm89_cpp_wave4_vN \
   --out-root artifacts/remote_perf/$(date +%Y%m%d)/local_cuda_cpp_focus_perf_sm89_vN
 ```
 
@@ -372,8 +429,8 @@ python scripts/intentir.py tune \
   --backend-target cuda_h100 --arch sm90 \
   --kernel flash_attention2d \
   --intentir-mode force_cache --intentir-miss-policy strict \
-  --candidate 'kernel_kind=attn2d_causal_softmax_v6,ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6,FLASH_ATTN_ASYNC_COPY=1' \
-  --candidate 'kernel_kind=attn2d_causal_softmax_v7,ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=8,FLASH_ATTN_ASYNC_COPY=1' \
+  --candidate 'kernel_kind=attn2d_causal_softmax_v7,ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=6,FLASH_ATTN_ASYNC_COPY=1' \
+  --candidate 'kernel_kind=attn2d_causal_softmax_v7,ATTN_BLOCK_KV=64,ATTN_SCORE_WARPS=10,FLASH_ATTN_ASYNC_COPY=1' \
   --out-root artifacts/tuning_runs/$(date +%Y%m%d)/tune_flash_sm90_vN
 ```
 
@@ -382,24 +439,26 @@ python scripts/intentir.py tune \
 ## 12) Next steps plan (what the new agent should do)
 
 ### Step 1 — Refresh workflow “truth”
-- Run `python scripts/flaggems/build_workflow_state.py` so `workflow/flaggems/state/current_status.json` reflects:
-  - latest CUDA full196 cpp_plugin evidence (sm89 + remote imports)
-  - latest focus perf evidence (sm89/sm90/sm120)
-- Update `workflow/flaggems/state/handoff.md` to point at this file and the latest evidence dirs.
+- Run `python scripts/flaggems/build_workflow_state.py` so `workflow/flaggems/state/current_status.json` reflects the latest evidence.
+- Update `workflow/flaggems/state/handoff.md` to point at the latest evidence dirs.
 
-### Step 2 — Fix the only remaining H100 focus gap (`flash_attention2d`)
-- Run measured tune sweep on H100 sm90 (cpp_plugin) over:
-  - `kernel_kind ∈ {attn2d_causal_softmax_v6, attn2d_causal_softmax_v7}`
-  - `ATTN_BLOCK_KV ∈ {32,64}`
-  - `ATTN_SCORE_WARPS ∈ {4,6,8}`
-  - `FLASH_ATTN_ASYNC_COPY ∈ {0,1}`
-- Persist winner into `workflow/flaggems/state/tuning_db/cuda.jsonl` with a tight `when` guard (e.g. `{Q_CTX:64, KV_CTX:64, HEAD_DIM:64}`) so it won’t destabilize other shapes.
-- Re-run H100 focus perf evidence and confirm `flash_attention2d ratio >= 1.00`.
+### Step 2 — (Done) Fix the H100 focus gap (`flash_attention2d`)
+- Evidence: `artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/gpu_perf_graph.json` shows `flash_attention2d ratio >= 1.00` (strict + llvm_llc).
+- Applied tuning: `workflow/flaggems/state/tuning_db/cuda.jsonl` now uses `ATTN_SCORE_WARPS=10` with a tight `when` guard (`Q_CTX=64, KV_CTX=64, HEAD_DIM=64`).
+- Implementation note: lowering hoists Q shared loads out of the per-key score loop to keep Q in registers.
 
 ### Step 3 — Move `matmul_fused_epilogue2d` from parity to “超越”
 - Add a larger, meaningful shape bucket for tuning (avoid only `32^3`).
+- Focus-perf shape now defaults via policy: `workflow/flaggems/state/gpu_perf_policy.json` → `kernel_shape_overrides`
+  (runner applies it only for `--kernel-source triton_native`).
+- `scripts/intentir.py tune` supports perf-only shape overrides via `--perf-shape KEY=INT` (forwarded to `gpu-perf-triton-native`), e.g. `--perf-shape M=256 --perf-shape N=512 --perf-shape K=256`.
 - Tune `kernel_kind ∈ {matmul_fused_epilogue_mma_tf32_v2, v3, global_v2}` + tile params.
 - If still stuck on sm90: evaluate implementing a Hopper‑specific WGMMA path in the plugin (requires `nvgpu` ops lowering support).
+
+Status update (2026-03-09):
+
+- For `M=256,N=512,K=256` on H100(sm90), measured tune shows `matmul_fused_epilogue_mma_tf32_v3` ≈ **1.68** vs triton-native (graph), and the recommended entry has been added to `workflow/flaggems/state/tuning_db/cuda.jsonl`.
+- For the tiny canonical `32^3` point, measured sweeps were noisy and did not move meaningfully (best ≈ **1.00**). Evidence: `artifacts/remote_import/20260309/h100/tune_matmul_fe_sm90_focus32_v1/summary.json`.
 
 ### Step 4 — Keep LLM usage correct
 - Default regression/perf runs: `--intentir-mode force_cache --intentir-miss-policy strict`

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-03-04T05:09:29+00:00",
+  "updated_at": "2026-03-10T03:39:28+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,211 +13,195 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "cb5deb1 compiler(cpp-plugin): bypass python upstream/midend for cpp wave kernels\nd8ed997 tuning(cuda): add sm89 attention focus overrides\ncf41adb compiler(cpp-plugin): make rvv cpp pipeline python-free\n92bb73c rvv: inject llvm.target_triple for mlir-opt single-line attrs\n13f8819 compiler(cpp-plugin): add mlir-opt pass plugin + rvv cpp pipeline (wave1)\n205244c workflow: log rvv wave22 remote evidence\n16145df workflow(rvv-real-mlir): add wave22 allowlist (+5 kernels)\n52f3c0b backend(rvv-real-mlir): wave22 add diag/flip/concat lowering\ne3fa30e workflow: log rvv wave21 remote evidence\n731ed0f backend(rvv-real-mlir): fix remainder semantics (floor div)\n751f30f workflow(rvv-real-mlir): add wave21 allowlist (+11 kernels)\nea4268b backend(rvv-real-mlir): add row_mean + int ops + remainder\n0a7df4b workflow: log rvv wave20 remote evidence\n2b7e35f backend(rvv-real-mlir): lower erf via libm erff\n168f2bb backend(rvv-real-mlir): fix SSA collisions in elementwise lowering\n3923333 backend(rvv-real-mlir): wave20 elementwise masks (iota/cmp/logical/erf)\n4a45edb workflow: log rvv wave19 remote evidence\ne213213 backend(rvv-real-mlir): wave19 cmp+bitwise+arange + acos/atan\nc646003 pipeline: portable flaggems registry + perf tuning provenance\n2792f3b scripts: fix triton-native artifact dir + rvv mismatch dump",
+  "git_log_short": "96393bc workflow: handoff doc make HEAD stable\ndc52b8b workflow: add agent handoff 20260309\n1f901dd workflow: log sm90 measured tune winner and plugin rebuild evidence\n26a8ef7 tuning(cuda,cpp_plugin): add sm90 shape winner and plugin build fallback\n7f671d6 workflow: log sm89 measured tune verification evidence\n41b8a55 tuning(cuda,cpp_plugin): harden measured tune artifact validation\ncac1d24 workflow: log sm90 matmul_fused_epilogue2d global_v2 trial\n4531531 workflow: log sm120 matmul_fused_epilogue2d global_v2 perf evidence\n37ec1cf tuning(cuda,cpp_plugin): sm120 matmul_fused_epilogue use global_v2 BM16\n6683e8d workflow: log sm120 matmul_fused_epilogue2d autotune evidence\n8782a66 cuda(cpp_plugin): matmul_fused_epilogue global_v2 + sm120 BM16 tuning winner\n8a65a23 workflow: log sm89+sm90+sm120 cpp_plugin focus perf evidence\n4da9dd3 workflow: log sm90+sm120 cpp_plugin full196 evidence\naccdae8 flaggems: prefer installed flag_gems when available\ndef7ccd flaggems: stub packaging.version when missing\n48a46d8 flaggems: default device when flag_gems.device missing\n59903fa workflow: log sm90+sm120 cpp_plugin focus perf evidence\n0e79709 triton-native: add shared intent seed cache + CLI passthrough\nab3f184 workflow: log sm89 cpp_plugin focus perf\ne6a08bd workflow: log sm89 cuda full196 cpp_plugin evidence",
   "progress_tail": [
     {
-      "ts": "2026-03-01T20:29:42+00:00",
-      "commit": "52d55f6f7e77a37c99b1cb93748a6a2d53da3bc9",
-      "lane": "backend_compiler",
-      "summary": "RVV wave8 add_bias2d (rank1 broadcast) real-MLIR: remote_llvm ok + vsetvli evidence",
+      "ts": "2026-03-06T03:57:06+00:00",
+      "commit": "26a8ef7d2ac120963354c2bbc0de11c723f523cb",
+      "lane": "workflow",
+      "summary": "sm90 measured tune winner: matmul_fused_epilogue2d v3 ratio~1.004; remote cpp_plugin rebuild works with Unix Makefiles fallback",
       "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/validation_rounds/20260302/rvv_remote_wave8_realmlir_v1_add_bias2d/run_summary.json",
-      "status_converged_path": "artifacts/validation_rounds/20260302/rvv_remote_wave8_realmlir_v1_add_bias2d/status_converged.json",
-      "next_focus": "",
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/run_summary.json",
+      "status_converged_path": "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/status_converged.json",
+      "next_focus": "Promote sm90 canonical winner into remote runs, then push matmul beyond parity via larger-shape sweep or WGMMA",
       "evidence_paths": [
-        "artifacts/validation_rounds/20260302/rvv_remote_wave8_realmlir_v1_add_bias2d",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave8_realmlir_v1_add_bias2d/run_summary.json",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave8_realmlir_v1_add_bias2d/status_converged.json",
-        "artifacts/validation_rounds/20260302/triton_coverage_rvv_wave8_realmlir_v1_add_bias2d"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/validation_rounds/20260302/rvv_remote_wave8_realmlir_v1_add_bias2d",
-      "counts_by_status": {
-        "compile_ok": 1,
-        "compile_fail": 0,
-        "run_ok": 1,
-        "run_fail": 0
-      }
-    },
-    {
-      "ts": "2026-03-01T20:38:48+00:00",
-      "commit": "f382cfc2c34c3cba674d55469ca5c208aa882650",
-      "lane": "backend_compiler",
-      "summary": "RVV wave9 transpose2d real-MLIR: remote_llvm ok + vsetvli evidence",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d/run_summary.json",
-      "status_converged_path": "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d/status_converged.json",
-      "next_focus": "",
-      "evidence_paths": [
-        "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d/run_summary.json",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d/status_converged.json",
-        "artifacts/validation_rounds/20260302/triton_coverage_rvv_wave9_realmlir_v1_transpose2d"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/validation_rounds/20260302/rvv_remote_wave9_realmlir_v1_transpose2d",
-      "counts_by_status": {
-        "compile_ok": 1,
-        "compile_fail": 0,
-        "run_ok": 1,
-        "run_fail": 0
-      }
-    },
-    {
-      "ts": "2026-03-01T20:43:34+00:00",
-      "commit": "86b7f65a7fa86e776185ed4aaad9c462b5308cef",
-      "lane": "backend_compiler",
-      "summary": "RVV wave10 copy2d_divmod (identity) real-MLIR: remote_llvm ok + vsetvli evidence",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod/run_summary.json",
-      "status_converged_path": "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod/status_converged.json",
-      "next_focus": "",
-      "evidence_paths": [
-        "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod/run_summary.json",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod/status_converged.json",
-        "artifacts/validation_rounds/20260302/triton_coverage_rvv_wave10_realmlir_v1_copy2d_divmod"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/validation_rounds/20260302/rvv_remote_wave10_realmlir_v1_copy2d_divmod",
-      "counts_by_status": {
-        "compile_ok": 1,
-        "compile_fail": 0,
-        "run_ok": 1,
-        "run_fail": 0
-      }
-    },
-    {
-      "ts": "2026-03-01T20:50:52+00:00",
-      "commit": "efed3d04072c4958b587d649f83d568de18ea7a4",
-      "lane": "backend_compiler",
-      "summary": "RVV wave11 rowmask_where2d (broadcast_in_dim+i32 mask) real-MLIR: remote_llvm ok + vsetvli evidence",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/validation_rounds/20260302/rvv_remote_wave11_realmlir_v1_rowmask_where2d/run_summary.json",
-      "status_converged_path": "artifacts/validation_rounds/20260302/rvv_remote_wave11_realmlir_v1_rowmask_where2d/status_converged.json",
-      "next_focus": "",
-      "evidence_paths": [
-        "artifacts/validation_rounds/20260302/rvv_remote_wave11_realmlir_v1_rowmask_where2d",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave11_realmlir_v1_rowmask_where2d/run_summary.json",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave11_realmlir_v1_rowmask_where2d/status_converged.json",
-        "artifacts/validation_rounds/20260302/triton_coverage_rvv_wave11_realmlir_v1_rowmask_where2d"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/validation_rounds/20260302/rvv_remote_wave11_realmlir_v1_rowmask_where2d",
-      "counts_by_status": {
-        "compile_ok": 1,
-        "compile_fail": 0,
-        "run_ok": 1,
-        "run_fail": 0
-      }
-    },
-    {
-      "ts": "2026-03-01T21:02:04+00:00",
-      "commit": "4e3704ae792bd45e47999127bcaf97470ec962ca",
-      "lane": "backend_compiler",
-      "summary": "CUDA triton-native perf (38) wave25 real-MLIR strict: min=0.85 p50=1.00 fallback=0 ptx=llvm_llc",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/status_converged.json",
-      "next_focus": "",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a",
-        "artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260302/gpu_perf_triton_native_wave25_realmlir_smoke_v2_with_cov_head_4e3704a/status_converged.json",
-        "artifacts/validation_rounds/20260302/triton_native_coverage_full_wave25_realmlir_v1_head_4e3704a"
+        "artifacts/remote_import/20260306/h100/plugin_rebuild_sm90_v1/plugin_manifest.json",
+        "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/coverage/matmul_fused_epilogue2d.json",
+        "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/gpu_perf_graph.json",
+        "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/run_summary.json",
+        "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/01_matmul_fused_epilogue_mma_tf32_v3_7ad60a97c0/perf/status_converged.json",
+        "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/recommended.jsonl",
+        "artifacts/remote_import/20260306/h100/tuning_matmul_fused_epilogue2d_sm90_v4/summary.json"
       ],
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
     },
     {
-      "ts": "2026-03-01T21:53:08+00:00",
-      "commit": "1c4af389d7c414eadd39f356081f2a86dea2d188",
-      "lane": "backend_compiler",
-      "summary": "RVV wave12 real-MLIR: reductions/arg remote4 ok (vsetvli>=602); coverage8 diff ok",
+      "ts": "2026-03-09T11:16:36+00:00",
+      "commit": "96393bc",
+      "lane": "workflow",
+      "summary": "remote(H100 sm90) triton-native focus perf cpp_plugin OK; flash_attention2d >= 1.00 via score_warps=10 + Q-load hoist (strict,llc)",
       "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/run_summary.json",
-      "status_converged_path": "artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/status_converged.json",
-      "next_focus": "",
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/run_summary.json",
+      "status_converged_path": "artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/status_converged.json",
+      "next_focus": "H100(sm90): push matmul_fused_epilogue2d to >=1.05; keep strict+llvm_llc; refresh workflow dashboards.",
       "evidence_paths": [
-        "artifacts/validation_rounds/20260302/flaggems_coverage_rvv_wave12_realmlir_v2_reductions4_head_1c4af38",
-        "artifacts/validation_rounds/20260302/flaggems_coverage_rvv_wave12_realmlir_v2_reductions8_head_1c4af38",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/run_summary.json",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38/status_converged.json"
+        "artifacts/remote_import/20260309/h100/h100_triton_native_focus_cov_sm90_sw10_v2",
+        "artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3",
+        "artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/gpu_perf_graph.json",
+        "artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/run_summary.json",
+        "artifacts/remote_import/20260309/h100/h100_triton_native_focus_perf_sm90_sw10_v3/status_converged.json",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
       ],
       "run_ok": true,
-      "run_out_dir": "artifacts/validation_rounds/20260302/rvv_remote_wave12_realmlir_v2_reductions4_head_1c4af38",
-      "counts_by_status": {
-        "compile_ok": 4,
-        "compile_fail": 0,
-        "run_ok": 4,
-        "run_fail": 0
-      }
+      "run_out_dir": null,
+      "counts_by_status": null
     },
     {
-      "ts": "2026-03-01T22:24:20+00:00",
-      "commit": "f68c223da9b74e71bd709d0cd193a3b95fc8951c",
+      "ts": "2026-03-09T12:43:19+00:00",
+      "commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
       "lane": "backend_compiler",
-      "summary": "RVV wave13 real-MLIR: softmax_inner+log_softmax2d remote2 ok (vsetvli>=602)",
+      "summary": "local(sm89) focus perf: flash_attention2d ratio~0.999 (from ~0.990) via tuning_db sw14 async=0; strict+llvm_llc",
       "batch_ops": [],
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/run_summary.json",
-      "status_converged_path": "artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/status_converged.json",
-      "next_focus": "RVV wave14+: extend allowlist + keep strict no-fallback",
+      "run_summary_path": "artifacts/remote_perf/20260309/local_triton_native_focus_perf_sm89_v2/run_summary.json",
+      "status_converged_path": "artifacts/remote_perf/20260309/local_triton_native_focus_perf_sm89_v2/status_converged.json",
+      "next_focus": "H100(sm90) matmul_fused_epilogue2d >= 1.05 (measured tune sweep, strict+llvm_llc); refresh full196 on HEAD.",
       "evidence_paths": [
-        "artifacts/validation_rounds/20260302/flaggems_coverage_rvv_wave13_realmlir_v2_softmax2_head_f68c223",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/run_summary.json",
-        "artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223/status_converged.json"
+        "artifacts/remote_perf/20260309/local_triton_native_focus_cov_sm89_v2",
+        "artifacts/remote_perf/20260309/local_triton_native_focus_perf_sm89_v2/gpu_perf_graph.json",
+        "artifacts/remote_perf/20260309/local_triton_native_focus_perf_sm89_v2/run_summary.json",
+        "artifacts/remote_perf/20260309/local_triton_native_focus_perf_sm89_v2/status_converged.json",
+        "artifacts/tuning_runs/20260309/tune_flash_attention2d_sm89_async_sw_v1/summary.json",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
       ],
       "run_ok": true,
-      "run_out_dir": "artifacts/validation_rounds/20260302/rvv_remote_wave13_realmlir_v1_softmax2_head_f68c223",
-      "counts_by_status": {
-        "compile_ok": 2,
-        "compile_fail": 0,
-        "run_ok": 2,
-        "run_fail": 0
-      }
+      "run_out_dir": null,
+      "counts_by_status": null
     },
     {
-      "ts": "2026-03-04T05:09:19+00:00",
-      "commit": "cb5deb16fdcc9203adf080ff4554ae203d421f56",
+      "ts": "2026-03-09T13:25:10+00:00",
+      "commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
+      "lane": "coverage",
+      "summary": "local(sm89) full196 cuda OK: strict+llvm_llc, runtime_fallback=0, mlir_llvm_chain_ok=true (cpp_plugin wave4 + python fallback)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/run_summary.json",
+      "status_converged_path": "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/status_converged.json",
+      "next_focus": "H100(sm90) matmul_fused_epilogue2d >= 1.05 (measured tune sweep, strict+llvm_llc); keep full196+gpu_perf fresh on HEAD.",
+      "evidence_paths": [
+        "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2",
+        "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/coverage_batch_runs.json",
+        "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/coverage_integrity.json",
+        "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/run_summary.json",
+        "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/status_converged.json",
+        "pipeline/triton/core.py",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-09T15:14:15+00:00",
+      "commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
+      "lane": "workflow",
+      "summary": "local(sm89) focus perf: matmul_fused_epilogue2d@M256N512K256 ratio~1.15 via policy shape override (cpp_plugin, strict,llc)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v6/run_summary.json",
+      "status_converged_path": "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v6/status_converged.json",
+      "next_focus": "Run same focus-perf on H100(sm90) with policy shapes; refresh workflow current_status/handoff.",
+      "evidence_paths": [
+        "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v6/run_summary.json",
+        "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v6/status_converged.json",
+        "artifacts/validation_rounds/20260309/triton_native_focus_cov_sm89_cpp_wave4_v2",
+        "intent_ir/mlir/pass_manager.py",
+        "scripts/flaggems/run_gpu_perf_graph.py",
+        "workflow/flaggems/state/gpu_perf_policy.json",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-09T17:11:26+00:00",
+      "commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
+      "lane": "workflow",
+      "summary": "local(sm89) focus perf: attention kernels near/over parity (masked~0.994, flash~0.998, _attn_fwd~1.035) + matmul_fused_epilogue2d@M256N512K256~1.30 (cpp_plugin, strict,llc)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v8/run_summary.json",
+      "status_converged_path": "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v8/status_converged.json",
+      "next_focus": "Run same focus-perf on H100(sm90) with policy shapes; ensure intent artifacts rebuilt with INTENTIR_CUDA_SM so tuning_db kernel_kind overrides apply.",
+      "evidence_paths": [
+        "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v8/run_summary.json",
+        "artifacts/remote_perf/20260309/local_cuda_cpp_focus_perf_sm89_v8/status_converged.json",
+        "artifacts/validation_rounds/20260309/triton_native_focus_cov_sm89_cpp_wave4_v3",
+        "intent_ir/mlir/pass_manager.py",
+        "scripts/flaggems/run_gpu_perf_graph.py",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-10T03:01:21+00:00",
+      "commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
       "lane": "backend_compiler",
-      "summary": "sm89 focus(triton-native) perf min=0.984 p50=1.003 strict(fallback=0, ptx=llvm_llc); rvv cpp wave1 remote smoke OK (vsetvli_hits>0)",
+      "summary": "remote H100(sm90) tune: flash_attention2d sw14 async=1; imported focus perf evidence (strict,llc)",
       "batch_ops": [],
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/remote_perf/20260304/local_cuda_focus_perf_sm89_v3_head/run_summary.json",
-      "status_converged_path": "artifacts/remote_perf/20260304/local_cuda_focus_perf_sm89_v3_head/status_converged.json",
-      "next_focus": "",
+      "run_summary_path": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v4_rms_last/run_summary.json",
+      "status_converged_path": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v4_rms_last/status_converged.json",
+      "next_focus": "Stabilize multi-kernel focus perf variance (micro-kernels); consider per-kernel prewarm/clock pin; keep pushing masked/rms consistency.",
       "evidence_paths": [
-        "artifacts/remote_perf/20260304/local_cuda_focus_perf_sm89_v3_head",
-        "artifacts/remote_perf/20260304/local_cuda_focus_perf_sm89_v3_head/run_summary.json",
-        "artifacts/remote_perf/20260304/local_cuda_focus_perf_sm89_v3_head/status_converged.json",
-        "artifacts/validation_rounds/20260304/rvv_cpp_wave1_remote_smoke_head_v1.json",
-        "artifacts/validation_rounds/20260304/triton_native_focus_cov_sm89_head_v1"
+        "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v4_rms_last/run_summary.json",
+        "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v4_rms_last/status_converged.json",
+        "artifacts/remote_import/20260310/h100/tune_flash_attention2d_sm90_more_candidates_v5/summary.json",
+        "artifacts/remote_import/20260310/h100/tune_rms_norm2d_sm90_v1v2_v1/summary.json",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-03-10T03:37:45+00:00",
+      "commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
+      "lane": "backend_compiler",
+      "summary": "H100(sm90) focus6 perf stabilized: paired bench + median ratio; all ratios >=1.0 under strict+llvm_llc (sw14 async=1)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json",
+      "status_converged_path": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json",
+      "next_focus": "Refresh workflow current_status.json to reflect latest cpp_plugin full196 + focus perf evidence; consider adding RMS/masked meaningful shape overrides if needed",
+      "evidence_paths": [
+        "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/gpu_perf_graph.json",
+        "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json",
+        "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json",
+        "artifacts/remote_import/20260310/h100/tune_flash_attention2d_sm90_more_candidates_v5/summary.json",
+        "workflow/flaggems/state/tuning_db/cuda.jsonl"
       ],
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
     }
   ],
-  "next_focus": "",
+  "next_focus": "Refresh workflow current_status.json to reflect latest cpp_plugin full196 + focus perf evidence; consider adding RMS/masked meaningful shape overrides if needed",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "RVV wave14+: extend allowlist + keep strict no-fallback",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
+    "workflow": "Run same focus-perf on H100(sm90) with policy shapes; ensure intent artifacts rebuilt with INTENTIR_CUDA_SM so tuning_db kernel_kind overrides apply.",
+    "backend_compiler": "Refresh workflow current_status.json to reflect latest cpp_plugin full196 + focus perf evidence; consider adding RMS/masked meaningful shape overrides if needed",
+    "coverage": "H100(sm90) matmul_fused_epilogue2d >= 1.05 (measured tune sweep, strict+llvm_llc); keep full196+gpu_perf fresh on HEAD."
   },
   "known_risks": []
 }

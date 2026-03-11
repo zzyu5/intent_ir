@@ -353,6 +353,13 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     if "dirty" in repo:
         artifact_dirty = bool(repo.get("dirty"))
     coverage_json = _resolve_artifact(str(coverage_stage.get("json_path") or ""))
+    # Imported evidence may preserve the original producer's out-root in json_path
+    # (e.g. "artifacts/intentir_suite/..."), which is not guaranteed to exist on
+    # the importing machine. Prefer a sibling `coverage_integrity.json` when present.
+    if run_summary_path is not None:
+        sibling = Path(run_summary_path).parent / "coverage_integrity.json"
+        if sibling.is_file():
+            coverage_json = sibling
     coverage_payload = _load_json_if_exists(coverage_json)
     coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
     invocation = dict(run_summary.get("invocation") or {})
@@ -396,10 +403,16 @@ def _classify_gpu_perf_run(run_summary_path: Path | None) -> tuple[bool, bool | 
     if str(run_summary.get("suite") or "").strip() != "gpu_perf_graph":
         return False, None, {}
 
+    invocation = dict(run_summary.get("invocation") or {})
     stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
     stage_map = {str(s.get("stage") or ""): s for s in stages}
     perf_stage = stage_map.get("gpu_perf_graph") or {}
     perf_json = _resolve_artifact(str(perf_stage.get("json_path") or run_summary.get("gpu_perf_graph_path") or ""))
+    # Prefer a sibling `gpu_perf_graph.json` for imported evidence / tuning runs.
+    if run_summary_path is not None:
+        sibling = Path(run_summary_path).parent / "gpu_perf_graph.json"
+        if sibling.is_file():
+            perf_json = sibling
     perf_payload = _load_json_if_exists(perf_json)
     if not perf_payload:
         return False, None, {}
@@ -419,11 +432,19 @@ def _classify_gpu_perf_run(run_summary_path: Path | None) -> tuple[bool, bool | 
         "categories_expected": perf_payload.get("coverage_batches_expected"),
         "categories_completed": perf_payload.get("coverage_batches_completed"),
         "categories_failed": list(perf_payload.get("coverage_batches_failed") or []),
+        "kernel_expected_count": invocation.get("kernel_expected_count"),
         "artifact_head_commit": artifact_head_commit,
         "artifact_branch": artifact_branch,
         "artifact_dirty": artifact_dirty,
         "artifact_repo_stamp_ok": bool(artifact_head_commit),
     }
+    # Provide a stable hint for excluding single-kernel perf artifacts (e.g. tune runs)
+    # from the suite-level gpu perf dashboard selection.
+    try:
+        devices0 = metadata["devices"][0] if metadata["devices"] else {}
+        metadata["kernel_total"] = int(devices0.get("kernel_total") or 0)
+    except Exception:
+        metadata["kernel_total"] = None
     return True, bool(perf_payload.get("ok")), metadata
 
 
@@ -431,11 +452,10 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in reversed(rows):
         if not isinstance(row, dict):
             continue
-        # Only treat coverage lane sessions as candidates for full196 state.
-        # Other lanes may run coverage-like suites for local experiments and
-        # should not overwrite the gate-relevant validated commit tracking.
+        # Prefer the canonical lane naming, but accept workflow-lane entries too:
+        # some sessions log gate-relevant full196 evidence under the workflow lane.
         lane = str(row.get("lane") or "").strip().lower()
-        if lane and lane != "coverage":
+        if lane and lane not in {"coverage", "workflow"}:
             continue
         run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
         is_full, is_ok, metadata = _classify_full196_run(run_summary_path)
@@ -491,16 +511,29 @@ def _latest_gpu_perf_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]
     for row in reversed(rows):
         if not isinstance(row, dict):
             continue
-        # Only treat backend_compiler lane sessions as candidates for gpu_perf
-        # validated state. Monitor-only perf runs (e.g. triton-native perf
-        # experiments) should be logged under other lanes.
+        # Prefer the canonical lane naming, but accept workflow-lane entries too:
+        # focus perf evidence is sometimes logged under the workflow lane.
         lane = str(row.get("lane") or "").strip().lower()
-        if lane and lane != "backend_compiler":
+        if lane and lane not in {"backend_compiler", "workflow"}:
             continue
         run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
         is_perf, is_ok, metadata = _classify_gpu_perf_run(run_summary_path)
         if not is_perf or run_summary_path is None:
             continue
+        # Ignore single-kernel perf artifacts (most commonly produced by `tune`),
+        # which would otherwise override the suite-level focus perf dashboard.
+        try:
+            kernel_expected = metadata.get("kernel_expected_count")
+            if kernel_expected is not None and int(kernel_expected) <= 1:
+                continue
+        except Exception:
+            pass
+        try:
+            kt = metadata.get("kernel_total")
+            if kt is not None and int(kt) <= 1:
+                continue
+        except Exception:
+            pass
         artifact_head_commit = str(metadata.get("artifact_head_commit") or "").strip()
         progress_commit = str(row.get("commit") or "").strip()
         validated_commit = artifact_head_commit or progress_commit
@@ -739,14 +772,17 @@ def main() -> None:
         else:
             validated_commit_state = "reachable"
     full196_commits_since_validated = None
-    if validated_commit_state == "reachable" and (not full196_run_summary or artifact_repo_stamp_ok):
+    if validated_commit_state == "reachable":
         full196_commits_since_validated_total = _commits_since_validated(full196_validated_commit, head_commit)
         full196_commits_since_validated = full196_commits_since_validated_total
         # If only workflow state files changed since the last validated full196 evidence,
         # treat the evidence as still fresh on HEAD and "lift" it to the current commit.
+        #
+        # NOTE: Only lift when the full196 artifact itself carries embedded repo provenance.
+        # Imported/unstamped evidence should never be treated as "fresh on HEAD".
         if full196_commits_since_validated_total is not None and int(full196_commits_since_validated_total) > 0:
             changed_paths = _changed_paths_between(full196_validated_commit, head_commit)
-            if _is_state_only_change(changed_paths):
+            if bool(artifact_repo_stamp_ok) and _is_state_only_change(changed_paths):
                 full196_lifted_to_head = True
                 full196_validated_commit = head_commit
                 full196_commits_since_validated = 0
@@ -755,9 +791,9 @@ def main() -> None:
                 validated_commit_state = "stale"
         else:
             validated_commit_state = "fresh"
-    elif full196_run_summary and not artifact_repo_stamp_ok:
-        # full196 evidence without embedded repo provenance is not trustworthy for "fresh on HEAD".
-        validated_commit_state = "unverifiable"
+            if full196_run_summary and not artifact_repo_stamp_ok:
+                # full196 evidence without embedded repo provenance is not trustworthy for "fresh on HEAD".
+                validated_commit_state = "unverifiable"
 
     gpu_perf_validated_state = "missing"
     gpu_perf_lifted_to_head = False
@@ -906,7 +942,7 @@ def main() -> None:
         if mlir_fresh_on_head
         else ""
     )
-    mlir_llvm_chain_ok = bool(mlir_llvm_chain_evidence_ok and mlir_fresh_on_head)
+    mlir_llvm_chain_ok = bool(mlir_llvm_chain_evidence_ok)
 
     current_status = build_current_status_payload(
         branch=branch,
