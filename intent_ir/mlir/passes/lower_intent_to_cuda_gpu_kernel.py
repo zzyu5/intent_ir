@@ -527,6 +527,10 @@ def lower_intent_to_cuda_gpu_kernel(
     if len(outputs) == 3 and not multi_output_ok:
         if out_ranks in ([1, 1, 2], [1, 2, 2]):
             multi_output_ok = True
+    if len(outputs) == 3 and not multi_output_ok:
+        tensor_names = set(str(k).strip() for k in dict(intent.tensors or {}).keys() if str(k).strip())
+        if {"X", "W", "B", "Y", "Mean", "Rstd"}.issubset(tensor_names):
+            multi_output_ok = True
     if len(outputs) != 1 and not multi_output_ok:
         raise RuntimeError(f"cuda real-mlir wave supports single-output intents only; outputs={outputs}")
     out_name = outputs[0]
@@ -7150,31 +7154,30 @@ def lower_intent_to_cuda_gpu_kernel(
                         raise RuntimeError("rms_norm_residual2d requires f32 scalar const 'eps'")
                     row_rms_norm_residual2d = {"M": int(out_m), "N": int(out_n), "eps_const": float(eps_const)}
 
-    if intent_name == "group_norm_kernel":
-        required = {"X", "Y", "W", "B", "Mean", "Rstd"}
-        if required.issubset(set(arg_specs.keys())):
+    group_norm_required = {"X", "Y", "W", "B", "Mean", "Rstd"}
+    if group_norm_required.issubset(set(arg_specs.keys())):
             if out_rank != 3:
-                raise RuntimeError(f"group_norm_kernel expects rank-3 output, got out_rank={out_rank}")
+                raise RuntimeError(f"group_norm-compatible intent expects rank-3 output, got out_rank={out_rank}")
             n_dim = int(out_dims[0])
             c_dim = int(out_dims[1])
             hw_dim = int(out_dims[2])
             if n_dim <= 0 or c_dim <= 0 or hw_dim <= 0:
-                raise RuntimeError(f"group_norm_kernel invalid output dims: out_dims={out_dims}")
+                raise RuntimeError(f"group_norm-compatible intent invalid output dims: out_dims={out_dims}")
 
             # `num_groups` is not present in the rank-3 output shape; take it from bindings.
             if "num_groups" not in bindings:
-                raise RuntimeError("group_norm_kernel requires shape_bindings['num_groups']")
+                raise RuntimeError("group_norm-compatible intent requires shape_bindings['num_groups']")
             num_groups = int(bindings["num_groups"])
             if num_groups <= 0:
-                raise RuntimeError(f"group_norm_kernel invalid num_groups={num_groups}")
+                raise RuntimeError(f"group_norm-compatible intent invalid num_groups={num_groups}")
             if c_dim % num_groups != 0:
                 raise RuntimeError(
-                    "group_norm_kernel requires C divisible by num_groups, got "
+                    "group_norm-compatible intent requires C divisible by num_groups, got "
                     f"C={c_dim} num_groups={num_groups}"
                 )
             group_size = int(c_dim // num_groups)
             if group_size <= 0:
-                raise RuntimeError(f"group_norm_kernel invalid group_size={group_size}")
+                raise RuntimeError(f"group_norm-compatible intent invalid group_size={group_size}")
 
             ok = (
                 str(arg_specs["X"].get("memref_elem_ty")) == "f32"
@@ -7193,7 +7196,7 @@ def lower_intent_to_cuda_gpu_kernel(
             if ok:
                 eps_const = _extract_f32_const("eps")
                 if eps_const is None:
-                    raise RuntimeError("group_norm_kernel requires f32 scalar const 'eps'")
+                    raise RuntimeError("group_norm-compatible intent requires f32 scalar const 'eps'")
                 group_norm_kernel_v1 = {
                     "N": int(n_dim),
                     "C": int(c_dim),
@@ -7631,6 +7634,8 @@ def lower_intent_to_cuda_gpu_kernel(
             allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3", "rms_norm_axis1_v4"}
         if allowed is None and row_fused_add_rms_norm2d is not None:
             allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3", "rms_norm_axis1_v4"}
+        if allowed is None and group_norm_kernel_v1 is not None:
+            allowed = {"group_norm_v1"}
         if allowed is None and row_softmax_axis1 is not None:
             allowed = {
                 "row_softmax_axis1_triton_v1",
@@ -7999,11 +8004,11 @@ def lower_intent_to_cuda_gpu_kernel(
                     "elementwise_v1 requires ELEMENTWISE_VECTOR_WIDTH in {1,2,4}; "
                     f"got {req_vec}"
                 )
-        if intent_name == "group_norm_kernel":
+        if kernel_kind_override == "group_norm_v1":
             if group_norm_kernel_v1 is None:
                 raise RuntimeError(
-                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires group_norm_kernel matcher; "
-                    "got no group_norm_kernel_v1 pattern match"
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires a group-norm compatible matcher; "
+                    "got no group_norm_kernel_v1 structural match"
                 )
             req_threads = int(bindings.get("GROUP_NORM_BLOCK_THREADS") or 256)
             req_vec = int(bindings.get("GROUP_NORM_VECTOR_WIDTH") or 1)

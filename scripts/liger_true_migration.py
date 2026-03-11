@@ -398,6 +398,8 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
         cross_entropy_forward,
         geglu_forward,
         fused_add_rms_norm_forward,
+        liger_dyt_fwd,
+        group_norm_forward,
         layer_norm_forward,
         rms_norm_forward,
         rope_forward,
@@ -456,6 +458,26 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
             geglu_forward(a, b)
 
         return _fn
+    if kernel == "liger_group_norm":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        w = torch.as_tensor(np.asarray(baseline["W"]), device="cuda", dtype=torch.float32).contiguous()
+        b = torch.as_tensor(np.asarray(baseline["B"]), device="cuda", dtype=torch.float32).contiguous()
+        num_groups = int(np.asarray(baseline["num_groups"]).reshape(()))
+
+        def _fn():
+            group_norm_forward(x, int(x.shape[1]), num_groups, w, b, 1.0e-5)
+
+        return _fn
+    if kernel == "liger_dyt":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        alpha = torch.as_tensor(np.asarray(baseline["Alpha"]).reshape(1), device="cuda", dtype=torch.float32).contiguous()
+        gamma = torch.as_tensor(np.asarray(baseline["Gamma"]), device="cuda", dtype=torch.float32).contiguous()
+        beta = torch.as_tensor(np.asarray(baseline["Beta"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            liger_dyt_fwd(x, alpha, gamma, beta)
+
+        return _fn
     if kernel == "liger_layer_norm":
         x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
         w = torch.as_tensor(np.asarray(baseline["W"]), device="cuda", dtype=torch.float32).contiguous()
@@ -498,6 +520,17 @@ def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], gui
         return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
     if kernel == "liger_geglu":
         return {"c": _max_abs_diff(guided_outputs["c"], baseline["c"])}
+    if kernel == "liger_group_norm":
+        return {
+            "Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y")),
+            "Mean": _max_abs_diff(_pick_io_value(guided_outputs, "Mean"), _pick_io_value(baseline, "Mean")),
+            "RSTD": _max_abs_diff(
+                _pick_io_value(guided_outputs, "RSTD", "Rstd"),
+                _pick_io_value(baseline, "RSTD", "Rstd"),
+            ),
+        }
+    if kernel == "liger_dyt":
+        return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
     if kernel == "liger_layer_norm":
         return {
             "Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y")),

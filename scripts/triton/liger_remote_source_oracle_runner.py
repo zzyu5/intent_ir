@@ -207,6 +207,48 @@ def _run_kernel(kernel: str, bindings: dict[str, int]) -> dict[str, Any]:
             "multi_block_launch": bool(multi_block_launch),
         }
 
+    if kernel == "liger_group_norm":
+        from liger_kernel.ops.group_norm import _group_norm_forward_kernel, group_norm_forward
+
+        n = int(bindings.get("N", 32))
+        c = int(bindings.get("C", 512))
+        hw = int(bindings.get("HW", 64))
+        num_groups = int(bindings.get("num_groups", 32))
+        x = torch.randn((n, c, hw), device=device, dtype=dtype)
+        w = torch.randn((c,), device=device, dtype=dtype)
+        b = torch.randn((c,), device=device, dtype=dtype)
+        y, _x2, mean, rstd, block_size = group_norm_forward(x, c, num_groups, w, b, 1.0e-5)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_group_norm_forward_kernel",
+            "source_attr": str(_group_norm_forward_kernel.src),
+            "output_shape": list(y.shape),
+            "mean_shape": list(mean.shape),
+            "rstd_shape": list(rstd.shape),
+            "block_size": int(block_size),
+            "num_groups": int(num_groups),
+        }
+
+    if kernel == "liger_dyt":
+        from liger_kernel.ops.dyt import _dyt_fwd_kernel, liger_dyt_fwd
+
+        m = int(bindings.get("M", 2048))
+        n = int(bindings.get("N", 4096))
+        x = torch.randn((m, n), device=device, dtype=dtype)
+        alpha = torch.randn((1,), device=device, dtype=dtype)
+        gamma = torch.randn((n,), device=device, dtype=dtype)
+        beta = torch.randn((n,), device=device, dtype=dtype)
+        y = liger_dyt_fwd(x, alpha, gamma, beta)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_dyt_fwd_kernel",
+            "source_attr": str(_dyt_fwd_kernel.src),
+            "output_shape": list(y.shape),
+            "alpha_shape": list(alpha.shape),
+            "gamma_shape": list(gamma.shape),
+            "beta_shape": list(beta.shape),
+        }
+
     raise KeyError(f"unsupported kernel: {kernel}")
 
 

@@ -25,6 +25,8 @@ _SUPPORTED_KERNELS = {
     "liger_geglu",
     "liger_layer_norm",
     "liger_softmax",
+    "liger_group_norm",
+    "liger_dyt",
 }
 
 
@@ -93,6 +95,8 @@ def _canonical_remote_bindings(spec_name: str, shape_bindings: Mapping[str, int]
         "liger_geglu": {"M": 65536, "N": 256},
         "liger_layer_norm": {"M": 2048, "N": 4096},
         "liger_softmax": {"M": 2048, "N": 4096},
+        "liger_group_norm": {"N": 32, "C": 512, "HW": 64, "num_groups": 32},
+        "liger_dyt": {"M": 2048, "N": 4096},
     }
     out = dict(defaults.get(str(spec_name), {}))
     out.update(raw)

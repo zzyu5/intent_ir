@@ -1270,6 +1270,8 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             axis_i = int(axis)
             data_a = np.asarray(data)
             idx = np.asarray(idxs[0], dtype=np.int64)
+            if data_a.ndim == 1 and axis_i == 0:
+                return np.take(data_a, idx, axis=0)
             if idx.ndim == data_a.ndim - 1:
                 idx = np.expand_dims(idx, axis=axis_i)
             if idx.ndim != data_a.ndim:

@@ -50,6 +50,14 @@ def _canonical_goal_tag(value: Any, *, kernel: str = "") -> str:
         "row_softmax": "streaming_softmax_state",
         "online_softmax": "streaming_softmax_state",
         "streaming_state": "streaming_softmax_state",
+        "group_norm": "resident_working_set",
+        "group_norm_fwd": "resident_working_set",
+        "layer_norm": "resident_working_set",
+        "layer_norm_fwd": "resident_working_set",
+        "rms_norm": "resident_working_set",
+        "normalization": "resident_working_set",
+        "norm_stats": "reduction_tree_balance",
+        "statistics": "reduction_tree_balance",
         "vectorized_io": "memory_coalescing",
         "vector_io": "memory_coalescing",
         "coalesced_io": "memory_coalescing",
@@ -76,6 +84,8 @@ def _canonical_goal_tag(value: Any, *, kernel: str = "") -> str:
         "mask_pruning": "mask_causal_pruning",
         "causal_mask": "mask_causal_pruning",
     }
+    if token.endswith("_fwd") and ("group_norm" in token or "layer_norm" in token or "rms_norm" in token):
+        return "resident_working_set"
     mapped = alias_map.get(token, raw)
     return mapped if mapped in allowed else raw
 
@@ -91,13 +101,27 @@ def _canonical_mechanism_category(value: Any) -> str:
         "tiling": "tiling",
         "stage": "staging",
         "staging": "staging",
+        "layout": "mapping",
+        "dataflow": "mapping",
+        "indexing": "mapping",
         "pipeline": "pipeline",
+        "parallel": "mapping",
+        "parallelism": "mapping",
+        "schedule": "pipeline",
+        "control": "pipeline",
         "compute": "primitive",
         "math": "primitive",
+        "reduction": "primitive",
+        "statistics": "primitive",
         "map": "mapping",
         "mapping": "mapping",
+        "sync": "communication",
+        "synchronization": "communication",
         "comm": "communication",
         "communication": "communication",
+        "memory": "staging",
+        "residency": "staging",
+        "reuse": "staging",
         "primitive": "primitive",
         "fusion": "fusion",
     }

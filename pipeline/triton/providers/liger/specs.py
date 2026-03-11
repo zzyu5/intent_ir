@@ -19,11 +19,13 @@ if LIGER_SRC_ROOT.is_dir():
         sys.path.insert(0, liger_src)
 
 from liger_kernel.ops.cross_entropy import liger_cross_entropy_kernel, cross_entropy_forward  # noqa: E402
+from liger_kernel.ops.dyt import _dyt_fwd_kernel, liger_dyt_fwd  # noqa: E402
 from liger_kernel.ops.geglu import _geglu_tanh_forward_kernel, geglu_forward  # noqa: E402
 from liger_kernel.ops.fused_add_rms_norm import (  # noqa: E402
     _fused_add_rms_norm_forward_kernel,
     fused_add_rms_norm_forward,
 )
+from liger_kernel.ops.group_norm import _group_norm_forward_kernel, group_norm_forward  # noqa: E402
 from liger_kernel.ops.layer_norm import _layer_norm_forward_kernel, layer_norm_forward  # noqa: E402
 from liger_kernel.ops.rms_norm import _rms_norm_forward_kernel, rms_norm_forward  # noqa: E402
 from liger_kernel.ops.rope import _triton_rope, rope_forward  # noqa: E402
@@ -222,6 +224,83 @@ def _softmax_runner(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _group_norm_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes["N"])
+    c = int(case.shapes["C"])
+    hw = int(case.shapes["HW"])
+    num_groups = int(case.shapes["num_groups"])
+    x = _torch_randn((n, c, hw), seed=int(case.seed) + 20)
+    w = _torch_randn((c,), seed=int(case.seed) + 21)
+    b = _torch_randn((c,), seed=int(case.seed) + 22)
+    x_in = x.clone()
+    w_in = w.clone()
+    b_in = b.clone()
+    y, _x2, mean, rstd, _block_size = group_norm_forward(
+        x,
+        c,
+        num_groups,
+        w,
+        b,
+        1.0e-5,
+    )
+    torch.cuda.synchronize()
+    rstd_np = _to_np(rstd)
+    return {
+        "X": _to_np(x_in),
+        "W": _to_np(w_in),
+        "B": _to_np(b_in),
+        "eps": np.array(1.0e-5, dtype=np.float32),
+        "num_groups": np.array(num_groups, dtype=np.int32),
+        "Y": _to_np(y),
+        "Mean": _to_np(mean),
+        "Rstd": rstd_np,
+        "RSTD": rstd_np,
+    }
+
+
+def _dyt_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    x = _torch_randn((m, n), seed=int(case.seed) + 23)
+    alpha = _torch_randn((1,), seed=int(case.seed) + 24)
+    gamma = _torch_randn((n,), seed=int(case.seed) + 25)
+    beta = _torch_randn((n,), seed=int(case.seed) + 26)
+    x_in = x.clone()
+    alpha_in = alpha.clone()
+    gamma_in = gamma.clone()
+    beta_in = beta.clone()
+    y = liger_dyt_fwd(x, alpha, gamma, beta)
+    torch.cuda.synchronize()
+    return {
+        "X": _to_np(x_in),
+        "Alpha": _to_np(alpha_in.reshape(())),
+        "Gamma": _to_np(gamma_in),
+        "Beta": _to_np(beta_in),
+        "Y": _to_np(y),
+    }
+
+
+def _norm_group_norm_shapes(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = {str(k): int(v) for k, v in dict(shapes or {}).items()}
+    n = int(out.get("N", 0))
+    c = int(out.get("C", 0))
+    requested_g = int(out.get("num_groups", out.get("group", 1)))
+    hw = int(out.get("HW", 0))
+    if n <= 0 or c <= 0 or hw <= 0:
+        return out
+    divisors = [g for g in range(1, c + 1) if c % g == 0]
+    if not divisors:
+        return out
+    best_g = min(sorted(set(divisors)), key=lambda x: (abs(x - requested_g), -x))
+    out["num_groups"] = int(best_g)
+    out.pop("group", None)
+    out["group_size"] = int(c // int(best_g))
+    out["channels_per_group"] = int(out["group_size"])
+    out["hidden_size_per_channel"] = int(hw)
+    out["hidden_size"] = int(out["group_size"] * hw)
+    return out
+
+
 def liger_kernel_specs() -> List[KernelSpec]:
     module = "pipeline.triton.providers.liger.specs"
     return [
@@ -300,6 +379,28 @@ def liger_kernel_specs() -> List[KernelSpec]:
             module=module,
             attr="_softmax_single_block_forward_kernel.src",
             runner=_softmax_runner,
+            canonical_shapes={"M": 2048, "N": 4096},
+            vary_axes=["M", "N"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_group_norm",
+            module=module,
+            attr="_group_norm_forward_kernel.src",
+            runner=_group_norm_runner,
+            canonical_shapes={"N": 32, "C": 512, "HW": 64, "num_groups": 32},
+            vary_axes=["N", "C", "HW", "num_groups"],
+            exclude_axes=["group_size", "channels_per_group", "hidden_size_per_channel", "hidden_size"],
+            normalize_shapes=_norm_group_norm_shapes,
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_dyt",
+            module=module,
+            attr="_dyt_fwd_kernel.src",
+            runner=_dyt_runner,
             canonical_shapes={"M": 2048, "N": 4096},
             vary_axes=["M", "N"],
             enable_stage_c=False,
