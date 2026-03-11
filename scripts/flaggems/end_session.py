@@ -24,6 +24,7 @@ from pipeline.triton.providers.flaggems.workflow import (
 )
 
 DEFAULT_CURRENT_STATUS = ROOT / "workflow" / "flaggems" / "state" / "current_status.json"
+DEFAULT_STATE_DIR = ROOT / "workflow" / "flaggems" / "state"
 
 
 def _to_repo_rel(path: Path) -> str:
@@ -46,6 +47,14 @@ def _load_optional_json(path: Path | None) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _latest_agent_handoff(*, state_dir: Path) -> Path | None:
+    candidates = sorted(state_dir.glob("AGENT_HANDOFF_*.md"))
+    if not candidates:
+        return None
+    # Prefer lexicographically latest (YYYYMMDD in filename).
+    return candidates[-1]
 
 
 def main() -> None:
@@ -134,6 +143,8 @@ def main() -> None:
             encoding="utf-8",
         )
 
+    agent_handoff_path = _latest_agent_handoff(state_dir=DEFAULT_STATE_DIR)
+    agent_handoff_rel = _to_repo_rel(agent_handoff_path) if agent_handoff_path is not None else ""
     handoff = [
         "# FlagGems Session Handoff",
         "",
@@ -141,6 +152,7 @@ def main() -> None:
         f"- Commit: `{commit}`",
         f"- Lane: `{lane}`",
         f"- Summary: {args.summary}",
+        *( [f"- Agent Handoff: `{agent_handoff_rel}`"] if agent_handoff_rel else [] ),
         f"- Batch Ops ({len(item_names)}): {', '.join(item_names) if item_names else '(none)'}",
         f"- Run Summary: `{args.run_summary}`",
         f"- Status Converged: `{args.status_converged}`",

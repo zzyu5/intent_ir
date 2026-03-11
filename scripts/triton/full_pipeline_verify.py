@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pipeline.triton.core import coverage_kernel_specs, default_kernel_specs, run_pipeline_for_spec
+from pipeline.triton.execution_policy import make_execution_policy
 
 
 def main() -> None:
@@ -52,6 +54,24 @@ def main() -> None:
         default=None,
         help="Max bounded cases inside mutation-kill (None uses stage-c-max-cases).",
     )
+    ap.add_argument(
+        "--intentir-mode",
+        choices=["auto", "force_compile", "force_cache"],
+        default=str(os.getenv("INTENTIR_MODE", "auto")).strip().lower(),
+        help="IntentIR seed policy: auto(cache->LLM), force_compile(always LLM), force_cache(never LLM).",
+    )
+    ap.add_argument(
+        "--intentir-miss-policy",
+        choices=["deterministic", "strict"],
+        default=str(os.getenv("INTENTIR_FALLBACK_POLICY", "deterministic")).strip().lower(),
+        help="When seed cache is missing: deterministic allows fallback; strict fails fast.",
+    )
+    ap.add_argument(
+        "--seed-cache-dir",
+        type=str,
+        default=str(os.getenv("INTENTIR_TRITON_SEED_CACHE_DIR", "artifacts/triton_seed_cache")).strip(),
+        help="Optional shared seed cache directory. Set to 'none' to disable.",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
@@ -68,6 +88,19 @@ def main() -> None:
         for s in specs:
             print(s.name)
         return
+
+    seed_cache_dir = str(args.seed_cache_dir or "").strip()
+    if seed_cache_dir.lower() in {"", "none", "off", "0"}:
+        seed_cache_dir_path = None
+    else:
+        seed_cache_dir_path = Path(seed_cache_dir)
+
+    policy = make_execution_policy(
+        path="intentir",
+        intentir_mode=str(args.intentir_mode),
+        seed_cache_dir=seed_cache_dir_path,
+        fallback_policy=str(args.intentir_miss_policy),
+    )
 
     wanted_list = [str(x) for x in list(args.kernel or []) if str(x).strip()]
     if wanted_list:
@@ -96,6 +129,7 @@ def main() -> None:
                 stage_c_max_cases=args.stage_c_max_cases,
                 enable_mutation_kill=bool(args.mutation_kill),
                 mutation_bounded_max_cases=args.mutation_bounded_max_cases,
+                execution_policy=policy,
             )
         except Exception as e:
             print("Pipeline failed:", e)

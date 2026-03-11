@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import warnings
 from dataclasses import dataclass, field
@@ -464,6 +465,18 @@ def _compiler_cpp_wave_name() -> str:
     # include aspirational kernels that are not yet implemented in the plugin.
     return str(os.getenv("INTENTIR_COMPILER_CPP_WAVE", "wave2")).strip().lower()
 
+
+def _compiler_cpp_miss_policy() -> str:
+    """
+    Controls behavior when INTENTIR_COMPILER_STACK=cpp_plugin but the current kernel
+    is not in INTENTIR_COMPILER_CPP_WAVE allowlist.
+
+    Values:
+      - "skip" (default): do not emit LLVM/PTX for non-wave kernels.
+      - "python": fall back to the Python real-MLIR pipeline (still requires real-MLIR wave allowlist).
+    """
+    return str(os.getenv("INTENTIR_COMPILER_CPP_MISS_POLICY", "skip")).strip().lower()
+
 def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
     wave_name = str(wave or "").strip().lower()
     if not wave_name:
@@ -490,11 +503,17 @@ def _load_compiler_cpp_wave_kernels(wave: str) -> set[str]:
 
 
 def _cuda_real_mlir_wave_name() -> str:
-    return str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+    raw = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+    if raw:
+        return raw
+    return "wave25" if _real_mlir_enabled() else ""
 
 
 def _rvv_real_mlir_wave_name() -> str:
-    return str(os.getenv("INTENTIR_RVV_REAL_MLIR_WAVE", "")).strip().lower()
+    raw = str(os.getenv("INTENTIR_RVV_REAL_MLIR_WAVE", "")).strip().lower()
+    if raw:
+        return raw
+    return "wave22" if _real_mlir_enabled() else ""
 
 
 def _load_cuda_real_mlir_wave_kernels(wave: str) -> set[str]:
@@ -574,7 +593,9 @@ def _downstream_llvm_pipeline(
             if target.startswith("cuda"):
                 return "downstream_cuda_std_cpp_llvm", "cuda"
             return None, None
-        return None, None
+        if _compiler_cpp_miss_policy() not in {"python", "py"}:
+            return None, None
+        # Hybrid mode: allow falling back to the Python real-MLIR stack (no cached LLVM IR).
     if target.startswith("cuda"):
         wave = _cuda_real_mlir_wave_name()
         if wave and _real_mlir_enabled():
@@ -3551,6 +3572,25 @@ def run_pipeline_for_spec(
         "mode": str(seed_policy),
         "used": False,
     }
+    seed_cache_dir = getattr(effective_policy, "seed_cache_dir", None)
+    cache_sync_in = "skipped"
+    cache_sync_out = False
+    if seed_cache_dir is not None:
+        report["intent_seed"]["cache_dir"] = str(seed_cache_dir)
+        cache_seed = Path(seed_cache_dir) / f"{spec.name}.intent_seed.json"
+        if seed_policy == "force_llm":
+            cache_sync_in = "skipped_force_llm"
+        elif seed_path.is_file():
+            cache_sync_in = "run_dir_present"
+        elif cache_seed.is_file():
+            seed_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cache_seed, seed_path)
+            cache_sync_in = "hit"
+        else:
+            cache_sync_in = "miss"
+            if seed_policy == "force_cache":
+                raise RuntimeError(f"missing seed cache for {spec.name}: {cache_seed}")
+    report["intent_seed"]["cache_sync_in"] = str(cache_sync_in)
     provider_name = str(triton_provider).strip().lower()
     provider_plugin = get_provider_plugin(provider_name)
     provider_source_op = getattr(spec, "source_op", getattr(spec, "name", None))
@@ -4527,6 +4567,17 @@ def run_pipeline_for_spec(
             else:
                 report["intent_seed"]["reason"] = "llm_result_not_promoted_to_cache"
             report["intent_seed"]["quality"] = dict(quality)
+
+    if seed_cache_dir is not None and seed_policy in {"auto", "force_llm"}:
+        try:
+            cache_seed = Path(seed_cache_dir) / f"{spec.name}.intent_seed.json"
+            if seed_path.is_file():
+                cache_seed.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(seed_path, cache_seed)
+                cache_sync_out = True
+        except Exception:
+            cache_sync_out = False
+    report["intent_seed"]["cache_sync_out"] = bool(cache_sync_out)
 
     shape_bindings = _augment_shape_bindings_from_baseline_io(
         intent=cand.intent,

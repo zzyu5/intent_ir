@@ -1,53 +1,53 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-03-04T19:06:45+00:00",
+  "updated_at": "2026-03-10T03:39:28+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "cb5deb16fdcc9203adf080ff4554ae203d421f56",
+  "head_commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/validation_rounds/20260309/full196_cuda_cpp_hybrid_sm89_v2/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "84a0aca4ed94968713480a740955f891b1000ac8",
+  "full196_validated_commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 375,
-  "full196_commits_since_validated_total": 375,
+  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated_total": 0,
   "full196_lifted_to_head": false,
-  "full196_validated_mode": "auto",
+  "full196_validated_mode": "force_cache",
   "full196_validated_execution_ir": "mlir",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
-  "full196_validated_with_rvv_remote": true,
+  "full196_validated_with_rvv_remote": false,
   "coverage_mode": "category_batches",
   "coverage_batches_expected": 7,
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "84a0aca4ed94968713480a740955f891b1000ac8",
+  "full196_last_run_repo_head_commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
   "full196_last_run_dirty": true,
   "full196_artifact_repo_stamp_ok": true,
   "mlir_migration_phase": "default_mlir",
-  "mlir_cutover_level": "stale_validation",
+  "mlir_cutover_level": "mlir_primary",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
-  "mlir_llvm_chain_ok": false,
-  "mlir_full196_validated_commit": "",
+  "mlir_llvm_chain_ok": true,
+  "mlir_full196_validated_commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
   "gpu_perf_phase": "recompute_stale",
-  "gpu_perf_last_run": "artifacts/remote_perf/20260304/local_cuda_focus_perf_sm89_v3_head/run_summary.json",
+  "gpu_perf_last_run": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "cb5deb16fdcc9203adf080ff4554ae203d421f56",
+  "gpu_perf_validated_commit": "96393bcc887ef9cc8480d9533c932ed807f571f1",
   "gpu_perf_commits_since_validated": 0,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
     {
-      "gpu_name": "NVIDIA GeForce RTX 4080 SUPER",
+      "gpu_name": "NVIDIA H100 80GB HBM3",
       "kernel_total": 6,
       "kernel_measured": 6,
       "kernel_pass": 6,
       "kernel_fail": 0,
       "ok": true,
-      "min_ratio": 0.9837820947452696
+      "min_ratio": 1.000193073871151
     }
   ],
   "gpu_perf_failures_by_family": {},
@@ -126,18 +126,16 @@
     "catalog_validated": true
   },
   "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "RVV wave14+: extend allowlist + keep strict no-fallback",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
+    "workflow": "Run same focus-perf on H100(sm90) with policy shapes; ensure intent artifacts rebuilt with INTENTIR_CUDA_SM so tuning_db kernel_kind overrides apply.",
+    "backend_compiler": "Refresh workflow current_status.json to reflect latest cpp_plugin full196 + focus perf evidence; consider adding RMS/masked meaningful shape overrides if needed",
+    "coverage": "H100(sm90) matmul_fused_epilogue2d >= 1.05 (measured tune sweep, strict+llvm_llc); keep full196+gpu_perf fresh on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/status_converged.json"
+    "run_summary": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json",
+    "status_converged": "artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json"
   },
   "lanes": {
     "coverage": {

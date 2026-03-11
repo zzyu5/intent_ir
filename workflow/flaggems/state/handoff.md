@@ -1,10 +1,12 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-03-04T19:06:45+00:00
-- Commit: `6bf97263df7a76abc04534f6f254b16dc59a5eea`
-- Lane: `workflow`
-- Summary: cpp_plugin: meta_json_b64 harvest; sm89 focus cov+perf v8 (strict,llc)
+- Timestamp: 2026-03-10T03:37:45+00:00
+- Commit: `96393bcc887ef9cc8480d9533c932ed807f571f1`
+- Lane: `backend_compiler`
+- Summary: H100(sm90) focus6 perf stabilized: paired bench + median ratio; all ratios >=1.0 under strict+llvm_llc (sw14 async=1)
+- Agent Handoff: `workflow/flaggems/state/AGENT_HANDOFF_20260310.md`
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8, artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/run_summary.json, artifacts/flaggems_matrix/daily/20260305/gpu_perf_triton_native_cuda_cpp_focus_sm89_v8/status_converged.json, artifacts/validation_rounds/20260305/triton_native_cuda_cpp_focus_cov_sm89_v8
+- Run Summary: `artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json`
+- Status Converged: `artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json`
+- Evidence Paths: artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/gpu_perf_graph.json, artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/run_summary.json, artifacts/remote_import/20260310/h100/h100_triton_native_focus_perf_sm90_sw14_v10_paired_median_ratio/status_converged.json, artifacts/remote_import/20260310/h100/tune_flash_attention2d_sm90_more_candidates_v5/summary.json, workflow/flaggems/state/tuning_db/cuda.jsonl
+- Next Focus: Refresh workflow current_status.json to reflect latest cpp_plugin full196 + focus perf evidence; consider adding RMS/masked meaningful shape overrides if needed

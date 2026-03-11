@@ -366,6 +366,31 @@ def _force_import_flaggems_from_src(src_dir: Path) -> None:
     init_py = pkg_dir / "__init__.py"
     if not init_py.is_file():
         raise FileNotFoundError(f"flag_gems package not found under source dir: {src_dir}")
+
+    # FlagGems optionally depends on `packaging` for version comparisons.
+    # Some remote environments used for perf/coverage don't have it installed,
+    # so provide a minimal stub sufficient for `from packaging import version`.
+    try:
+        importlib.import_module("packaging.version")
+    except ModuleNotFoundError:
+        import re
+        import types
+
+        def _parse_version(v: str) -> tuple[int, int, int]:
+            match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", str(v))
+            if match is None:
+                return (0, 0, 0)
+            major, minor, patch = match.groups()
+            return (int(major), int(minor), int(patch or 0))
+
+        packaging_mod = types.ModuleType("packaging")
+        packaging_mod.__path__ = []  # mark as package
+        version_mod = types.ModuleType("packaging.version")
+        version_mod.parse = _parse_version  # type: ignore[attr-defined]
+        packaging_mod.version = version_mod  # type: ignore[attr-defined]
+        sys.modules.setdefault("packaging", packaging_mod)
+        sys.modules.setdefault("packaging.version", version_mod)
+
     for key in list(sys.modules.keys()):
         if key == "flag_gems" or key.startswith("flag_gems."):
             sys.modules.pop(key, None)
@@ -383,17 +408,6 @@ def _force_import_flaggems_from_src(src_dir: Path) -> None:
 
 def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
     _ensure_flaggems_cache_dir_env()
-    candidates = _iter_flaggems_src_candidates(flaggems_src)
-    valid_candidates: list[Path] = []
-    for p in candidates:
-        if p.is_dir() and str(p) not in sys.path:
-            sys.path.insert(0, str(p))
-        if _is_valid_flaggems_src_dir(p):
-            valid_candidates.append(p.resolve())
-
-    if not valid_candidates:
-        return
-
     _drop_broken_flaggems_editable_finders()
 
     try:
@@ -404,7 +418,21 @@ def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
     except Exception:
         pass
 
-    _force_import_flaggems_from_src(valid_candidates[0])
+    candidates = _iter_flaggems_src_candidates(flaggems_src)
+    valid_candidates: list[Path] = []
+    for p in candidates:
+        if _is_valid_flaggems_src_dir(p):
+            valid_candidates.append(p.resolve())
+
+    if not valid_candidates:
+        return
+
+    # Insert the src dir as a last resort (prefer installed `flag_gems` when
+    # available so remote environments don't need the full FlagGems deps).
+    src_dir = valid_candidates[0]
+    if src_dir.is_dir() and str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+    _force_import_flaggems_from_src(src_dir)
 
 
 def load_flaggems_all_ops(flaggems_src: str | Path | None = None) -> list[str]:
