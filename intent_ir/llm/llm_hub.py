@@ -332,11 +332,17 @@ def _cross_entropy_repair_json(descriptor: KernelDescriptor, *, input_shape: tup
             "shape_bindings": {"BT": bt_dim, "V": v_dim},
             "reduction": "mean",
             "ignore_index_from_runtime": True,
+            "mutated_inputs": ["input"],
+            "mutation_kind": "inplace_gradient_writeback",
         },
     }
 
 
-def _repair_candidate_from_descriptor(cand: CandidateIntent, descriptor: KernelDescriptor) -> tuple[CandidateIntent, list[str]]:
+def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[CandidateIntent | None, list[str]]:
+    """
+    Build a deterministic frontend candidate directly from descriptor evidence
+    when the kernel family has a known semantic repair.
+    """
     repairs: list[str] = []
     shapes = _baseline_array_shapes(descriptor)
     name = str(descriptor.name or "").strip().lower()
@@ -392,7 +398,35 @@ def _repair_candidate_from_descriptor(cand: CandidateIntent, descriptor: KernelD
         repairs.append("liger_cross_entropy_loss_repair_v1")
         return repaired, repairs
 
+    return None, repairs
+
+
+def _repair_candidate_from_descriptor(cand: CandidateIntent, descriptor: KernelDescriptor) -> tuple[CandidateIntent, list[str]]:
+    repaired, repairs = prefill_candidate_for_descriptor(descriptor)
+    if repaired is not None:
+        return repaired, repairs
     return cand, repairs
+
+
+def repair_candidate_for_descriptor(cand: CandidateIntent, descriptor: KernelDescriptor) -> CandidateIntent:
+    """
+    Re-apply descriptor-aware repairs for cached seeds and replayed candidates.
+
+    This keeps old seeds from bypassing newer scalar/view normalization logic.
+    """
+    repaired, repair_tags = _repair_candidate_from_descriptor(cand, descriptor)
+    if repaired is cand:
+        return cand
+    repaired.llm_trace = dict(cand.llm_trace or {})
+    if repair_tags:
+        repaired.llm_trace.setdefault("repairs", []).extend(list(repair_tags))  # type: ignore[call-arg]
+    try:
+        extra_repairs = repair_missing_outputs(repaired.intent)
+        if extra_repairs:
+            repaired.llm_trace.setdefault("repairs", []).extend(list(extra_repairs))  # type: ignore[call-arg]
+    except Exception:
+        pass
+    return repaired
 
 
 @dataclass
@@ -689,4 +723,4 @@ class LLMIntentHub:
         raise NotImplementedError(f"LLMIntentHub does not support frontend={descriptor.frontend}")
 
 
-__all__ = ["LLMIntentHub"]
+__all__ = ["LLMIntentHub", "repair_candidate_for_descriptor", "prefill_candidate_for_descriptor"]

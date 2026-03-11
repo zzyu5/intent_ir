@@ -23,7 +23,7 @@ import triton
 
 from intent_ir.ir import IntentFunction, ScheduleSketch
 from frontends.triton.dump import find_latest_ttir, prepare_dump_and_cache_dirs
-from intent_ir.llm import LLMIntentHub
+from intent_ir.llm import LLMIntentHub, prefill_candidate_for_descriptor, repair_candidate_for_descriptor
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir.repair import materialize_missing_op_output_tensors
@@ -1293,6 +1293,19 @@ def make_cases(
                 n = 0
             if n < 4:
                 return False
+        # RoPE rotates channel pairs. Odd or unit head widths are not legal
+        # semantic witnesses; they only trigger reference-side compile failures.
+        try:
+            if any(str(getattr(op, "op", "")).strip() == "rope" for op in (intent.intent.ops or [])):
+                for key in ("HD", "HEAD_DIM", "head_dim"):
+                    if key not in shapes:
+                        continue
+                    hd = int(shapes[key])
+                    if hd < 2 or hd % 2 != 0:
+                        return False
+                    break
+        except Exception:
+            pass
         return True
 
     def merge_case(c: TestCase) -> TestCase:
@@ -3632,6 +3645,15 @@ def run_pipeline_for_spec(
             cache_allowed, cache_reason = _is_seed_trusted_for_auto(seed_path)
         if cache_allowed:
             cand, cand_expanded = _load_intent_seed(seed_path)
+            cand = repair_candidate_for_descriptor(cand, desc)
+            enrich_intent_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expand_macros(cand.intent),
+                problem_params=dict(cand.problem_params),
+                schedule_params=dict(cand.schedule_params),
+                raw_json=dict(cand.raw_json),
+                llm_trace=dict(cand.llm_trace),
+            )
             cache_used = True
             report["intent_seed"]["used"] = True
             report["intent_seed"]["source"] = "cache"
@@ -3709,6 +3731,28 @@ def run_pipeline_for_spec(
         exp_txt = _intent_to_mlir_text(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+    elif cand is None:
+        prefill_cand, prefill_repairs = prefill_candidate_for_descriptor(desc)
+        if prefill_cand is not None:
+            cand = prefill_cand
+            report["llm_fallback"] = {
+                "used": True,
+                "kind": "descriptor_semantic_prefill",
+                "reason": ",".join(prefill_repairs) if prefill_repairs else "descriptor_semantic_prefill",
+            }
+            enrich_intent_macros(cand.intent)
+            mlir_txt = _intent_to_mlir_text(cand.intent)
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
+            expanded_intent = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_intent,
+                problem_params=dict(cand.problem_params),
+                schedule_params=dict(cand.schedule_params),
+                raw_json=dict(cand.raw_json),
+                llm_trace=dict(cand.llm_trace),
+            )
+            exp_txt = _intent_to_mlir_text(expanded_intent)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     elif cand is None:
         if should_try_llm:
             for attempt in range(2):

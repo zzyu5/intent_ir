@@ -112,6 +112,15 @@ def _store_group_count(cert: object) -> int | None:
     return len(store_tensors) if store_tensors else None
 
 
+def _mutated_input_credit(intent: IntentFunction) -> int:
+    meta = intent.meta if isinstance(intent.meta, dict) else {}
+    raw = meta.get("mutated_inputs")
+    if not isinstance(raw, list):
+        return 0
+    names = {str(x).strip() for x in raw if str(x).strip()}
+    return len(names)
+
+
 def _contract_level_from_cert(cert: object) -> str | None:
     if _is_legacy_cert(cert):
         try:
@@ -284,21 +293,24 @@ def static_validate(intent: IntentFunction, cert: object) -> StaticValidationRes
     # the number of declared outputs (helps catch missing Mean/Rstd etc).
     num_store_groups = _store_group_count(cert)
     if num_store_groups is not None:
-        if num_store_groups > len(intent.outputs):
+        required_outputs = max(0, int(num_store_groups) - int(_mutated_input_credit(intent)))
+        if required_outputs > len(intent.outputs):
             obligations.append(
                 StaticObligation(
                     id="SV_outputs_lt_store_groups",
                     status="FAIL",
-                    detail=f"store_groups={num_store_groups} outputs={len(intent.outputs)}",
+                    detail=f"store_groups={num_store_groups} mutated_inputs={_mutated_input_credit(intent)} outputs={len(intent.outputs)}",
                 )
             )
-            reasons.append(f"intent outputs ({len(intent.outputs)}) fewer than TTIR store groups ({num_store_groups})")
+            reasons.append(
+                f"intent outputs ({len(intent.outputs)}) fewer than TTIR store groups ({num_store_groups}) after mutation credit ({_mutated_input_credit(intent)})"
+            )
         else:
             obligations.append(
                 StaticObligation(
                     id="SV_outputs_ge_store_groups",
                     status="PASS",
-                    detail=f"store_groups={num_store_groups} outputs={len(intent.outputs)}",
+                    detail=f"store_groups={num_store_groups} mutated_inputs={_mutated_input_credit(intent)} outputs={len(intent.outputs)}",
                 )
             )
     if _needs_mask_from_cert(cert) and not any(op.op.startswith("reduce") for op in intent.ops):

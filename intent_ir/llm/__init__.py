@@ -1,6 +1,6 @@
 from .llm_client import DEFAULT_MODEL, LLMClientError, LLMResponse, chat_completion, candidate_models
 from .llm_extract import extract_json_object, extract_json_object_with_trace, parse_json_block, strip_code_fence
-from .llm_hub import LLMIntentHub
+from .llm_hub import LLMIntentHub, prefill_candidate_for_descriptor, repair_candidate_for_descriptor
 
 __all__ = [
     "DEFAULT_MODEL",
@@ -13,4 +13,6 @@ __all__ = [
     "extract_json_object",
     "extract_json_object_with_trace",
     "LLMIntentHub",
+    "prefill_candidate_for_descriptor",
+    "repair_candidate_for_descriptor",
 ]

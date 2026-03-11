@@ -79,11 +79,14 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
   - If the benchmark/public API uses logical tensors and the Triton kernel uses a transposed physical view,
     model both. Keep public tensors with logical shape, create explicit transpose ops for the physical view,
     and use tensor metadata to preserve the alias/view relation.
+  - `HD` / `HEAD_DIM` is the full logical channel width. RoPE rotates channel pairs, so preserve even head-width pairing and align cos/sin to the sequence axis instead of inventing half-width public tensors.
 - IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW
   (mean = sum/num_elements; var = sumsq/num_elements; rstd = rsqrt(var+eps)). Use reduce_sum(attrs.scale=...) or explicit div ops.
 - IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N).
 - Scalars/constants (eps, num_elements, group_size, sm_scale, BLOCK_*) must be explicit. Prefer modeling them as `const` ops (scalar tensors) and pass them as normal op inputs.
   Do NOT use ad-hoc scalar-in-attrs shorthands for arithmetic ops (e.g., add with attrs.scalar); keep arithmetic ops as 2-input ops.
+- If evidence or the wrapper API fixes a scalar kwarg/constexpr to a concrete runtime value (for example `label_smoothing=0.0`, `softcap=0.0`, `lse_square_scale=0.0`),
+  bind it explicitly as a scalar tensor plus `const` op. Never leave such scalars as unbound/free tensor names.
 - identity is a pure alias/no-op in our interpreter/backend. It MUST NOT have attrs (slice/assign_slice unsupported).
 - Scalar runtime parameters that appear in the kernel signature (e.g., reciprocal_scale_h/w) must be declared in tensors as shape=[] and referenced directly; do NOT replace them with const("reciprocal_scale_h").
 - Do NOT model scheduling/tiling details (program_id, tl.constexpr BLOCK_*). Never put BLOCK_* into tensor shapes or iota.shape. Treat ow/oh as full logical ranges [OW] and [OH] rather than per-program tiles.
@@ -132,6 +135,7 @@ Rules:
   physical view explicitly with transpose ops plus tensor metadata (`view_of`, `alias_group`, `meta`).
 - If the kernel has a data-dependent branch/early-return, emit `regions` describing the path structure.
 - Scalars/constants should be explicit (`const` or scalar tensors from signature).
+- If wrapper/API evidence fixes scalar kwargs to concrete values, emit them as explicit scalar consts; do not leave free scalar names in ops.
 """
 
 
