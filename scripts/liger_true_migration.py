@@ -109,14 +109,22 @@ def _build_guided_tensors(*, io_spec: dict[str, Any], baseline: dict[str, np.nda
 
     def _resolve_tensor(base_name: str, spec: dict[str, Any]) -> torch.Tensor:
         dt = _torch_dtype(str(spec.get("dtype") or "f32"))
+        shape = _resolve_tensor_shape(list(spec.get("shape") or []), bindings)
         if base_name in outputs_torch:
             return outputs_torch[base_name]
         if base_name in inputs_torch:
             return inputs_torch[base_name]
         if base_name in output_set:
-            shape = _resolve_tensor_shape(list(spec.get("shape") or []), bindings)
             t = torch.empty(shape, device="cuda", dtype=dt)
             outputs_torch[base_name] = t
+            return t
+        if len(shape) == 0 and base_name in bindings:
+            scalar_value = bindings[base_name]
+            if dt in {torch.float16, torch.bfloat16, torch.float32}:
+                t = torch.tensor(float(scalar_value), device="cuda", dtype=dt)
+            else:
+                t = torch.tensor(int(scalar_value), device="cuda", dtype=dt)
+            inputs_torch[base_name] = t
             return t
         if base_name not in baseline:
             raise KeyError(f"missing baseline input for {base_name}")
@@ -377,6 +385,14 @@ def _max_abs_diff(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
 
 
+def _pick_io_value(io: dict[str, np.ndarray], *names: str) -> np.ndarray:
+    for name in names:
+        key = str(name).strip()
+        if key and key in io:
+            return np.asarray(io[key])
+    raise KeyError(str(names[0] if names else ""))
+
+
 def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
     from pipeline.triton.providers.liger.specs import (
         cross_entropy_forward,
@@ -484,9 +500,12 @@ def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], gui
         return {"c": _max_abs_diff(guided_outputs["c"], baseline["c"])}
     if kernel == "liger_layer_norm":
         return {
-            "Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"]),
-            "Mean": _max_abs_diff(guided_outputs["Mean"], baseline["Mean"]),
-            "RSTD": _max_abs_diff(guided_outputs["RSTD"], baseline["RSTD"]),
+            "Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y")),
+            "Mean": _max_abs_diff(_pick_io_value(guided_outputs, "Mean"), _pick_io_value(baseline, "Mean")),
+            "RSTD": _max_abs_diff(
+                _pick_io_value(guided_outputs, "RSTD", "Rstd"),
+                _pick_io_value(baseline, "RSTD", "Rstd"),
+            ),
         }
     if kernel == "liger_softmax":
         return {"Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"])}

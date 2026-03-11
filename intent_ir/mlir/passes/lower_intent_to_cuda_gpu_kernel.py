@@ -326,21 +326,38 @@ def _collect_io_arg_order(intent: IntentFunction) -> tuple[list[str], list[str]]
             if name:
                 used.add(name)
     external_inputs = sorted([n for n in used if n in tensors and n not in produced])
-    # Macro ops may reference scalar ABI inputs implicitly (not present in op.inputs).
-    # Keep this narrow: only enable for known macro ops so non-macro graphs remain stable.
-    has_macro = any(str(getattr(op, "op", "")).strip() == "upsample_bicubic2d_aa" for op in ops)
-    if has_macro:
-        extra_scalars: list[str] = []
-        for name, tt in tensors.items():
-            nm = str(name).strip()
-            if not nm or nm in produced or nm in outputs or nm in external_inputs:
-                continue
-            shape = list(getattr(tt, "shape", []) or [])
-            if len(shape) == 0:
-                extra_scalars.append(nm)
-        external_inputs.extend(sorted(extra_scalars))
+    # Some graphs materialize scalar ABI inputs indirectly via `const(value="<name>")`
+    # instead of listing them in op.inputs. Preserve those dependencies generically so
+    # downstream lowering can still bind scalar knobs like eps/label_smoothing/n_cols.
+    indirect_scalar_inputs: list[str] = []
+    for op in ops:
+        if str(getattr(op, "op", "")).strip() != "const":
+            continue
+        attrs = dict(getattr(op, "attrs", {}) or {})
+        ref_name = str(attrs.get("value") or "").strip()
+        if not ref_name or ref_name in produced or ref_name in outputs or ref_name in external_inputs:
+            continue
+        tt = tensors.get(ref_name)
+        if tt is None:
+            continue
+        shape = list(getattr(tt, "shape", []) or [])
+        if len(shape) == 0:
+            indirect_scalar_inputs.append(ref_name)
+    if indirect_scalar_inputs:
+        external_inputs.extend(sorted(set(indirect_scalar_inputs)))
     out_names = [n for n in outputs if n in tensors and n not in set(external_inputs)]
     return external_inputs, out_names
+
+
+def _output_rank_signature(intent: IntentFunction, outputs: list[str]) -> list[int]:
+    tensors = dict(intent.tensors or {})
+    ranks: list[int] = []
+    for name in list(outputs or []):
+        tt = tensors.get(str(name))
+        if tt is None:
+            continue
+        ranks.append(int(len(list(getattr(tt, "shape", []) or []))))
+    return sorted(ranks)
 
 
 def lower_intent_to_cuda_gpu_kernel(
@@ -503,21 +520,12 @@ def lower_intent_to_cuda_gpu_kernel(
         "liger_rope",
         "liger_cross_entropy",
     }
+    out_ranks = _output_rank_signature(intent, outputs)
     if len(outputs) == 2 and not multi_output_ok:
-        out_ranks = sorted(
-            int(len(list(getattr((intent.tensors or {}).get(name), "shape", []) or [])))
-            for name in outputs
-            if str(name).strip()
-        )
         if out_ranks == [1, 2]:
             multi_output_ok = True
     if len(outputs) == 3 and not multi_output_ok:
-        out_ranks = sorted(
-            int(len(list(getattr((intent.tensors or {}).get(name), "shape", []) or [])))
-            for name in outputs
-            if str(name).strip()
-        )
-        if out_ranks == [1, 2, 2]:
+        if out_ranks in ([1, 1, 2], [1, 2, 2]):
             multi_output_ok = True
     if len(outputs) != 1 and not multi_output_ok:
         raise RuntimeError(f"cuda real-mlir wave supports single-output intents only; outputs={outputs}")
@@ -1276,6 +1284,63 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError("exp2 vectorize expects vector<f32>")
                 dst = _fresh("exp2")
                 out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]}{fm} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "tanh":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("tanh vectorize expects vector<f32>")
+                dst = _fresh("tanh")
+                out_lines.append(f"        {dst} = math.tanh {in_ssa[0]}{fm} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "sigmoid":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("sigmoid vectorize expects vector<f32>")
+                neg = _fresh("sig_neg")
+                one_s = _fresh("sig_one")
+                one_v = _fresh("sig_one_v")
+                expv = _fresh("sig_exp")
+                denom = _fresh("sig_denom")
+                dst = _fresh("sigmoid")
+                out_lines.append(f"        {neg} = arith.negf {in_ssa[0]}{fm} : {vec_ty}")
+                out_lines.append(f"        {one_s} = arith.constant 1.0 : f32")
+                out_lines.append(f"        {one_v} = vector.splat {one_s} : {vec_ty}")
+                out_lines.append(f"        {expv} = math.exp {neg}{fm} : {vec_ty}")
+                out_lines.append(f"        {denom} = arith.addf {one_v}, {expv}{fm} : {vec_ty}")
+                out_lines.append(f"        {dst} = arith.divf {one_v}, {denom}{fm} : {vec_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(vec_ty)
+                continue
+
+            if op_name == "gelu":
+                if len(in_ssa) != 1 or in_ty[0] != vec_ty:
+                    raise RuntimeError("gelu vectorize expects vector<f32>")
+                half_s = _fresh("gelu_half")
+                inv_sqrt2_s = _fresh("gelu_inv_sqrt2")
+                one_s = _fresh("gelu_one")
+                half_v = _fresh("gelu_half_v")
+                inv_sqrt2_v = _fresh("gelu_inv_sqrt2_v")
+                one_v = _fresh("gelu_one_v")
+                scaled = _fresh("gelu_scaled")
+                erfv = _fresh("gelu_erf")
+                plus = _fresh("gelu_plus")
+                mul = _fresh("gelu_mul")
+                dst = _fresh("gelu")
+                out_lines.append(f"        {half_s} = arith.constant 5.000000e-01 : f32")
+                out_lines.append(f"        {inv_sqrt2_s} = arith.constant 7.07106769e-01 : f32")
+                out_lines.append(f"        {one_s} = arith.constant 1.0 : f32")
+                out_lines.append(f"        {half_v} = vector.splat {half_s} : {vec_ty}")
+                out_lines.append(f"        {inv_sqrt2_v} = vector.splat {inv_sqrt2_s} : {vec_ty}")
+                out_lines.append(f"        {one_v} = vector.splat {one_s} : {vec_ty}")
+                out_lines.append(f"        {scaled} = arith.mulf {in_ssa[0]}, {inv_sqrt2_v}{fm} : {vec_ty}")
+                out_lines.append(f"        {erfv} = math.erf {scaled}{fm} : {vec_ty}")
+                out_lines.append(f"        {plus} = arith.addf {one_v}, {erfv}{fm} : {vec_ty}")
+                out_lines.append(f"        {mul} = arith.mulf {in_ssa[0]}, {plus}{fm} : {vec_ty}")
+                out_lines.append(f"        {dst} = arith.mulf {half_v}, {mul}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -2180,6 +2245,58 @@ def lower_intent_to_cuda_gpu_kernel(
                 x = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
                 dst = _fresh("exp2")
                 out_lines.append(f"        {dst} = math.exp2 {x}{fm} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "tanh":
+                if len(in_ssa) != 1:
+                    raise RuntimeError("tanh expects 1 input")
+                x = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
+                dst = _fresh("tanh")
+                out_lines.append(f"        {dst} = math.tanh {x}{fm} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "sigmoid":
+                if len(in_ssa) != 1:
+                    raise RuntimeError("sigmoid expects 1 input")
+                x = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
+                neg = _fresh("sig_neg")
+                one = _fresh("sig_one")
+                expv = _fresh("sig_exp")
+                denom = _fresh("sig_denom")
+                dst = _fresh("sigmoid")
+                out_lines.append(f"        {neg} = arith.negf {x}{fm} : f32")
+                out_lines.append(f"        {one} = arith.constant 1.0 : f32")
+                out_lines.append(f"        {expv} = math.exp {neg}{fm} : f32")
+                out_lines.append(f"        {denom} = arith.addf {one}, {expv}{fm} : f32")
+                out_lines.append(f"        {dst} = arith.divf {one}, {denom}{fm} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "gelu":
+                if len(in_ssa) != 1:
+                    raise RuntimeError("gelu expects 1 input")
+                x = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
+                half = _fresh("gelu_half")
+                inv_sqrt2 = _fresh("gelu_inv_sqrt2")
+                one = _fresh("gelu_one")
+                scaled = _fresh("gelu_scaled")
+                erfv = _fresh("gelu_erf")
+                plus = _fresh("gelu_plus")
+                mul = _fresh("gelu_mul")
+                dst = _fresh("gelu")
+                out_lines.append(f"        {half} = arith.constant 5.000000e-01 : f32")
+                out_lines.append(f"        {inv_sqrt2} = arith.constant 7.07106769e-01 : f32")
+                out_lines.append(f"        {one} = arith.constant 1.0 : f32")
+                out_lines.append(f"        {scaled} = arith.mulf {x}, {inv_sqrt2}{fm} : f32")
+                out_lines.append(f"        {erfv} = math.erf {scaled}{fm} : f32")
+                out_lines.append(f"        {plus} = arith.addf {one}, {erfv}{fm} : f32")
+                out_lines.append(f"        {mul} = arith.mulf {x}, {plus}{fm} : f32")
+                out_lines.append(f"        {dst} = arith.mulf {half}, {mul}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -6479,6 +6596,19 @@ def lower_intent_to_cuda_gpu_kernel(
                                 "GROUP_SIZE": int(group_size),
                             }
 
+    def _scalar_f32_binding(*names: str) -> tuple[str, float | None]:
+        for cand in names:
+            key = str(cand).strip()
+            if not key:
+                continue
+            const_val = _extract_f32_const(key)
+            if const_val is not None:
+                return ("", float(const_val))
+            spec = dict(arg_specs.get(key) or {})
+            if bool(spec.get("scalar")) and str(spec.get("memref_elem_ty") or "") == "f32":
+                return (str(key), 0.0)
+        return ("", None)
+
     # Row-wise norms (multi-output): implement as dedicated kernels instead of
     # trying to interpret the full op graph.
     if out_rank == 2 and out_m is not None and out_n is not None:
@@ -6500,10 +6630,15 @@ def lower_intent_to_cuda_gpu_kernel(
                     and list(arg_specs["out_rstd_ptr"].get("dims") or []) == [int(out_m)]
                 )
                 if ok:
-                    eps_const = _extract_f32_const("eps")
-                    if eps_const is None:
-                        raise RuntimeError("layer_norm_persistent requires f32 scalar const 'eps'")
-                    row_layer_norm_persistent = {"M": int(out_m), "N": int(out_n), "eps_const": float(eps_const)}
+                    eps_tensor_name, eps_const = _scalar_f32_binding("eps")
+                    if (not eps_tensor_name) and eps_const is None:
+                        raise RuntimeError("layer_norm_persistent requires f32 scalar eps (const op or scalar ABI tensor)")
+                    row_layer_norm_persistent = {
+                        "M": int(out_m),
+                        "N": int(out_n),
+                        "eps_tensor_name": str(eps_tensor_name),
+                        "eps_const": float(eps_const or 0.0),
+                    }
 
         elif intent_name == "layer_norm_residual2d":
             required = {"inp", "residual", "weight", "bias", "out", "mean", "rstd"}
@@ -6525,10 +6660,15 @@ def lower_intent_to_cuda_gpu_kernel(
                     and list(arg_specs["rstd"].get("dims") or []) == [int(out_m)]
                 )
                 if ok:
-                    eps_const = _extract_f32_const("eps")
-                    if eps_const is None:
-                        raise RuntimeError("layer_norm_residual2d requires f32 scalar const 'eps'")
-                    row_layer_norm_residual2d = {"M": int(out_m), "N": int(out_n), "eps_const": float(eps_const)}
+                    eps_tensor_name, eps_const = _scalar_f32_binding("eps")
+                    if (not eps_tensor_name) and eps_const is None:
+                        raise RuntimeError("layer_norm_residual2d requires f32 scalar eps (const op or scalar ABI tensor)")
+                    row_layer_norm_residual2d = {
+                        "M": int(out_m),
+                        "N": int(out_n),
+                        "eps_tensor_name": str(eps_tensor_name),
+                        "eps_const": float(eps_const or 0.0),
+                    }
 
         elif intent_name == "ai_bench_layernorm" or {"X", "W", "B", "Y", "Mean", "Rstd"}.issubset(set(arg_specs.keys())):
             required = {"X", "W", "B", "Y", "Mean", "Rstd"}
@@ -6548,14 +6688,15 @@ def lower_intent_to_cuda_gpu_kernel(
                     and list(arg_specs["Rstd"].get("dims") or []) == [int(out_m)]
                 )
                 if ok:
-                    eps_const = _extract_f32_const("eps")
-                    if eps_const is None:
-                        raise RuntimeError("ai_bench_layernorm requires f32 scalar const 'eps'")
+                    eps_tensor_name, eps_const = _scalar_f32_binding("eps", "eps_tensor")
+                    if (not eps_tensor_name) and eps_const is None:
+                        raise RuntimeError("ai_bench_layernorm requires f32 scalar eps (const op or scalar ABI tensor)")
                     # Reuse the axis-1 layer-norm emitter with different arg names.
                     row_layer_norm_persistent = {
                         "M": int(out_m),
                         "N": int(out_n),
-                        "eps_const": float(eps_const),
+                        "eps_tensor_name": str(eps_tensor_name),
+                        "eps_const": float(eps_const or 0.0),
                         "inp": "X",
                         "weight": "W",
                         "bias": "B",
@@ -7122,6 +7263,14 @@ def lower_intent_to_cuda_gpu_kernel(
             allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3", "rms_norm_axis1_v4"}
         if allowed is None and row_fused_add_rms_norm2d is not None:
             allowed = {"rms_norm_axis1_v2", "rms_norm_axis1_v3", "rms_norm_axis1_v4"}
+        if allowed is None and row_softmax_axis1 is not None:
+            allowed = {
+                "row_softmax_axis1_triton_v1",
+                "row_softmax_axis1_v1",
+                "row_softmax_axis1_vec4_v2",
+            }
+        if allowed is None and row_layer_norm_persistent is not None:
+            allowed = {"layer_norm_axis1_v1"}
         if allowed is None and rope_dual_v1 is not None:
             allowed = {"rope_dual_v1"}
         if allowed is None and cross_entropy_loss_v1 is not None:
@@ -7283,10 +7432,14 @@ def lower_intent_to_cuda_gpu_kernel(
                         f"{kernel_kind_override} override requires M%MMA_BM==0, N%MMA_BN==0, K%MMA_BK==0, and K%8==0; "
                         f"got M={m_dim} N={n_dim} K={k_dim} MMA_BM={mma_bm} MMA_BN={mma_bn} MMA_BK={mma_bk}"
                     )
-        if intent_name == "ai_bench_softmax":
+        if kernel_kind_override in {
+            "row_softmax_axis1_triton_v1",
+            "row_softmax_axis1_v1",
+            "row_softmax_axis1_vec4_v2",
+        }:
             if row_softmax_axis1 is None:
                 raise RuntimeError(
-                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires ai_bench_softmax matcher; "
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires row_softmax matcher; "
                     "got no row_softmax_axis1 pattern match"
                 )
             red_n = int(row_softmax_axis1.get("reduce_n") or 0)
@@ -7294,6 +7447,13 @@ def lower_intent_to_cuda_gpu_kernel(
                 raise RuntimeError(f"ai_bench_softmax softmax reduce_n must be >0; got {red_n}")
             if kernel_kind_override == "row_softmax_axis1_triton_v1" and red_n > 1024:
                 raise RuntimeError("row_softmax_axis1_triton_v1 currently requires reduce_n<=1024")
+            if kernel_kind_override == "row_softmax_axis1_vec4_v2":
+                req_vec4 = int(bindings.get("SOFTMAX_VEC4") or 1)
+                if req_vec4 != 1:
+                    raise RuntimeError(
+                        "row_softmax_axis1_vec4_v2 requires SOFTMAX_VEC4==1; "
+                        f"got {req_vec4}"
+                    )
         if intent_name == "row_sum":
             if row_reduce_sum_axis1 is None:
                 raise RuntimeError(
@@ -7346,10 +7506,10 @@ def lower_intent_to_cuda_gpu_kernel(
                 )
             if req_threads > 32 and req_shared != 1:
                 raise RuntimeError("row_max_axis1_v2 requires shared_stage=1 when block_threads>32")
-        if intent_name == "layer_norm_persistent":
+        if kernel_kind_override == "layer_norm_axis1_v1":
             if row_layer_norm_persistent is None:
                 raise RuntimeError(
-                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires layer_norm_persistent matcher; "
+                    f"intentir_kernel_kind_override={kernel_kind_override!r} requires layer_norm matcher; "
                     "got no row_layer_norm_persistent pattern match"
                 )
             req_threads = int(bindings.get("LAYER_NORM_BLOCK_THREADS") or 64)
@@ -12230,6 +12390,7 @@ def lower_intent_to_cuda_gpu_kernel(
         out_name2 = str(row_layer_norm_persistent.get("out") or "out_ptr")
         mean_name = str(row_layer_norm_persistent.get("mean") or "out_mean_ptr")
         rstd_name = str(row_layer_norm_persistent.get("rstd") or "out_rstd_ptr")
+        eps_tensor_name = str(row_layer_norm_persistent.get("eps_tensor_name") or "").strip()
         eps_const = float(row_layer_norm_persistent.get("eps_const") or 0.0)
 
         in_memref = str(arg_specs[in_name]["memref"])
@@ -12238,13 +12399,14 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
         mean_memref = str(arg_specs[mean_name]["memref"])
         rstd_memref = str(arg_specs[rstd_name]["memref"])
+        eps_memref = str(arg_specs[eps_tensor_name]["memref"]) if eps_tensor_name else ""
 
         req_block_threads = int(bindings.get("LAYER_NORM_BLOCK_THREADS") or 128)
         req_vector_width = int(bindings.get("LAYER_NORM_VECTOR_WIDTH") or 1)
         req_persistent_row = int(bindings.get("LAYER_NORM_PERSISTENT_ROW") or 0) == 1
         req_rows_per_cta_binding = bindings.get("LAYER_NORM_ROWS_PER_CTA")
         if req_rows_per_cta_binding is None and req_persistent_row:
-            req_rows_per_cta = max(1, min(4, int(req_block_threads) // 32))
+            req_rows_per_cta = max(1, min(8, int(req_block_threads) // 32))
         else:
             req_rows_per_cta = int(req_rows_per_cta_binding or 1)
         vec_groups = int(req_vector_width) if int(req_vector_width) > 1 else 1
@@ -12337,7 +12499,12 @@ def lower_intent_to_cuda_gpu_kernel(
             out_ssa = out_aligned
         lines.append("      scf.if %pred_row {")
         lines.append(f"        %base = arith.muli {row_ssa}, %cN : index")
-        lines.append(f"        %eps = arith.constant {_as_f32_const(eps_const)} : f32")
+        eps_ssa = "%eps"
+        if eps_tensor_name:
+            eps_ssa = _fresh("eps")
+            lines.append(f"        {eps_ssa} = memref.load {arg_ssa[eps_tensor_name]}[%c0] : {eps_memref}")
+        else:
+            lines.append(f"        %eps = arith.constant {_as_f32_const(eps_const)} : f32")
         if req_persistent_row:
             assert shared_global_sym is not None
             lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
@@ -12531,7 +12698,7 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        %var_raw = arith.subf %ex2, %mean_sq{fm} : f32")
         lines.append("        %c0f_var = arith.constant 0.0 : f32")
         lines.append(f"        %var = arith.maximumf %var_raw, %c0f_var{fm} : f32")
-        lines.append(f"        %var_eps = arith.addf %var, %eps{fm} : f32")
+        lines.append(f"        %var_eps = arith.addf %var, {eps_ssa}{fm} : f32")
         lines.append(f"        %rstd_v = math.rsqrt %var_eps{fm} : f32")
 
         # store mean/rstd (one lane)
@@ -12636,6 +12803,7 @@ def lower_intent_to_cuda_gpu_kernel(
         out_name2 = "out"
         mean_name = "mean"
         rstd_name = "rstd"
+        eps_tensor_name = str(row_layer_norm_residual2d.get("eps_tensor_name") or "").strip()
         eps_const = float(row_layer_norm_residual2d.get("eps_const") or 0.0)
 
         in_memref = str(arg_specs[in_name]["memref"])
@@ -12645,6 +12813,7 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
         mean_memref = str(arg_specs[mean_name]["memref"])
         rstd_memref = str(arg_specs[rstd_name]["memref"])
+        eps_memref = str(arg_specs[eps_tensor_name]["memref"]) if eps_tensor_name else ""
 
         launch_override = {"block": [256, 1, 1], "grid": [int(out_m), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
@@ -12659,7 +12828,12 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
         lines.append("      scf.if %pred_row {")
         lines.append("        %base = arith.muli %bid, %cN : index")
-        lines.append(f"        %eps = arith.constant {_as_f32_const(eps_const)} : f32")
+        eps_ssa = "%eps"
+        if eps_tensor_name:
+            eps_ssa = _fresh("eps")
+            lines.append(f"        {eps_ssa} = memref.load {arg_ssa[eps_tensor_name]}[%c0] : {eps_memref}")
+        else:
+            lines.append(f"        %eps = arith.constant {_as_f32_const(eps_const)} : f32")
 
         # sum(z)
         lines.append("        %c0f = arith.constant 0.0 : f32")
@@ -12730,7 +12904,7 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append("        gpu.barrier")
         lines.append("        %var_sum = memref.load %sh[%c0] : memref<256xf32, 3>")
         lines.append(f"        %var = arith.divf %var_sum, %n_f{fm} : f32")
-        lines.append(f"        %var_eps = arith.addf %var, %eps{fm} : f32")
+        lines.append(f"        %var_eps = arith.addf %var, {eps_ssa}{fm} : f32")
         lines.append(f"        %rstd_v = math.rsqrt %var_eps{fm} : f32")
 
         # store mean/rstd

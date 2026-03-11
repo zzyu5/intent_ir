@@ -281,8 +281,19 @@ def _augment_scalar_bindings_from_io_spec(
         if shape != []:
             continue
         lname = str(name).strip().lower()
+        upper_name = str(name).strip().upper()
+        if upper_name and _has_binding(upper_name):
+            out[name] = out[upper_name]
+            continue
         if lname in {"eps", "epsilon"}:
             out[name] = float(1.0e-5)
+            continue
+        if lname in {"n_cols", "ncols", "cols", "num_cols", "width"} and _has_binding("N"):
+            out[name] = int(out["N"])
+            continue
+        if lname in {"n_rows", "nrows", "rows", "num_rows", "height"} and _has_binding("M"):
+            out[name] = int(out["M"])
+            continue
 
     for name in [str(k) for k in scalars.keys()]:
         if _has_binding(name):
@@ -500,20 +511,44 @@ def _augment_io_spec_arg_names_with_ptx_params(
     non_tensor_args = [n for n in arg_names if n not in tensor_names]
     if tensor_arg_order and not non_tensor_args:
         total_params = int(len(ptx_param_types))
-        tensor_count = int(len(tensor_arg_order))
-        if tensor_count > 0 and total_params % tensor_count == 0:
-            slots_per_tensor = int(total_params // tensor_count)
-            abi_rank = int((slots_per_tensor - 3) // 2) if (slots_per_tensor >= 3 and (slots_per_tensor - 3) % 2 == 0) else -1
-        else:
-            abi_rank = -1
-        if abi_rank >= 0:
+
+        def _expand_flat_rank1_tensor_arg_names(tensor_order: list[str]) -> dict[str, Any] | None:
             new_arg_names: list[str] = []
             new_scalars: dict[str, str] = dict(scalars)
             new_tensors: dict[str, Any] = {
                 str(k): dict(v) for k, v in dict(tensors or {}).items() if str(k).strip() and isinstance(v, Mapping)
             }
-            for t_name in tensor_arg_order:
+            for t_name in tensor_order:
                 spec = dict(new_tensors.get(t_name) or {})
+                new_arg_names.append(str(t_name))
+                aligned_name = f"{t_name}__aligned"
+                new_arg_names.append(aligned_name)
+                new_tensors[aligned_name] = dict(spec)
+                offset_name = f"{t_name}__offset"
+                size_name = f"{t_name}__size0"
+                stride_name = f"{t_name}__stride0"
+                new_arg_names.extend([offset_name, size_name, stride_name])
+                new_scalars.setdefault(offset_name, "i64")
+                new_scalars.setdefault(size_name, "i64")
+                new_scalars.setdefault(stride_name, "i64")
+            if len(new_arg_names) == len(ptx_param_types):
+                updated = dict(out)
+                updated["arg_names"] = list(new_arg_names)
+                updated["tensors"] = dict(new_tensors)
+                updated["scalars"] = dict(new_scalars)
+                return updated
+            return None
+
+        def _expand_tensor_descriptor_arg_names(tensor_order: list[str]) -> dict[str, Any] | None:
+            new_arg_names: list[str] = []
+            new_scalars: dict[str, str] = dict(scalars)
+            new_tensors: dict[str, Any] = {
+                str(k): dict(v) for k, v in dict(tensors or {}).items() if str(k).strip() and isinstance(v, Mapping)
+            }
+            for t_name in tensor_order:
+                spec = dict(new_tensors.get(t_name) or {})
+                shape = list(spec.get("shape") or [])
+                abi_rank = int(len(shape))
                 new_arg_names.append(str(t_name))
                 aligned_name = f"{t_name}__aligned"
                 new_arg_names.append(aligned_name)
@@ -530,10 +565,42 @@ def _augment_io_spec_arg_names_with_ptx_params(
                     new_arg_names.append(st_name)
                     new_scalars.setdefault(st_name, "i64")
             if len(new_arg_names) == len(ptx_param_types):
-                out["arg_names"] = list(new_arg_names)
-                out["tensors"] = dict(new_tensors)
-                out["scalars"] = dict(new_scalars)
-                return out
+                updated = dict(out)
+                updated["arg_names"] = list(new_arg_names)
+                updated["tensors"] = dict(new_tensors)
+                updated["scalars"] = dict(new_scalars)
+                return updated
+            return None
+
+        expanded = _expand_flat_rank1_tensor_arg_names(list(tensor_arg_order))
+        if expanded is not None:
+            return expanded
+        expanded = _expand_tensor_descriptor_arg_names(list(tensor_arg_order))
+        if expanded is not None:
+            return expanded
+
+        output_names = [str(x).strip() for x in list(out.get("outputs") or []) if str(x).strip()]
+        output_set = set(output_names)
+        input_tensor_order = [n for n in tensor_arg_order if n not in output_set]
+        output_tensor_order = [n for n in tensor_arg_order if n in output_set]
+        missing_scalar_tensors = [
+            str(name)
+            for name, spec in dict(tensors or {}).items()
+            if str(name).strip()
+            and str(name).strip() not in set(tensor_arg_order)
+            and str(name).strip() not in output_set
+            and isinstance(spec, Mapping)
+            and list(spec.get("shape") or []) == []
+        ]
+        if missing_scalar_tensors:
+            for prefix_len in range(1, len(missing_scalar_tensors) + 1):
+                candidate_order = [*input_tensor_order, *missing_scalar_tensors[:prefix_len], *output_tensor_order]
+                expanded = _expand_flat_rank1_tensor_arg_names(candidate_order)
+                if expanded is not None:
+                    return expanded
+                expanded = _expand_tensor_descriptor_arg_names(candidate_order)
+                if expanded is not None:
+                    return expanded
 
     ordered_candidates: list[str] = []
     seen_candidate: set[str] = set()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any, Callable, Mapping
@@ -54,6 +55,138 @@ def _require_dim(bindings: Mapping[str, Any], key: str) -> int:
     if value is None:
         raise ValueError(f"missing shape_bindings[{key!r}]")
     return int(value)
+
+
+def _constraint_env(
+    *,
+    bindings: Mapping[str, Any],
+    shape_bindings: Mapping[str, Any],
+    hardware_model: HardwareModel,
+) -> dict[str, Any]:
+    env: dict[str, Any] = {}
+    for source in (shape_bindings, bindings):
+        for key, value in dict(source or {}).items():
+            name = str(key).strip()
+            if not name:
+                continue
+            iv = _coerce_int(value)
+            env[name] = int(iv) if iv is not None else value
+    env["shared_mem_kb"] = int(hardware_model.shared_mem_kb or 0)
+    env["register_budget"] = int(hardware_model.register_budget or 0)
+    env["supports_async_copy"] = bool(hardware_model.supports_async_copy)
+    env["supports_mma"] = bool(hardware_model.supports_mma)
+    return env
+
+
+def _eval_int_expr(expr: str, env: Mapping[str, Any]) -> int:
+    node = ast.parse(str(expr).strip(), mode="eval")
+
+    def _walk(cur: ast.AST) -> int:
+        if isinstance(cur, ast.Expression):
+            return _walk(cur.body)
+        if isinstance(cur, ast.Constant):
+            if isinstance(cur.value, bool):
+                return int(cur.value)
+            return int(cur.value)
+        if isinstance(cur, ast.Name):
+            value = env.get(str(cur.id))
+            if isinstance(value, bool):
+                return int(value)
+            iv = _coerce_int(value)
+            if iv is None:
+                raise ValueError(f"unknown constraint symbol: {cur.id}")
+            return int(iv)
+        if isinstance(cur, ast.UnaryOp) and isinstance(cur.op, ast.USub):
+            return -_walk(cur.operand)
+        if isinstance(cur, ast.BinOp) and isinstance(cur.op, (ast.Add, ast.Sub, ast.Mult, ast.Mod, ast.FloorDiv)):
+            lhs = _walk(cur.left)
+            rhs = _walk(cur.right)
+            if isinstance(cur.op, ast.Add):
+                return lhs + rhs
+            if isinstance(cur.op, ast.Sub):
+                return lhs - rhs
+            if isinstance(cur.op, ast.Mult):
+                return lhs * rhs
+            if isinstance(cur.op, ast.Mod):
+                return lhs % rhs
+            return lhs // rhs
+        raise ValueError(f"unsupported constraint expression: {ast.dump(cur)}")
+
+    return int(_walk(node))
+
+
+def _eval_constraint(constraint: str, env: Mapping[str, Any]) -> bool:
+    text = str(constraint or "").strip()
+    if not text:
+        return True
+    if " in {" in text and text.endswith("}"):
+        lhs, rhs = text.split(" in {", 1)
+        lhs_v = _eval_int_expr(lhs, env)
+        allowed = {int(x.strip()) for x in rhs[:-1].split(",") if str(x).strip()}
+        return int(lhs_v) in allowed
+    for op in ("==", "!=", ">=", "<=", ">", "<"):
+        if op in text:
+            lhs, rhs = text.split(op, 1)
+            lhs_v = _eval_int_expr(lhs, env)
+            rhs_v = _eval_int_expr(rhs, env)
+            if op == "==":
+                return lhs_v == rhs_v
+            if op == "!=":
+                return lhs_v != rhs_v
+            if op == ">=":
+                return lhs_v >= rhs_v
+            if op == "<=":
+                return lhs_v <= rhs_v
+            if op == ">":
+                return lhs_v > rhs_v
+            return lhs_v < rhs_v
+    value = env.get(text)
+    if isinstance(value, bool):
+        return bool(value)
+    iv = _coerce_int(value)
+    return bool(iv) if iv is not None else False
+
+
+def _candidate_module_ids(
+    *,
+    spec: FamilySpec,
+    template: TemplateSpec,
+    profile: GraphProfile,
+    bindings: Mapping[str, int],
+) -> set[str]:
+    selected = set(str(x) for x in list(spec.base_modules or ()))
+    selected.add(str(template.module_id))
+    enabled_params = set(_active_flag_params(spec, template, bindings))
+    for optional in list(spec.optional_modules or ()):
+        if optional.gate_param and str(optional.gate_param) not in enabled_params:
+            continue
+        if optional.signals and not all(profile.has_signal(sig) for sig in list(optional.signals or ())):
+            continue
+        selected.add(str(optional.module_id))
+    return selected
+
+
+def _constraint_failure(
+    *,
+    module_ids: set[str],
+    module_map: Mapping[str, BackendModule],
+    bindings: Mapping[str, int],
+    shape_bindings: Mapping[str, Any],
+    hardware_model: HardwareModel,
+) -> str:
+    env = _constraint_env(bindings=bindings, shape_bindings=shape_bindings, hardware_model=hardware_model)
+    for module_id in sorted(module_ids):
+        module = module_map.get(str(module_id))
+        if module is None:
+            continue
+        for constraint in list(getattr(module, "constraints", []) or ()):
+            try:
+                ok = _eval_constraint(str(constraint), env)
+            except Exception:
+                ok = False
+            if not ok:
+                return f"{module_id}:{constraint}"
+    return ""
 
 
 def _ordered_unique(values: list[int]) -> list[int]:
@@ -745,7 +878,7 @@ def _resolve_family_spec(
     if profile.has_signal("reduction_path") and profile.has_signal("online_state"):
         if profile.has_signal("mask_path"):
             _consider("masked_softmax2d", 114.0, "graph:masked_softmax")
-        if profile.has_signal("vector_path"):
+        if profile.has_signal("vector_path") and int(profile.row_width or 0) <= 1024:
             _consider("ai_bench_softmax", 112.0, "graph:vector_softmax")
         _consider("softmax_inner", 110.0, "graph:softmax")
     if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.has_signal("reduction_path"):
@@ -1062,6 +1195,7 @@ def _evaluate_template_candidate(
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
+    module_map: Mapping[str, BackendModule],
 ) -> CandidateEval:
     score = 100.0
     reasons: list[str] = [f"cluster={hardware_model.arch_cluster}", f"kind={template.kernel_kind}"]
@@ -1120,6 +1254,23 @@ def _evaluate_template_candidate(
         if bindings == source_bindings:
             score += 48.0
             reasons.append("source_exact")
+    candidate_module_ids = _candidate_module_ids(
+        spec=spec,
+        template=template,
+        profile=profile,
+        bindings=bindings,
+    )
+    constraint_failure = _constraint_failure(
+        module_ids=candidate_module_ids,
+        module_map=module_map,
+        bindings=bindings,
+        shape_bindings=shape_bindings,
+        hardware_model=hardware_model,
+    )
+    if constraint_failure:
+        score -= 320.0
+        portability = "constraint_blocked"
+        reasons.append(f"constraint_blocked={constraint_failure}")
     fit = _resource_fit(
         spec=spec,
         template=template,
@@ -1148,7 +1299,7 @@ def _evaluate_template_candidate(
         cluster=str(hardware_model.arch_cluster),
         portability_note=str(portability),
     )
-    modules = tuple(sorted(set(spec.base_modules) | {str(template.module_id)}))
+    modules = tuple(sorted(candidate_module_ids))
     return CandidateEval(
         candidate=candidate,
         template=template,
@@ -1172,6 +1323,7 @@ def _generate_candidate_evals(
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
+    module_map: Mapping[str, BackendModule],
 ) -> list[CandidateEval]:
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
     param_map = {str(param.name): param for param in list(spec.params or ())}
@@ -1217,6 +1369,7 @@ def _generate_candidate_evals(
                     shape_bindings=shape_bindings,
                     source_oracle=source_oracle,
                     hardware_model=hardware_model,
+                    module_map=module_map,
                 )
             )
     out.sort(key=lambda item: (-float(item.score), str(item.candidate.kernel_kind), sorted(dict(item.candidate.bindings or {}).items())))
@@ -1824,6 +1977,7 @@ def plan_cuda_kernel(
         shape_bindings=shape_bindings,
         source_oracle=source_oracle,
         hardware_model=hardware_model,
+        module_map={str(module.id): module for module in list(modules or [])},
     )
     limit = max(1, int(budget))
     ranked = list(ranked[:limit])
