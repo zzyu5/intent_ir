@@ -1642,9 +1642,25 @@ def _shape_from_tensor(intent: IntentFunction, tensor_name: str, bindings: Dict[
             continue
         if getattr(d, "kind", None) == "sym":
             sym = str(getattr(d, "value"))
-            if sym not in bindings:
+            if sym in bindings:
+                out.append(int(bindings[sym]))
+                continue
+            try:
+                out.append(int(eval(sym, {}, dict(bindings))))
+                continue
+            except Exception:
                 raise ValueError(f"unbound symbolic dim in tensor shape: {tensor_name}.{sym}")
-            out.append(int(bindings[sym]))
+        if isinstance(d, str):
+            if d in bindings:
+                out.append(int(bindings[d]))
+                continue
+            try:
+                out.append(int(eval(d, {}, dict(bindings))))
+                continue
+            except Exception:
+                raise ValueError(f"unbound symbolic dim in tensor shape: {tensor_name}.{d}")
+        if isinstance(d, (int, float)):
+            out.append(int(d))
             continue
         raise ValueError(f"invalid dim kind for {tensor_name}: {d}")
     return tuple(out)

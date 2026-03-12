@@ -404,7 +404,9 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
         repairs.append("liger_rope_view_repair_v1")
         return repaired, repairs
 
-    if (not shapes) and (not has_dense_distribution_target) and {"BT", "V"} <= set(canonical_shapes):
+    canonical_keys = set(canonical_shapes)
+    allow_plain_ce_prefill = canonical_keys.issubset({"BT", "V"}) and {"BT", "V"} <= canonical_keys
+    if (not shapes) and (not has_dense_distribution_target) and allow_plain_ce_prefill:
         shapes = {
             "input": (int(canonical_shapes["BT"]), int(canonical_shapes["V"])),
             "target": (int(canonical_shapes["BT"]),),

@@ -440,6 +440,16 @@ def _with_io_aliases(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> D
             candidates = [k for k in ref_io.keys() if norm and (norm in _normalize_io_name(k))]
             if len(candidates) == 1:
                 out[name] = ref_io[candidates[0]]
+                continue
+            reverse_candidates = [
+                k
+                for k in ref_io.keys()
+                if norm
+                and len(_normalize_io_name(k)) >= 3
+                and (_normalize_io_name(k) in norm)
+            ]
+            if len(reverse_candidates) == 1:
+                out[name] = ref_io[reverse_candidates[0]]
     return out
 
 
@@ -623,22 +633,38 @@ def _numel(shape):
     return n
 
 
+def _resolve_dim_value(dim: Any, bindings: Dict[str, int]) -> int | None:
+    if hasattr(dim, "kind") and getattr(dim, "kind") == "sym":
+        raw = getattr(dim, "value")
+        if raw in bindings:
+            return int(bindings[raw])
+        if isinstance(raw, str):
+            try:
+                return int(eval(raw, {}, dict(bindings)))
+            except Exception:
+                return None
+        return None
+    if hasattr(dim, "kind") and getattr(dim, "kind") == "const":
+        return int(dim.value)
+    if isinstance(dim, str):
+        if dim in bindings:
+            return int(bindings[dim])
+        try:
+            return int(eval(dim, {}, dict(bindings)))
+        except Exception:
+            return None
+    if isinstance(dim, (int, float)):
+        return int(dim)
+    return None
+
+
 def _resolve_tensor_shape(tensor, bindings: Dict[str, int]):
     shape = []
     for d in tensor.shape:
-        if hasattr(d, "kind") and getattr(d, "kind") == "sym":
-            val = bindings.get(d.value)
-            if val is None:
-                return None
-            shape.append(val)
-        elif hasattr(d, "kind") and getattr(d, "kind") == "const":
-            shape.append(int(d.value))
-        elif isinstance(d, str) and d in bindings:
-            shape.append(bindings[d])
-        elif isinstance(d, (int, float)):
-            shape.append(int(d))
-        else:
+        val = _resolve_dim_value(d, bindings)
+        if val is None:
             return None
+        shape.append(val)
     return tuple(shape)
 
 

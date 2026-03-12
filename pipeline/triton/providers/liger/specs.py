@@ -477,6 +477,8 @@ def _fused_linear_cross_entropy_runner(case: TestCase) -> Dict[str, np.ndarray]:
     v = int(case.shapes["V"])
     x = _torch_randn((bt, h), seed=int(case.seed) + 37)
     w = _torch_randn((v, h), seed=int(case.seed) + 38)
+    bias = torch.zeros((v,), device="cuda", dtype=torch.float32)
+    ce_weight = torch.ones((v,), device="cuda", dtype=torch.float32)
     target = _torch_randint(v, (bt,), seed=int(case.seed) + 39)
     x_in = x.clone()
     w_in = w.clone()
@@ -498,8 +500,12 @@ def _fused_linear_cross_entropy_runner(case: TestCase) -> Dict[str, np.ndarray]:
     return {
         "input": _to_np(x_in),
         "weight": _to_np(w_in),
+        "bias": _to_np(bias),
+        "ce_weight": _to_np(ce_weight),
         "target": _to_np(target_in),
         "ignore_index": np.array(-100, dtype=np.int64),
+        "lse_square_scale": np.array(0.0, dtype=np.float32),
+        "label_smoothing": np.array(0.0, dtype=np.float32),
         "loss": _to_np(loss),
     }
 
@@ -508,9 +514,9 @@ def _fused_linear_jsd_runner(case: TestCase) -> Dict[str, np.ndarray]:
     bt = int(case.shapes["BT"])
     h = int(case.shapes["H"])
     v = int(case.shapes["V"])
-    student_input = _torch_randn((bt, h // 2), seed=int(case.seed) + 40)
+    student_input = _torch_randn((bt, h), seed=int(case.seed) + 40)
     teacher_input = _torch_randn((bt, h), seed=int(case.seed) + 41)
-    student_weight = _torch_randn((v, h // 2), seed=int(case.seed) + 42)
+    student_weight = _torch_randn((v, h), seed=int(case.seed) + 42)
     teacher_weight = _torch_randn((v, h), seed=int(case.seed) + 43)
     shift_labels = _torch_randint(v, (bt,), seed=int(case.seed) + 44)
     loss = liger_fused_linear_jsd(
@@ -543,6 +549,7 @@ def _fused_neighborhood_attention_runner(case: TestCase) -> Dict[str, np.ndarray
     hd = int(case.shapes["HD"])
     kernel_size = int(case.shapes.get("kernel_size", 7))
     dilation = int(case.shapes.get("dilation", 1))
+    scale = np.array(1.0 / np.sqrt(float(max(1, hd))), dtype=np.float32)
     query = _torch_randn((b, qh, s, hd), seed=int(case.seed) + 45)
     key = _torch_randn((b, qh, s, hd), seed=int(case.seed) + 46)
     value = _torch_randn((b, qh, s, hd), seed=int(case.seed) + 47)
@@ -554,6 +561,7 @@ def _fused_neighborhood_attention_runner(case: TestCase) -> Dict[str, np.ndarray
         "value": _to_np(value),
         "kernel_size": np.array(kernel_size, dtype=np.int32),
         "dilation": np.array(dilation, dtype=np.int32),
+        "scale": scale,
         "Y": _to_np(y),
     }
 
@@ -568,6 +576,10 @@ def _grpo_loss_runner(case: TestCase) -> Dict[str, np.ndarray]:
     completion_ids = _torch_randint(v, (b, t), seed=int(case.seed) + 51)
     advantages = _torch_randn((b,), seed=int(case.seed) + 52)
     completion_mask = torch.ones((b, t), device="cuda", dtype=torch.float32)
+    temperature = np.array(0.9, dtype=np.float32)
+    beta = np.array(0.04, dtype=np.float32)
+    eps_low = np.array(0.2, dtype=np.float32)
+    eps_high = np.array(0.4, dtype=np.float32)
     loss, metrics = triton_grpo_loss(
         logits,
         old_logp,
@@ -575,10 +587,10 @@ def _grpo_loss_runner(case: TestCase) -> Dict[str, np.ndarray]:
         completion_ids,
         advantages,
         completion_mask,
-        temperature=0.9,
-        beta=0.04,
-        eps_low=0.2,
-        eps_high=0.4,
+        temperature=float(temperature),
+        beta=float(beta),
+        eps_low=float(eps_low),
+        eps_high=float(eps_high),
         inplace=True,
         loss_type="dapo",
         importance_sampling_level="token",
@@ -593,6 +605,10 @@ def _grpo_loss_runner(case: TestCase) -> Dict[str, np.ndarray]:
         "completion_ids": _to_np(completion_ids),
         "advantages": _to_np(advantages),
         "completion_mask": _to_np(completion_mask),
+        "temperature": temperature,
+        "beta": beta,
+        "eps_low": eps_low,
+        "eps_high": eps_high,
         "loss": _to_np(loss),
         "metrics": metrics_arr,
     }
