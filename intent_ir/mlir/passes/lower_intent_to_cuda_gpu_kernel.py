@@ -395,6 +395,7 @@ def lower_intent_to_cuda_gpu_kernel(
     bindings: dict[str, Any] = {str(k): v for k, v in dict(bindings_raw).items() if str(k).strip()}
 
     early_cfg_masked_row_reduce_v1: dict[str, Any] | None = None
+    early_fused_linear_jsd_row_reduce_v1: dict[str, Any] | None = None
     early_tvd_row_reduce_v1: dict[str, Any] | None = None
     early_cuda_io_spec_patch: dict[str, Any] | None = None
     op_names_early = tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
@@ -494,8 +495,19 @@ def lower_intent_to_cuda_gpu_kernel(
             and len(list(getattr(out_tt0, "shape", []) or [])) == 0
         ):
             bt_dim0 = _resolve_dim_int(list(getattr(input_tt0, "shape", []) or [None])[0], bindings)
-            v_dim0 = _resolve_dim_int(list(getattr(input_tt0, "shape", []) or [None, None])[1], bindings)
+            input_dim1 = _resolve_dim_int(list(getattr(input_tt0, "shape", []) or [None, None])[1], bindings)
             target_bt0 = _resolve_dim_int(list(getattr(target_tt0, "shape", []) or [None])[0], bindings)
+            v_dim0 = input_dim1
+            h_dim0 = input_dim1
+            weight_tt0 = (intent.tensors or {}).get("weight") if fused_linear_ce_pattern_ok else None
+            weight_shape0 = list(getattr(weight_tt0, "shape", []) or []) if weight_tt0 is not None else []
+            if fused_linear_ce_pattern_ok:
+                weight_v0 = _resolve_dim_int(weight_shape0[0], bindings) if len(weight_shape0) >= 1 else None
+                weight_h0 = _resolve_dim_int(weight_shape0[1], bindings) if len(weight_shape0) >= 2 else None
+                if weight_v0 is not None:
+                    v_dim0 = weight_v0
+                if weight_h0 is not None:
+                    h_dim0 = weight_h0
             if (
                 bt_dim0 is not None
                 and v_dim0 is not None
@@ -525,19 +537,14 @@ def lower_intent_to_cuda_gpu_kernel(
                     "target_dtype": str(getattr(target_tt0, "dtype", "")),
                 }
                 if fused_linear_ce_pattern_ok:
-                    weight_tt0 = (intent.tensors or {}).get("weight")
-                    weight_shape0 = list(getattr(weight_tt0, "shape", []) or []) if weight_tt0 is not None else []
-                    h_dim0 = _resolve_dim_int(list(getattr(input_tt0, "shape", []) or [None, None])[1], bindings)
-                    weight_v0 = _resolve_dim_int(weight_shape0[0], bindings) if len(weight_shape0) >= 1 else None
-                    weight_h0 = _resolve_dim_int(weight_shape0[1], bindings) if len(weight_shape0) >= 2 else None
                     if (
                         weight_tt0 is None
                         or len(weight_shape0) != 2
-                        or h_dim0 is None
                         or weight_v0 is None
                         or weight_h0 is None
-                        or int(weight_v0) != int(v_dim0)
-                        or int(weight_h0) != int(h_dim0)
+                        or h_dim0 is None
+                        or v_dim0 is None
+                        or int(h_dim0) != int(input_dim1 or -1)
                         or str(getattr(weight_tt0, "dtype", "")) != "f32"
                     ):
                         raise RuntimeError(
@@ -564,6 +571,162 @@ def lower_intent_to_cuda_gpu_kernel(
                         }
                     },
                 }
+        fused_linear_jsd_pattern_ok = op_names_early == (
+            "const",
+            "const",
+            "const",
+            "const",
+            "matmul",
+            "matmul",
+            "div",
+            "div",
+            "reduce_max",
+            "sub",
+            "exp",
+            "reduce_sum",
+            "div",
+            "reduce_max",
+            "sub",
+            "exp",
+            "reduce_sum",
+            "div",
+            "log",
+            "log",
+            "mul",
+            "sub",
+            "mul",
+            "add",
+            "log",
+            "mul",
+            "mul",
+            "mul",
+            "add",
+            "sub",
+            "ne",
+            "cast",
+            "reduce_sum",
+            "div",
+            "mul",
+            "where",
+            "reduce_sum",
+            "reduce_sum",
+        )
+        if (
+            early_cfg_masked_row_reduce_v1 is None
+            and fused_linear_jsd_pattern_ok
+            and len(list(intent.outputs or [])) == 1
+            and out_tt0 is not None
+            and str(getattr(out_tt0, "dtype", "")) == "f32"
+        ):
+            const_by_output = {
+                str(getattr(op0, "output", "")).strip(): dict(getattr(op0, "attrs", {}) or {})
+                for op0 in list(intent.ops or [])
+                if str(getattr(op0, "op", "")).strip() == "const"
+                and str(getattr(op0, "output", "")).strip()
+            }
+            s_in_tt = (intent.tensors or {}).get("student_input")
+            s_w_tt = (intent.tensors or {}).get("student_weight")
+            t_in_tt = (intent.tensors or {}).get("teacher_input")
+            t_w_tt = (intent.tensors or {}).get("teacher_weight")
+            shift_tt = (intent.tensors or {}).get("shift_labels")
+            ignore_tt = (intent.tensors or {}).get("ignore_index")
+            temp_tt = (intent.tensors or {}).get("temperature")
+            beta_tt = (intent.tensors or {}).get("jsd_beta")
+            ignore_const_attrs = const_by_output.get("ignore_index", {})
+            beta_const_attrs = const_by_output.get("jsd_beta", {})
+            one_const_attrs = const_by_output.get("one", {})
+            ignore_const_value = ignore_const_attrs.get("value")
+            beta_const_value = beta_const_attrs.get("value")
+            temp_const_value = one_const_attrs.get("value", 1.0)
+            if (
+                s_in_tt is not None
+                and s_w_tt is not None
+                and t_in_tt is not None
+                and t_w_tt is not None
+                and shift_tt is not None
+                and ignore_tt is not None
+                and beta_tt is not None
+            ):
+                s_in_shape = list(getattr(s_in_tt, "shape", []) or [])
+                s_w_shape = list(getattr(s_w_tt, "shape", []) or [])
+                t_in_shape = list(getattr(t_in_tt, "shape", []) or [])
+                t_w_shape = list(getattr(t_w_tt, "shape", []) or [])
+                shift_shape = list(getattr(shift_tt, "shape", []) or [])
+                bt_dim0 = _resolve_dim_int(s_in_shape[0], bindings) if len(s_in_shape) >= 1 else None
+                h_dim0 = _resolve_dim_int(s_in_shape[1], bindings) if len(s_in_shape) >= 2 else None
+                v_dim0 = _resolve_dim_int(s_w_shape[0], bindings) if len(s_w_shape) >= 1 else None
+                s_w_h0 = _resolve_dim_int(s_w_shape[1], bindings) if len(s_w_shape) >= 2 else None
+                t_bt0 = _resolve_dim_int(t_in_shape[0], bindings) if len(t_in_shape) >= 1 else None
+                t_h0 = _resolve_dim_int(t_in_shape[1], bindings) if len(t_in_shape) >= 2 else None
+                t_v0 = _resolve_dim_int(t_w_shape[0], bindings) if len(t_w_shape) >= 1 else None
+                t_w_h0 = _resolve_dim_int(t_w_shape[1], bindings) if len(t_w_shape) >= 2 else None
+                shift_bt0 = _resolve_dim_int(shift_shape[0], bindings) if len(shift_shape) >= 1 else None
+                if (
+                    bt_dim0 is not None
+                    and h_dim0 is not None
+                    and v_dim0 is not None
+                    and s_w_h0 is not None
+                    and t_bt0 is not None
+                    and t_h0 is not None
+                    and t_v0 is not None
+                    and t_w_h0 is not None
+                    and shift_bt0 is not None
+                    and int(bt_dim0) == int(t_bt0) == int(shift_bt0)
+                    and int(h_dim0) == int(s_w_h0) == int(t_h0) == int(t_w_h0)
+                    and int(v_dim0) == int(t_v0)
+                    and str(getattr(s_in_tt, "dtype", "")) == "f32"
+                    and str(getattr(s_w_tt, "dtype", "")) == "f32"
+                    and str(getattr(t_in_tt, "dtype", "")) == "f32"
+                    and str(getattr(t_w_tt, "dtype", "")) == "f32"
+                    and str(getattr(shift_tt, "dtype", "")) in {"i32", "i64"}
+                    and str(getattr(ignore_tt, "dtype", "")) in {"i32", "i64"}
+                    and str(getattr(beta_tt, "dtype", "")) == "f32"
+                ):
+                    row_dim0 = copy.deepcopy(s_in_shape[0])
+                    intent.tensors[str(out_name0)] = TensorType(
+                        dtype="f32",
+                        shape=[row_dim0],
+                        layout=copy.deepcopy(getattr(out_tt0, "layout", None)),
+                        view_of=str(getattr(out_tt0, "view_of", "")),
+                        alias_group=str(getattr(out_tt0, "alias_group", "")),
+                        meta=dict(getattr(out_tt0, "meta", {}) or {}),
+                    )
+                    early_fused_linear_jsd_row_reduce_v1 = {
+                        "student_input": "student_input",
+                        "student_weight": "student_weight",
+                        "teacher_input": "teacher_input",
+                        "teacher_weight": "teacher_weight",
+                        "target": "shift_labels",
+                        "ignore_index": "ignore_index",
+                        "temperature": "temperature",
+                        "beta": "jsd_beta",
+                        "ignore_const_value": ignore_const_value,
+                        "beta_const_value": beta_const_value,
+                        "temperature_const_value": temp_const_value,
+                        "loss": out_name0,
+                        "BT": int(bt_dim0),
+                        "H": int(h_dim0),
+                        "V": int(v_dim0),
+                        "target_dtype": str(getattr(shift_tt, "dtype", "")),
+                    }
+                    early_cuda_io_spec_patch = {
+                        "tensors": {
+                            str(out_name0): {
+                                "dtype": "f32",
+                                "shape": [_dim_to_json_like(row_dim0)],
+                                "layout": str(getattr(getattr(out_tt0, "layout", None), "kind", "row_major")),
+                            }
+                        },
+                        "logical_outputs": [str(out_name0)],
+                        "output_postprocess": {
+                            str(out_name0): {
+                                "op": "masked_row_mean",
+                                "source": str(out_name0),
+                                "target": "shift_labels",
+                                "ignore_index": "ignore_index",
+                            }
+                        },
+                    }
         tvd_pattern_ok = op_names_early == (
             "const",
             "const",
@@ -9352,6 +9515,208 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          memref.store %out_i8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
+    elif early_fused_linear_jsd_row_reduce_v1 is not None:
+        kernel_kind = "cfg_masked_row_reduce_v1"
+        jsd_struct = dict(early_fused_linear_jsd_row_reduce_v1)
+        s_in_name = str(jsd_struct["student_input"])
+        s_w_name = str(jsd_struct["student_weight"])
+        t_in_name = str(jsd_struct["teacher_input"])
+        t_w_name = str(jsd_struct["teacher_weight"])
+        target_name = str(jsd_struct["target"])
+        ignore_name = str(jsd_struct["ignore_index"])
+        temp_name = str(jsd_struct["temperature"])
+        beta_name = str(jsd_struct["beta"])
+        ignore_const_value = jsd_struct.get("ignore_const_value")
+        beta_const_value = jsd_struct.get("beta_const_value")
+        temp_const_value = jsd_struct.get("temperature_const_value", 1.0)
+        out_name2 = str(jsd_struct["loss"])
+        bt_dim = int(jsd_struct["BT"])
+        h_dim = int(jsd_struct["H"])
+        v_dim = int(jsd_struct["V"])
+        target_dtype = str(jsd_struct.get("target_dtype") or "i64")
+        block_threads = int(bindings.get("CFG_ROW_BLOCK_THREADS") or 256)
+        vector_width = int(bindings.get("CFG_ROW_VECTOR_WIDTH") or 1)
+        if block_threads not in {128, 256, 512, 1024}:
+            raise RuntimeError(
+                f"cfg_masked_row_reduce_v1 requires CFG_ROW_BLOCK_THREADS in {{128,256,512,1024}}; got {block_threads}"
+            )
+        if vector_width not in {1, 2, 4}:
+            raise RuntimeError(
+                f"cfg_masked_row_reduce_v1 requires CFG_ROW_VECTOR_WIDTH in {{1,2,4}}; got {vector_width}"
+            )
+        for nm in (s_in_name, s_w_name, t_in_name, t_w_name):
+            if str(arg_specs[nm].get("memref_elem_ty")) != "f32":
+                raise RuntimeError(f"fused linear JSD lowering expects f32 tensor: {nm}")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("fused linear JSD lowering expects f32 output tensor")
+        if str(arg_specs[target_name].get("memref_elem_ty")) not in {"i32", "i64"}:
+            raise RuntimeError("fused linear JSD lowering expects integer target tensor")
+        if ignore_name in arg_specs and str(arg_specs[ignore_name].get("memref_elem_ty")) != str(arg_specs[target_name].get("memref_elem_ty")):
+            raise RuntimeError("fused linear JSD lowering expects matching target/ignore_index dtype")
+        if temp_name in arg_specs and str(arg_specs[temp_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("fused linear JSD lowering expects f32 temperature tensor")
+        if beta_name in arg_specs and str(arg_specs[beta_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("fused linear JSD lowering expects f32 beta tensor")
+
+        s_in_memref = str(arg_specs[s_in_name]["memref"])
+        s_w_memref = str(arg_specs[s_w_name]["memref"])
+        t_in_memref = str(arg_specs[t_in_name]["memref"])
+        t_w_memref = str(arg_specs[t_w_name]["memref"])
+        target_memref = str(arg_specs[target_name]["memref"])
+        ignore_memref = str(arg_specs[ignore_name]["memref"]) if ignore_name in arg_specs else ""
+        temp_memref = str(arg_specs[temp_name]["memref"]) if temp_name in arg_specs else ""
+        beta_memref = str(arg_specs[beta_name]["memref"]) if beta_name in arg_specs else ""
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(bt_dim), 1, 1]}
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cBT = arith.constant {int(bt_dim)} : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cV = arith.constant {int(v_dim)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %ceps = arith.constant 1.17549435E-38 : f32")
+        lines.append("      %neg_inf = arith.constant -3.40282347E+38 : f32")
+        ignore_literal = int(ignore_const_value if ignore_const_value is not None else -100)
+        if target_dtype == "i32":
+            lines.append(f"      %cignore = arith.constant {ignore_literal} : i32")
+        else:
+            lines.append(f"      %cignore = arith.constant {ignore_literal} : i64")
+        beta_literal = float(beta_const_value if beta_const_value is not None else 0.5)
+        temp_literal = float(temp_const_value if temp_const_value is not None else 1.0)
+        lines.append(f"      %cbeta = arith.constant {_as_f32_const(beta_literal)} : f32")
+        lines.append(f"      %ctemp = arith.constant {_as_f32_const(temp_literal)} : f32")
+        ignore_raw_ssa = "%ignore_raw" if ignore_name in arg_specs else "%cignore"
+        temp_ssa = "%temp" if temp_name in arg_specs else "%ctemp"
+        beta_ssa = "%beta" if beta_name in arg_specs else "%cbeta"
+        lines.append("      %is_tid0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cBT : index")
+        lines.append("      scf.if %pred_row {")
+        if ignore_name in arg_specs:
+            lines.append(f"        %ignore_raw = memref.load {arg_ssa[ignore_name]}[%c0] : {ignore_memref}")
+        lines.append(f"        %target_raw = memref.load {arg_ssa[target_name]}[%bid] : {target_memref}")
+        lines.append(f"        %skip = arith.cmpi eq, %target_raw, {ignore_raw_ssa} : {target_dtype}")
+        lines.append("        scf.if %skip {")
+        lines.append("          scf.if %is_tid0 {")
+        lines.append(f"            memref.store %c0f, {arg_ssa[out_name2]}[%bid] : {out_memref}")
+        lines.append("          }")
+        lines.append("        } else {")
+        lines.append("          scf.if %is_tid0 {")
+        if temp_name in arg_specs:
+            lines.append(f"            %temp = memref.load {arg_ssa[temp_name]}[%c0] : {temp_memref}")
+        if beta_name in arg_specs:
+            lines.append(f"            %beta = memref.load {arg_ssa[beta_name]}[%c0] : {beta_memref}")
+        lines.append(f"            %one_minus_beta = arith.subf %c1f, {beta_ssa} : f32")
+        lines.append("            %row_s_base = arith.muli %bid, %cH : index")
+        lines.append("            %row_t_base = arith.muli %bid, %cH : index")
+        lines.append("            %student_max, %teacher_max = scf.for %j = %c0 to %cV step %c1 iter_args(%smax = %neg_inf, %tmax = %neg_inf) -> (f32, f32) {")
+        lines.append("              %w_row = arith.muli %j, %cH : index")
+        lines.append("              %s_dot = scf.for %kh = %c0 to %cH step %c1 iter_args(%acc = %c0f) -> (f32) {")
+        lines.append("                %a_idx = arith.addi %row_s_base, %kh : index")
+        lines.append("                %w_idx = arith.addi %w_row, %kh : index")
+        lines.append(f"                %a = memref.load {arg_ssa[s_in_name]}[%a_idx] : {s_in_memref}")
+        lines.append(f"                %b = memref.load {arg_ssa[s_w_name]}[%w_idx] : {s_w_memref}")
+        lines.append("                %p = arith.mulf %a, %b : f32")
+        lines.append("                %acc_next = arith.addf %acc, %p : f32")
+        lines.append("                scf.yield %acc_next : f32")
+        lines.append("              }")
+        lines.append("              %t_dot = scf.for %kh2 = %c0 to %cH step %c1 iter_args(%acc2 = %c0f) -> (f32) {")
+        lines.append("                %a_idx2 = arith.addi %row_t_base, %kh2 : index")
+        lines.append("                %w_idx2 = arith.addi %w_row, %kh2 : index")
+        lines.append(f"                %a2 = memref.load {arg_ssa[t_in_name]}[%a_idx2] : {t_in_memref}")
+        lines.append(f"                %b2 = memref.load {arg_ssa[t_w_name]}[%w_idx2] : {t_w_memref}")
+        lines.append("                %p2 = arith.mulf %a2, %b2 : f32")
+        lines.append("                %acc2_next = arith.addf %acc2, %p2 : f32")
+        lines.append("                scf.yield %acc2_next : f32")
+        lines.append("              }")
+        lines.append(f"              %s_scaled = arith.divf %s_dot, {temp_ssa} : f32")
+        lines.append(f"              %t_scaled = arith.divf %t_dot, {temp_ssa} : f32")
+        lines.append("              %smax_next = arith.maximumf %smax, %s_scaled : f32")
+        lines.append("              %tmax_next = arith.maximumf %tmax, %t_scaled : f32")
+        lines.append("              scf.yield %smax_next, %tmax_next : f32, f32")
+        lines.append("            }")
+        lines.append("            %student_sumexp, %teacher_sumexp = scf.for %j2 = %c0 to %cV step %c1 iter_args(%ssum = %c0f, %tsum = %c0f) -> (f32, f32) {")
+        lines.append("              %w_row2 = arith.muli %j2, %cH : index")
+        lines.append("              %s_dot2 = scf.for %kh3 = %c0 to %cH step %c1 iter_args(%acc3 = %c0f) -> (f32) {")
+        lines.append("                %a_idx3 = arith.addi %row_s_base, %kh3 : index")
+        lines.append("                %w_idx3 = arith.addi %w_row2, %kh3 : index")
+        lines.append(f"                %a3 = memref.load {arg_ssa[s_in_name]}[%a_idx3] : {s_in_memref}")
+        lines.append(f"                %b3 = memref.load {arg_ssa[s_w_name]}[%w_idx3] : {s_w_memref}")
+        lines.append("                %p3 = arith.mulf %a3, %b3 : f32")
+        lines.append("                %acc3_next = arith.addf %acc3, %p3 : f32")
+        lines.append("                scf.yield %acc3_next : f32")
+        lines.append("              }")
+        lines.append("              %t_dot2 = scf.for %kh4 = %c0 to %cH step %c1 iter_args(%acc4 = %c0f) -> (f32) {")
+        lines.append("                %a_idx4 = arith.addi %row_t_base, %kh4 : index")
+        lines.append("                %w_idx4 = arith.addi %w_row2, %kh4 : index")
+        lines.append(f"                %a4 = memref.load {arg_ssa[t_in_name]}[%a_idx4] : {t_in_memref}")
+        lines.append(f"                %b4 = memref.load {arg_ssa[t_w_name]}[%w_idx4] : {t_w_memref}")
+        lines.append("                %p4 = arith.mulf %a4, %b4 : f32")
+        lines.append("                %acc4_next = arith.addf %acc4, %p4 : f32")
+        lines.append("                scf.yield %acc4_next : f32")
+        lines.append("              }")
+        lines.append(f"              %s_scaled2 = arith.divf %s_dot2, {temp_ssa} : f32")
+        lines.append(f"              %t_scaled2 = arith.divf %t_dot2, {temp_ssa} : f32")
+        lines.append("              %s_centered = arith.subf %s_scaled2, %student_max : f32")
+        lines.append("              %t_centered = arith.subf %t_scaled2, %teacher_max : f32")
+        lines.append("              %s_exp = math.exp %s_centered : f32")
+        lines.append("              %t_exp = math.exp %t_centered : f32")
+        lines.append("              %ssum_next = arith.addf %ssum, %s_exp : f32")
+        lines.append("              %tsum_next = arith.addf %tsum, %t_exp : f32")
+        lines.append("              scf.yield %ssum_next, %tsum_next : f32, f32")
+        lines.append("            }")
+        lines.append("            %student_sumexp_safe = arith.maximumf %student_sumexp, %ceps : f32")
+        lines.append("            %teacher_sumexp_safe = arith.maximumf %teacher_sumexp, %ceps : f32")
+        lines.append("            %student_logsum = math.log %student_sumexp_safe : f32")
+        lines.append("            %teacher_logsum = math.log %teacher_sumexp_safe : f32")
+        lines.append("            %student_lse = arith.addf %student_max, %student_logsum : f32")
+        lines.append("            %teacher_lse = arith.addf %teacher_max, %teacher_logsum : f32")
+        lines.append("            %row_loss = scf.for %j3 = %c0 to %cV step %c1 iter_args(%acc5 = %c0f) -> (f32) {")
+        lines.append("              %w_row3 = arith.muli %j3, %cH : index")
+        lines.append("              %s_dot3 = scf.for %kh5 = %c0 to %cH step %c1 iter_args(%acc6 = %c0f) -> (f32) {")
+        lines.append("                %a_idx5 = arith.addi %row_s_base, %kh5 : index")
+        lines.append("                %w_idx5 = arith.addi %w_row3, %kh5 : index")
+        lines.append(f"                %a5 = memref.load {arg_ssa[s_in_name]}[%a_idx5] : {s_in_memref}")
+        lines.append(f"                %b5 = memref.load {arg_ssa[s_w_name]}[%w_idx5] : {s_w_memref}")
+        lines.append("                %p5 = arith.mulf %a5, %b5 : f32")
+        lines.append("                %acc6_next = arith.addf %acc6, %p5 : f32")
+        lines.append("                scf.yield %acc6_next : f32")
+        lines.append("              }")
+        lines.append("              %t_dot3 = scf.for %kh6 = %c0 to %cH step %c1 iter_args(%acc7 = %c0f) -> (f32) {")
+        lines.append("                %a_idx6 = arith.addi %row_t_base, %kh6 : index")
+        lines.append("                %w_idx6 = arith.addi %w_row3, %kh6 : index")
+        lines.append(f"                %a6 = memref.load {arg_ssa[t_in_name]}[%a_idx6] : {t_in_memref}")
+        lines.append(f"                %b6 = memref.load {arg_ssa[t_w_name]}[%w_idx6] : {t_w_memref}")
+        lines.append("                %p6 = arith.mulf %a6, %b6 : f32")
+        lines.append("                %acc7_next = arith.addf %acc7, %p6 : f32")
+        lines.append("                scf.yield %acc7_next : f32")
+        lines.append("              }")
+        lines.append(f"              %s_scaled3 = arith.divf %s_dot3, {temp_ssa} : f32")
+        lines.append(f"              %t_scaled3 = arith.divf %t_dot3, {temp_ssa} : f32")
+        lines.append("              %student_logp = arith.subf %s_scaled3, %student_lse : f32")
+        lines.append("              %teacher_logp = arith.subf %t_scaled3, %teacher_lse : f32")
+        lines.append("              %student_prob = math.exp %student_logp : f32")
+        lines.append("              %teacher_prob = math.exp %teacher_logp : f32")
+        lines.append(f"              %beta_p = arith.mulf {beta_ssa}, %teacher_prob : f32")
+        lines.append("              %one_minus_beta_q = arith.mulf %one_minus_beta, %student_prob : f32")
+        lines.append("              %mix = arith.addf %beta_p, %one_minus_beta_q : f32")
+        lines.append("              %mix_safe = arith.maximumf %mix, %ceps : f32")
+        lines.append("              %mix_log = math.log %mix_safe : f32")
+        lines.append("              %term1 = arith.mulf %beta_p, %teacher_logp : f32")
+        lines.append("              %term2 = arith.mulf %one_minus_beta_q, %student_logp : f32")
+        lines.append("              %term12 = arith.addf %term1, %term2 : f32")
+        lines.append("              %term3 = arith.mulf %mix_safe, %mix_log : f32")
+        lines.append("              %elem = arith.subf %term12, %term3 : f32")
+        lines.append("              %acc5_next = arith.addf %acc5, %elem : f32")
+        lines.append("              scf.yield %acc5_next : f32")
+        lines.append("            }")
+        lines.append(f"            memref.store %row_loss, {arg_ssa[out_name2]}[%bid] : {out_memref}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("      }")
     elif (
         cross_entropy_loss_v1 is not None
         or early_cfg_masked_row_reduce_v1 is not None
@@ -9541,7 +9906,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"                {acc_next} = arith.addf %acc, {prod} : f32")
                 lines.append(f"                scf.yield {acc_next} : f32")
                 lines.append("              }")
-                lines.append(f"              {x_loaded} = {k_acc}")
+                x_loaded = k_acc
             else:
                 idx = _fresh("cfg_idx")
                 lines.append(f"              {idx} = arith.addi %row_base, {col} : index")
@@ -9662,7 +10027,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 lines.append(f"                {acc_next} = arith.addf %acc2, {prod} : f32")
                 lines.append(f"                scf.yield {acc_next} : f32")
                 lines.append("              }")
-                lines.append(f"              {x_loaded} = {k_acc}")
+                x_loaded = k_acc
             else:
                 idx = _fresh("cfg_sum_idx")
                 lines.append(f"              {idx} = arith.addi %row_base, {col} : index")

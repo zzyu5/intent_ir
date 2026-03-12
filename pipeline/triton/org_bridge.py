@@ -193,6 +193,8 @@ def _run_inline_compile_check(
     backend_target: str | None,
     intent: IntentFunction,
     shape_bindings: Mapping[str, int],
+    kernel_kind: str = "",
+    candidate_bindings: Mapping[str, int] | None = None,
     env_updates: Mapping[str, str],
 ) -> tuple[bool, dict[str, Any], str]:
     report: dict[str, Any] = {"kernel": str(spec_name), "mlir": {}}
@@ -202,6 +204,35 @@ def _run_inline_compile_check(
         for key, value in dict(env_updates or {}).items():
             os.environ[str(key)] = str(value)
         intent_copy = IntentFunction.from_json_dict(intent.to_json_dict())
+        intent_copy.meta = dict(getattr(intent_copy, "meta", {}) or {})
+        intent_copy.meta.setdefault("kernel", str(spec_name))
+        intent_copy.meta.setdefault("spec_name", str(spec_name))
+        merged_shape_bindings = {
+            str(k): int(v)
+            for k, v in dict(shape_bindings or {}).items()
+            if str(k).strip()
+        }
+        for key, value in dict(candidate_bindings or {}).items():
+            key_s = str(key).strip()
+            if not key_s:
+                continue
+            try:
+                merged_shape_bindings[key_s] = int(value)
+            except Exception:
+                continue
+        if merged_shape_bindings:
+            intent_copy.meta["shape_bindings"] = dict(merged_shape_bindings)
+        kernel_kind_s = str(kernel_kind or "").strip()
+        if kernel_kind_s and kernel_kind_s != "generic_fallback_v1":
+            intent_copy.meta["intentir_kernel_kind_override"] = kernel_kind_s
+            intent_copy.meta["intentir_org_compile_check_candidate"] = {
+                "kernel_kind": kernel_kind_s,
+                "bindings": {
+                    str(k): int(v)
+                    for k, v in dict(candidate_bindings or {}).items()
+                    if str(k).strip()
+                },
+            }
         _emit_mlir_shadow_artifacts(
             spec_name=str(spec_name),
             out_dir=Path(cand_dir),
@@ -270,6 +301,8 @@ def _run_compile_check_candidates(
             backend_target=backend_target,
             intent=intent,
             shape_bindings=shape_bindings,
+            kernel_kind=str(kernel_kind),
+            candidate_bindings=dict(bindings or {}),
             env_updates=env_updates,
         )
         contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
