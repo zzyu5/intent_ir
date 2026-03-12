@@ -1087,6 +1087,60 @@ def cross_entropy_loss_catalog(hardware_model: HardwareModel) -> tuple[list[Back
     return cfg_masked_row_reduce_catalog(hardware_model)
 
 
+def tvd_loss2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    del hardware_model
+    modules = [
+        BackendModule(
+            id="tvd_input_resident",
+            kind="staging",
+            provides=["tvd.input_resident"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="tvd_abs_sub_path",
+            kind="primitive",
+            provides=["tvd.abs_sub_path"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="tvd_row_reduction",
+            kind="communication",
+            provides=["tvd.row_reduction"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="tvd_scalar_finalize",
+            kind="fusion",
+            provides=["tvd.scalar_finalize"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="tvd_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.tvd_loss2d_v1"],
+            requires=[
+                "tvd.input_resident",
+                "tvd.abs_sub_path",
+                "tvd.row_reduction",
+                "tvd.scalar_finalize",
+            ],
+            params=[],
+            constraints=[],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="tvd_backend_v1", dst="tvd_input_resident", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v1", dst="tvd_abs_sub_path", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v1", dst="tvd_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v1", dst="tvd_scalar_finalize", edge_type="uses"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
 __all__ = [
     "PASS_SEQUENCE",
     "flash_attention2d_catalog",
@@ -1101,4 +1155,5 @@ __all__ = [
     "rope_view_catalog",
     "cfg_masked_row_reduce_catalog",
     "cross_entropy_loss_catalog",
+    "tvd_loss2d_catalog",
 ]

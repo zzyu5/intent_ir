@@ -23,6 +23,7 @@ from org.mapping.cuda.module_catalog import (
     rope_view_catalog,
     row_reduction_catalog,
     row_softmax_catalog,
+    tvd_loss2d_catalog,
 )
 from org.mapping.hardware_model import HardwareModel
 from org.schema import OrgDoc, OrgTensorLifetime
@@ -512,6 +513,7 @@ def _graph_profile(
     has_weight_like = False
     has_bias_like = False
     has_scalar_param = False
+    has_scalar_output = False
     if 0 < int(row_width) <= 128:
         signal_names.add("tiny_row")
     if int(row_width) >= 16384:
@@ -661,6 +663,10 @@ def _graph_profile(
         if any(tok in role_tokens for tok in {"output_accumulator", "affine_out", "out", "output"}):
             signal_names.add("output_accumulator")
             output_ids.append(lifetime_id)
+        tensor_obj = tensor_by_id(org).get(tensor_id, None)
+        shape_refs = list(getattr(tensor_obj, "shape_refs", []) or []) if tensor_obj is not None else []
+        if not shape_refs and any(tok in role_tokens for tok in {"output", "output_accumulator", "accumulator", "loss", "scalar"}):
+            has_scalar_output = True
         if any(tok in role_tokens for tok in {"softmax_max", "softmax_sum", "row_stats", "mean", "rstd", "state", "max_state", "sum_state"}):
             signal_names.add("stateful_recurrence")
             state_ids.append(lifetime_id)
@@ -706,8 +712,16 @@ def _graph_profile(
         signal_names.add("resident_state")
     if has_scalar_param:
         signal_names.add("scalar_param")
+    if has_scalar_output:
+        signal_names.add("scalar_output")
     if has_weight_like and (not has_bias_like) and ("rms_state" in signal_names or "reduction_path" in signal_names):
         signal_names.add("rms_only_norm")
+    for mechanism in list(getattr(org, "mechanisms", []) or []):
+        tag = _norm_token(getattr(mechanism, "tag", ""))
+        attrs = dict(getattr(mechanism, "attrs", {}) or {})
+        ops = {_norm_token(x) for x in list(attrs.get("ops") or []) if _norm_token(x)}
+        if tag == "tvd_elementwise" or {"sub", "abs"} <= ops:
+            signal_names.add("abs_sub_path")
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
     if _fact_present(ptx_facts, "pipeline.async_copy") and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False)):
@@ -991,6 +1005,21 @@ def _resolve_family_spec(
         if profile.has_signal("vector_path") and int(profile.row_width or 0) <= 1024:
             _consider("ai_bench_softmax", 112.0, "graph:vector_softmax")
         _consider("softmax_inner", 110.0, "graph:softmax")
+    if (
+        profile.has_signal("scalar_output")
+        and profile.has_signal("reduction_path")
+        and profile.has_signal("abs_sub_path")
+        and not profile.has_signal("online_state")
+        and not profile.has_signal("mma_path")
+        and not profile.has_signal("mean_state")
+        and not profile.has_signal("rms_state")
+    ):
+        scalar_score = 117.0
+        if profile.has_signal("resident_state"):
+            scalar_score += 3.0
+        if profile.has_signal("vector_path"):
+            scalar_score += 2.0
+        _consider("tvd_loss2d", scalar_score, "graph:scalar_abs_sub_reduce")
     if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.has_signal("reduction_path"):
         base_score = 116.0
         if profile.has_signal("resident_state"):
@@ -1918,6 +1947,23 @@ def _family_specs() -> dict[str, FamilySpec]:
                     param_names=("CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"),
                     required_signals=("cfg_path", "gather_path", "reduction_path"),
                     signal_weights={"online_state": 8.0, "branch_mask": 10.0, "resident_state": 8.0, "vector_path": 6.0},
+                ),
+            ),
+        ),
+        "tvd_loss2d": FamilySpec(
+            kernel="tvd_loss2d",
+            catalog_builder=tvd_loss2d_catalog,
+            required_shape_keys=("BT", "V"),
+            base_modules=("tvd_input_resident", "tvd_abs_sub_path", "tvd_row_reduction", "tvd_scalar_finalize", "tvd_backend_v1"),
+            optional_modules=(),
+            params=(),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="tvd_loss2d_v1",
+                    module_id="tvd_backend_v1",
+                    param_names=(),
+                    required_signals=("scalar_output", "reduction_path", "abs_sub_path"),
+                    signal_weights={"resident_state": 4.0, "vector_path": 2.0},
                 ),
             ),
         ),

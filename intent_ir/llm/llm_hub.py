@@ -199,13 +199,75 @@ def _descriptor_arg_names(descriptor: KernelDescriptor) -> set[str]:
 
 
 def _rope_repair_json(descriptor: KernelDescriptor, *, q_shape: tuple[int, ...], k_shape: tuple[int, ...], cos_shape: tuple[int, ...]) -> dict[str, Any]:
-    b_dim, qh_dim, s_dim, hd_dim = map(int, q_shape)
-    _bk, kh_dim, _sk, _hk = map(int, k_shape)
+    canonical_shapes = {
+        str(k): int(v)
+        for k, v in dict((descriptor.launch or {}).get("canonical_shapes") or {}).items()
+        if str(k).strip()
+    }
+    b_dim = qh_dim = kh_dim = s_dim = hd_dim = 0
+    layout = ""
+    if {"B", "QH", "KH", "S", "HD"} <= set(canonical_shapes):
+        cand_b = int(canonical_shapes["B"])
+        cand_qh = int(canonical_shapes["QH"])
+        cand_kh = int(canonical_shapes["KH"])
+        cand_s = int(canonical_shapes["S"])
+        cand_hd = int(canonical_shapes["HD"])
+        if tuple(map(int, q_shape)) == (cand_b, cand_qh, cand_s, cand_hd) and tuple(map(int, k_shape)) == (
+            cand_b,
+            cand_kh,
+            cand_s,
+            cand_hd,
+        ):
+            b_dim, qh_dim, kh_dim, s_dim, hd_dim = cand_b, cand_qh, cand_kh, cand_s, cand_hd
+            layout = "bhsd"
+        elif tuple(map(int, q_shape)) == (cand_b, cand_s, cand_qh, cand_hd) and tuple(map(int, k_shape)) == (
+            cand_b,
+            cand_s,
+            cand_kh,
+            cand_hd,
+        ):
+            b_dim, qh_dim, kh_dim, s_dim, hd_dim = cand_b, cand_qh, cand_kh, cand_s, cand_hd
+            layout = "bshd"
+    if not layout:
+        b0, d1, d2, d3 = map(int, q_shape)
+        _bk, k1, k2, _khd = map(int, k_shape)
+        if d1 == k1 and d2 != k2:
+            b_dim, s_dim, qh_dim, kh_dim, hd_dim = b0, d1, d2, k2, d3
+            layout = "bshd"
+        else:
+            b_dim, qh_dim, s_dim, kh_dim, hd_dim = b0, d1, d2, k1, d3
+            layout = "bhsd"
     cos_batch = int(cos_shape[0]) if len(cos_shape) == 3 else 1
     cos_width = int(cos_shape[-1]) if cos_shape else hd_dim
     cos_b_dim: str | int = int(cos_batch) if cos_batch != b_dim else "B"
     logical_layout = {"kind": "custom", "params": {"axes": ["B", "H", "S", "HD"]}}
     physical_layout = {"kind": "custom", "params": {"axes": ["B", "S", "H", "HD"], "view_perm": [0, 2, 1, 3]}}
+    if layout == "bshd":
+        public_layout = {"kind": "custom", "params": {"axes": ["B", "S", "H", "HD"]}}
+        return {
+            "name": descriptor.name,
+            "kernel_type": descriptor.name,
+            "tensors": {
+                "q": {"dtype": "f32", "shape": _shape_entry("B", "S", "QH", "HD"), "layout": public_layout},
+                "k": {"dtype": "f32", "shape": _shape_entry("B", "S", "KH", "HD"), "layout": public_layout},
+                "cos": {"dtype": "f32", "shape": _shape_entry(cos_b_dim, "S", cos_width), "layout": "row_major"},
+                "sin": {"dtype": "f32", "shape": _shape_entry(cos_b_dim, "S", cos_width), "layout": "row_major"},
+                "q_out": {"dtype": "f32", "shape": _shape_entry("B", "S", "QH", "HD"), "layout": public_layout},
+                "k_out": {"dtype": "f32", "shape": _shape_entry("B", "S", "KH", "HD"), "layout": public_layout},
+            },
+            "ops": [
+                {"op": "rope", "inputs": ["q", "cos", "sin"], "output": "q_out", "attrs": {"input_layout": "bshd"}},
+                {"op": "rope", "inputs": ["k", "cos", "sin"], "output": "k_out", "attrs": {"input_layout": "bshd"}},
+            ],
+            "outputs": ["q_out", "k_out"],
+            "parallel_axes": ["B", "S", "QH", "KH"],
+            "axis_roles": {"B": "batch", "S": "spatial", "QH": "channel", "KH": "channel", "HD": "channel"},
+            "meta": {
+                "repaired_by": "liger_rope_view_repair_v2",
+                "view_model": "direct_bshd_public",
+                "shape_bindings": {"B": b_dim, "QH": qh_dim, "KH": kh_dim, "S": s_dim, "HD": hd_dim},
+            },
+        }
     return {
         "name": descriptor.name,
         "kernel_type": descriptor.name,
@@ -345,6 +407,140 @@ def _cross_entropy_repair_json(descriptor: KernelDescriptor, *, input_shape: tup
     }
 
 
+def _tvd_repair_json(descriptor: KernelDescriptor, *, input_shape: tuple[int, ...]) -> dict[str, Any]:
+    bt_dim, v_dim = map(int, input_shape)
+    return {
+        "name": descriptor.name,
+        "kernel_type": descriptor.name,
+        "tensors": {
+            "input": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "target": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "half": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "bt_scalar": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "delta": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "abs_delta": {"dtype": "f32", "shape": _shape_entry("BT", "V"), "layout": "row_major"},
+            "row_sum": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "row_tvd": {"dtype": "f32", "shape": _shape_entry("BT"), "layout": "row_major"},
+            "loss_sum": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "loss": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "const", "inputs": [], "output": "half", "attrs": {"value": 0.5, "dtype": "f32"}},
+            {"op": "const", "inputs": [], "output": "bt_scalar", "attrs": {"value": "BT", "dtype": "f32"}},
+            {"op": "sub", "inputs": ["input", "target"], "output": "delta"},
+            {"op": "abs", "inputs": ["delta"], "output": "abs_delta"},
+            {"op": "reduce_sum", "inputs": ["abs_delta"], "output": "row_sum", "attrs": {"dims": [1]}},
+            {"op": "mul", "inputs": ["row_sum", "half"], "output": "row_tvd"},
+            {"op": "reduce_sum", "inputs": ["row_tvd"], "output": "loss_sum", "attrs": {"dims": [0]}},
+            {"op": "div", "inputs": ["loss_sum", "bt_scalar"], "output": "loss"},
+        ],
+        "outputs": ["loss"],
+        "parallel_axes": ["BT"],
+        "axis_roles": {"BT": "batch", "V": "channel"},
+        "meta": {
+            "repaired_by": "distribution_distance_repair_v1",
+            "shape_bindings": {"BT": bt_dim, "V": v_dim},
+            "reduction": "batchmean",
+            "ephemeral_workspace": ["grads"],
+        },
+    }
+
+
+def _poly_norm_repair_json(descriptor: KernelDescriptor, *, input_shape: tuple[int, ...]) -> dict[str, Any]:
+    m_dim, n_dim = map(int, input_shape)
+    return {
+        "name": descriptor.name,
+        "kernel_type": descriptor.name,
+        "tensors": {
+            "X": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "W": {"dtype": "f32", "shape": _shape_entry(3), "layout": "row_major"},
+            "B": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "eps": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "N_scalar": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "X_sq": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "X_cu": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "X_cu_sq": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "X_sq_sq": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "mean_sq_3": {"dtype": "f32", "shape": _shape_entry("M"), "layout": "row_major"},
+            "mean_sq_2": {"dtype": "f32", "shape": _shape_entry("M"), "layout": "row_major"},
+            "mean_sq_1": {"dtype": "f32", "shape": _shape_entry("M"), "layout": "row_major"},
+            "rstd_3": {"dtype": "f32", "shape": _shape_entry("M"), "layout": "row_major"},
+            "rstd_2": {"dtype": "f32", "shape": _shape_entry("M"), "layout": "row_major"},
+            "rstd_1": {"dtype": "f32", "shape": _shape_entry("M"), "layout": "row_major"},
+            "rstd_3_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "rstd_2_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "rstd_1_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "norm_x3": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "norm_x2": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "norm_x1": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "idx0": {"dtype": "i32", "shape": _shape_entry(), "layout": "row_major"},
+            "idx1": {"dtype": "i32", "shape": _shape_entry(), "layout": "row_major"},
+            "idx2": {"dtype": "i32", "shape": _shape_entry(), "layout": "row_major"},
+            "w0": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "w1": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "w2": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "w0_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "w1_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "w2_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "b_bc": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "term0": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "term1": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "term2": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "sum01": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+            "Y": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "const", "inputs": [], "output": "N_scalar", "attrs": {"value": "N", "dtype": "f32"}},
+            {"op": "mul", "inputs": ["X", "X"], "output": "X_sq"},
+            {"op": "mul", "inputs": ["X_sq", "X"], "output": "X_cu"},
+            {"op": "mul", "inputs": ["X_cu", "X_cu"], "output": "X_cu_sq"},
+            {"op": "mul", "inputs": ["X_sq", "X_sq"], "output": "X_sq_sq"},
+            {"op": "reduce_sum", "inputs": ["X_cu_sq"], "output": "mean_sq_3", "attrs": {"dims": [1]}},
+            {"op": "div", "inputs": ["mean_sq_3", "N_scalar"], "output": "mean_sq_3"},
+            {"op": "add", "inputs": ["mean_sq_3", "eps"], "output": "mean_sq_3"},
+            {"op": "rsqrt", "inputs": ["mean_sq_3"], "output": "rstd_3"},
+            {"op": "reduce_sum", "inputs": ["X_sq_sq"], "output": "mean_sq_2", "attrs": {"dims": [1]}},
+            {"op": "div", "inputs": ["mean_sq_2", "N_scalar"], "output": "mean_sq_2"},
+            {"op": "add", "inputs": ["mean_sq_2", "eps"], "output": "mean_sq_2"},
+            {"op": "rsqrt", "inputs": ["mean_sq_2"], "output": "rstd_2"},
+            {"op": "reduce_sum", "inputs": ["X_sq"], "output": "mean_sq_1", "attrs": {"dims": [1]}},
+            {"op": "div", "inputs": ["mean_sq_1", "N_scalar"], "output": "mean_sq_1"},
+            {"op": "add", "inputs": ["mean_sq_1", "eps"], "output": "mean_sq_1"},
+            {"op": "rsqrt", "inputs": ["mean_sq_1"], "output": "rstd_1"},
+            {"op": "broadcast_in_dim", "inputs": ["rstd_3"], "output": "rstd_3_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": [0]}},
+            {"op": "broadcast_in_dim", "inputs": ["rstd_2"], "output": "rstd_2_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": [0]}},
+            {"op": "broadcast_in_dim", "inputs": ["rstd_1"], "output": "rstd_1_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": [0]}},
+            {"op": "mul", "inputs": ["X_cu", "rstd_3_bc"], "output": "norm_x3"},
+            {"op": "mul", "inputs": ["X_sq", "rstd_2_bc"], "output": "norm_x2"},
+            {"op": "mul", "inputs": ["X", "rstd_1_bc"], "output": "norm_x1"},
+            {"op": "const", "inputs": [], "output": "idx0", "attrs": {"value": 0, "dtype": "i32"}},
+            {"op": "const", "inputs": [], "output": "idx1", "attrs": {"value": 1, "dtype": "i32"}},
+            {"op": "const", "inputs": [], "output": "idx2", "attrs": {"value": 2, "dtype": "i32"}},
+            {"op": "gather", "inputs": ["W", "idx0"], "output": "w0", "attrs": {"axis": 0}},
+            {"op": "gather", "inputs": ["W", "idx1"], "output": "w1", "attrs": {"axis": 0}},
+            {"op": "gather", "inputs": ["W", "idx2"], "output": "w2", "attrs": {"axis": 0}},
+            {"op": "broadcast_in_dim", "inputs": ["w0"], "output": "w0_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": []}},
+            {"op": "broadcast_in_dim", "inputs": ["w1"], "output": "w1_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": []}},
+            {"op": "broadcast_in_dim", "inputs": ["w2"], "output": "w2_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": []}},
+            {"op": "broadcast_in_dim", "inputs": ["B"], "output": "b_bc", "attrs": {"out_shape": _shape_entry("M", "N"), "broadcast_dims": []}},
+            {"op": "mul", "inputs": ["w0_bc", "norm_x3"], "output": "term0"},
+            {"op": "mul", "inputs": ["w1_bc", "norm_x2"], "output": "term1"},
+            {"op": "mul", "inputs": ["w2_bc", "norm_x1"], "output": "term2"},
+            {"op": "add", "inputs": ["term0", "term1"], "output": "sum01"},
+            {"op": "add", "inputs": ["sum01", "term2"], "output": "sum01"},
+            {"op": "add", "inputs": ["sum01", "b_bc"], "output": "Y"},
+        ],
+        "outputs": ["Y"],
+        "parallel_axes": ["M"],
+        "axis_roles": {"M": "batch", "N": "reduction"},
+        "meta": {
+            "repaired_by": "poly_rms_resident_repair_v1",
+            "shape_bindings": {"M": m_dim, "N": n_dim},
+            "ephemeral_workspace": ["RSTD"],
+        },
+    }
+
+
 def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[CandidateIntent | None, list[str]]:
     """
     Build a deterministic frontend candidate directly from descriptor evidence
@@ -360,7 +556,26 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
         or "Y_ptr +=" in source_text
         or "gt_ptr +=" in source_text
     )
+    has_tvd_signature = (
+        {"p_ptr", "q_ptr", "loss_ptr"} <= arg_names
+        or "TVD(P || Q)" in source_text
+        or "tv_loss = 0.5 * tl.abs(p - q)" in source_text
+        or "LigerTVDLossFunction.apply" in source_text
+    )
+    has_poly_norm_signature = (
+        ("PolyNorm formula" in source_text)
+        or (
+            {"X_ptr", "W_ptr", "B_ptr", "Y_ptr"} <= arg_names
+            and "RSTD_ptr" in arg_names
+        )
+    )
     has_mrope_planes = any(str(name).startswith("mrope_section") for name in arg_names) or ("mrope_section" in source_text)
+    has_complex_rope = (
+        any("freqs" in str(name).lower() for name in arg_names)
+        or "freqs_cis" in source_text
+        or "freqs_complex" in source_text
+        or "view_as_real" in source_text
+    )
     canonical_shapes = {
         str(k): int(v)
         for k, v in dict((descriptor.launch or {}).get("canonical_shapes") or {}).items()
@@ -368,21 +583,52 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
     }
 
     if (not shapes) and (not has_mrope_planes) and {"B", "QH", "KH", "S", "HD"} <= set(canonical_shapes):
+        if has_complex_rope:
+            shapes = {
+                "q": (
+                    int(canonical_shapes["B"]),
+                    int(canonical_shapes["S"]),
+                    int(canonical_shapes["QH"]),
+                    int(canonical_shapes["HD"]),
+                ),
+                "k": (
+                    int(canonical_shapes["B"]),
+                    int(canonical_shapes["S"]),
+                    int(canonical_shapes["KH"]),
+                    int(canonical_shapes["HD"]),
+                ),
+                "cos": (int(canonical_shapes["S"]), int(canonical_shapes["HD"]) // 2),
+                "sin": (int(canonical_shapes["S"]), int(canonical_shapes["HD"]) // 2),
+            }
+        else:
+            shapes = {
+                "q": (
+                    int(canonical_shapes["B"]),
+                    int(canonical_shapes["QH"]),
+                    int(canonical_shapes["S"]),
+                    int(canonical_shapes["HD"]),
+                ),
+                "k": (
+                    int(canonical_shapes["B"]),
+                    int(canonical_shapes["KH"]),
+                    int(canonical_shapes["S"]),
+                    int(canonical_shapes["HD"]),
+                ),
+                "cos": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
+                "sin": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
+            }
+    if (not shapes) and has_tvd_signature and {"BT", "V"} <= set(canonical_shapes):
         shapes = {
-            "q": (
-                int(canonical_shapes["B"]),
-                int(canonical_shapes["QH"]),
-                int(canonical_shapes["S"]),
-                int(canonical_shapes["HD"]),
-            ),
-            "k": (
-                int(canonical_shapes["B"]),
-                int(canonical_shapes["KH"]),
-                int(canonical_shapes["S"]),
-                int(canonical_shapes["HD"]),
-            ),
-            "cos": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
-            "sin": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
+            "input": (int(canonical_shapes["BT"]), int(canonical_shapes["V"])),
+            "target": (int(canonical_shapes["BT"]), int(canonical_shapes["V"])),
+            "loss": tuple(),
+        }
+    if (not shapes) and has_poly_norm_signature and {"M", "N"} <= set(canonical_shapes):
+        shapes = {
+            "X": (int(canonical_shapes["M"]), int(canonical_shapes["N"])),
+            "W": (3,),
+            "B": tuple(),
+            "Y": (int(canonical_shapes["M"]), int(canonical_shapes["N"])),
         }
     q_shape = tuple(shapes.get("q", ()))
     k_shape = tuple(shapes.get("k", ()))
@@ -392,7 +638,7 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
     # Multi-plane rotary variants (for example M-RoPE with an extra plane axis)
     # must go through the live frontend instead of being collapsed into the
     # standard [1,S,HD] cosine/sine model.
-    if len(q_shape) == 4 and len(k_shape) == 4 and len(cos_shape) == 3 and len(sin_shape) == 3:
+    if len(q_shape) == 4 and len(k_shape) == 4 and len(cos_shape) in {2, 3} and len(sin_shape) in {2, 3}:
         repaired = parse_candidate_json(
             _rope_repair_json(
                 descriptor,
@@ -405,7 +651,9 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
         return repaired, repairs
 
     canonical_keys = set(canonical_shapes)
-    allow_plain_ce_prefill = canonical_keys.issubset({"BT", "V"}) and {"BT", "V"} <= canonical_keys
+    allow_plain_ce_prefill = (
+        canonical_keys.issubset({"BT", "V"}) and {"BT", "V"} <= canonical_keys and (not has_tvd_signature)
+    )
     if (not shapes) and (not has_dense_distribution_target) and allow_plain_ce_prefill:
         shapes = {
             "input": (int(canonical_shapes["BT"]), int(canonical_shapes["V"])),
@@ -415,6 +663,10 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
     input_shape = tuple(shapes.get("input", ()))
     target_shape = tuple(shapes.get("target", ()))
     loss_shape = tuple(shapes.get("loss", ()))
+    poly_input_shape = tuple(shapes.get("X", ()))
+    poly_weight_shape = tuple(shapes.get("W", shapes.get("weight", ())))
+    poly_bias_shape = tuple(shapes.get("B", shapes.get("bias", ())))
+    poly_output_shape = tuple(shapes.get("Y", ()))
     # Cross-entropy repair only applies to class-index targets [BT], not dense
     # distribution targets [BT,V] used by KL/JSD-like kernels.
     if len(input_shape) == 2 and len(target_shape) == 1 and len(loss_shape) == 0:
@@ -425,6 +677,24 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
             )
         )
         repairs.append("liger_cross_entropy_loss_repair_v1")
+        return repaired, repairs
+    if len(input_shape) == 2 and len(target_shape) == 2 and len(loss_shape) == 0:
+        repaired = parse_candidate_json(
+            _tvd_repair_json(
+                descriptor,
+                input_shape=input_shape,
+            )
+        )
+        repairs.append("distribution_distance_repair_v1")
+        return repaired, repairs
+    if len(poly_input_shape) == 2 and len(poly_weight_shape) == 1 and int(poly_weight_shape[0]) == 3 and len(poly_bias_shape) == 0 and poly_output_shape == poly_input_shape:
+        repaired = parse_candidate_json(
+            _poly_norm_repair_json(
+                descriptor,
+                input_shape=poly_input_shape,
+            )
+        )
+        repairs.append("poly_rms_resident_repair_v1")
         return repaired, repairs
 
     return None, repairs

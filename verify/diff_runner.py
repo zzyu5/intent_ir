@@ -193,6 +193,7 @@ def run_diff(
             used.update(op.inputs)
         external_inputs = {n for n in used if (n in intent_exec.tensors and n not in produced)}
         inputs = {k: v for k, v in ref_out.items() if k in external_inputs}
+        _infer_bindings_from_external_inputs(intent_exec, inputs, bindings)
         # Some frontends expose semantic scalar inputs (e.g., sm_scale) that may be
         # compiled away in the runtime kernel signature (so the baseline runner
         # cannot return them). If IntentIR models them as scalar tensors, inject
@@ -712,6 +713,25 @@ def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
         elif c_per_g is not None and groups is not None:
             bindings["C_OUT"] = c_per_g * groups
 
+    cin = _binding_int(bindings, "CIN")
+    groups_lower = _binding_int(bindings, "groups")
+    if groups is None and groups_lower is not None:
+        groups = groups_lower
+        bindings.setdefault("GROUPS", groups_lower)
+    if cin is not None and groups is not None and groups > 0:
+        bindings.setdefault("CIN_per_group", cin // groups)
+        bindings.setdefault("C_PER_G", cin // groups)
+    if c_out is None:
+        cout = _binding_int(bindings, "COUT")
+        if cout is not None:
+            bindings.setdefault("C_OUT", cout)
+    k_dim = _binding_int(bindings, "K")
+    if k_dim is not None:
+        bindings.setdefault("kernel_size", k_dim)
+    hc = _binding_int(bindings, "HC")
+    if hc is not None and "M" not in bindings:
+        bindings["M"] = hc * hc + 2 * hc
+
     if "OH" not in bindings:
         H = _binding_int(bindings, "H")
         PH = _binding_int(bindings, "PH")
@@ -736,6 +756,44 @@ def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
         DD = _binding_int(bindings, "DD")
         if None not in (D, PD, KD, SD, DD) and SD and SD > 0:
             bindings["OD"] = (D + 2 * PD - DD * (KD - 1) - 1) // SD + 1
+
+
+def _infer_bindings_from_external_inputs(
+    intent: IntentFunction,
+    inputs: Dict[str, np.ndarray],
+    bindings: Dict[str, Any],
+) -> None:
+    if not inputs:
+        return
+    tensors = dict(getattr(intent, "tensors", {}) or {})
+    changed = True
+    rounds = 0
+    while changed and rounds < 4:
+        rounds += 1
+        changed = False
+        for name, arr in inputs.items():
+            tensor = tensors.get(str(name))
+            if tensor is None:
+                continue
+            shape_spec = list(getattr(tensor, "shape", []) or [])
+            arr_shape = tuple(int(x) for x in np.asarray(arr).shape)
+            if len(shape_spec) != len(arr_shape):
+                continue
+            for dim, size in zip(shape_spec, arr_shape):
+                sym = ""
+                if hasattr(dim, "kind") and getattr(dim, "kind") == "sym":
+                    sym = str(getattr(dim, "value"))
+                elif isinstance(dim, str):
+                    sym = str(dim)
+                if not sym:
+                    continue
+                if sym in bindings:
+                    continue
+                if sym.isidentifier():
+                    bindings[sym] = int(size)
+                    changed = True
+        if changed:
+            _add_common_derived_bindings(bindings)
 
 
 __all__ = ["DiffResult", "Counterexample", "run_diff"]

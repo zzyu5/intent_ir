@@ -213,6 +213,13 @@ def _apply_guided_postprocess(
     out = {str(k): np.asarray(v) for k, v in dict(guided_outputs or {}).items()}
     for logical_name, spec in _guided_postprocess_spec(io_spec).items():
         op = str(spec.get("op") or "").strip().lower()
+        if op == "row_mean":
+            source = str(spec.get("source") or logical_name).strip()
+            if source not in out:
+                continue
+            row_values = np.asarray(out[source], dtype=np.float32)
+            out[logical_name] = np.asarray(np.mean(row_values, dtype=np.float32), dtype=np.float32)
+            continue
         if op != "masked_row_mean":
             continue
         source = str(spec.get("source") or logical_name).strip()
@@ -244,6 +251,16 @@ def _make_guided_postprocess_runner(
     target_cache: dict[str, torch.Tensor] = {}
     for logical_name, cfg in spec.items():
         op = str(cfg.get("op") or "").strip().lower()
+        if op == "row_mean":
+            source = str(cfg.get("source") or logical_name).strip()
+            if source not in outputs_torch:
+                continue
+            source_tensor = outputs_torch[source]
+
+            def _runner(source_tensor=source_tensor):
+                _ = torch.mean(source_tensor)
+
+            return _runner
         if op != "masked_row_mean":
             continue
         source = str(cfg.get("source") or logical_name).strip()
@@ -596,9 +613,29 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
 
         return _fn
     if kernel == "liger_llama4_rope":
-        q = torch.as_tensor(np.asarray(baseline["q"]), device="cuda", dtype=torch.float32).contiguous()
-        k = torch.as_tensor(np.asarray(baseline["k"]), device="cuda", dtype=torch.float32).contiguous()
-        freqs_cis = torch.as_tensor(np.asarray(baseline["freqs_cis"]), device="cuda", dtype=torch.complex64).contiguous()
+        def _half_split_to_interleaved(arr: np.ndarray) -> np.ndarray:
+            x = np.asarray(arr, dtype=np.float32)
+            half = int(x.shape[-1]) // 2
+            real = x[..., :half]
+            imag = x[..., half:]
+            out = np.empty(x.shape[:-1] + (half * 2,), dtype=np.float32)
+            out[..., 0::2] = real
+            out[..., 1::2] = imag
+            return out
+
+        q_np = np.asarray(baseline["q"])
+        k_np = np.asarray(baseline["k"])
+        if "freqs_cis" in baseline:
+            freqs_cis = torch.as_tensor(np.asarray(baseline["freqs_cis"]), device="cuda", dtype=torch.complex64).contiguous()
+        else:
+            cos = np.asarray(baseline["cos"], dtype=np.float32)
+            sin = np.asarray(baseline["sin"], dtype=np.float32)
+            freqs_cis = torch.complex(
+                torch.as_tensor(cos, device="cuda", dtype=torch.float32).contiguous(),
+                torch.as_tensor(sin, device="cuda", dtype=torch.float32).contiguous(),
+            )
+        q = torch.as_tensor(_half_split_to_interleaved(q_np), device="cuda", dtype=torch.float32).contiguous()
+        k = torch.as_tensor(_half_split_to_interleaved(k_np), device="cuda", dtype=torch.float32).contiguous()
 
         def _fn():
             llama4_rope_forward(q, k, freqs_cis)
@@ -646,12 +683,12 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
         up_w = torch.as_tensor(np.asarray(baseline["UpW"]), device="cuda", dtype=torch.float32).contiguous()
         down_w = torch.as_tensor(np.asarray(baseline["DownW"]), device="cuda", dtype=torch.float32).contiguous()
         num_shards = int(np.asarray(baseline["num_shards"]).reshape(()))
-        cfg = SimpleNamespace(hidden_size=int(gate_w.shape[1]), intermediate_size=int(gate_w.shape[0]), hidden_act="gelu_pytorch_tanh")
+        cfg = SimpleNamespace(hidden_size=int(gate_w.shape[0]), intermediate_size=int(gate_w.shape[1]), hidden_act="gelu_pytorch_tanh")
         mlp = LigerTiledGEGLUMLP(config=cfg, num_shards=num_shards).to("cuda").to(torch.float32)
         with torch.no_grad():
-            mlp.gate_proj.weight.copy_(gate_w)
-            mlp.up_proj.weight.copy_(up_w)
-            mlp.down_proj.weight.copy_(down_w)
+            mlp.gate_proj.weight.copy_(gate_w.transpose(0, 1).contiguous())
+            mlp.up_proj.weight.copy_(up_w.transpose(0, 1).contiguous())
+            mlp.down_proj.weight.copy_(down_w.transpose(0, 1).contiguous())
 
         def _fn():
             mlp(x)

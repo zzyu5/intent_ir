@@ -121,6 +121,45 @@ def _mutated_input_credit(intent: IntentFunction) -> int:
     return len(names)
 
 
+def _normalize_tensor_name(name: object) -> str:
+    s = str(name or "").strip().lower()
+    if s.startswith("ptr_"):
+        s = s[4:]
+    if s.endswith("_ptr"):
+        s = s[:-4]
+    s = s.replace("_", "")
+    return s
+
+
+def _workspace_credit(intent: IntentFunction, cert: object) -> int:
+    meta = intent.meta if isinstance(intent.meta, dict) else {}
+    raw = meta.get("ephemeral_workspace")
+    explicit = 0
+    if isinstance(raw, list):
+        explicit = len({str(x).strip() for x in raw if str(x).strip()})
+    outputs = {_normalize_tensor_name(x) for x in list(getattr(intent, "outputs", []) or [])}
+    mutated = set()
+    raw_mut = meta.get("mutated_inputs")
+    if isinstance(raw_mut, list):
+        mutated = {_normalize_tensor_name(x) for x in raw_mut if str(x).strip()}
+    credit = int(explicit)
+    seen_extra: set[str] = set()
+    for access in _iter_accesses_from_cert(cert):  # type: ignore[arg-type]
+        if access.get("kind") != "store":
+            continue
+        t = access.get("tensor")
+        norm = _normalize_tensor_name(t)
+        if not norm or norm in outputs or norm in mutated or norm in seen_extra:
+            continue
+        # Generic training-time scratch/state tensors: row stats, workspace caches,
+        # temporary gradient buffers, etc. These should not be forced into the
+        # public output contract.
+        if any(tok in norm for tok in ("workspace", "cache", "state", "stats", "mean", "var", "rstd", "grad")):
+            seen_extra.add(norm)
+            credit += 1
+    return credit
+
+
 def _contract_level_from_cert(cert: object) -> str | None:
     if _is_legacy_cert(cert):
         try:
@@ -293,24 +332,33 @@ def static_validate(intent: IntentFunction, cert: object) -> StaticValidationRes
     # the number of declared outputs (helps catch missing Mean/Rstd etc).
     num_store_groups = _store_group_count(cert)
     if num_store_groups is not None:
-        required_outputs = max(0, int(num_store_groups) - int(_mutated_input_credit(intent)))
+        mutated_credit = int(_mutated_input_credit(intent))
+        workspace_credit = int(_workspace_credit(intent, cert))
+        required_outputs = max(0, int(num_store_groups) - mutated_credit - workspace_credit)
         if required_outputs > len(intent.outputs):
             obligations.append(
                 StaticObligation(
                     id="SV_outputs_lt_store_groups",
                     status="FAIL",
-                    detail=f"store_groups={num_store_groups} mutated_inputs={_mutated_input_credit(intent)} outputs={len(intent.outputs)}",
+                    detail=(
+                        f"store_groups={num_store_groups} mutated_inputs={mutated_credit} "
+                        f"workspace={workspace_credit} outputs={len(intent.outputs)}"
+                    ),
                 )
             )
             reasons.append(
-                f"intent outputs ({len(intent.outputs)}) fewer than TTIR store groups ({num_store_groups}) after mutation credit ({_mutated_input_credit(intent)})"
+                f"intent outputs ({len(intent.outputs)}) fewer than TTIR store groups ({num_store_groups}) "
+                f"after mutation credit ({mutated_credit}) and workspace credit ({workspace_credit})"
             )
         else:
             obligations.append(
                 StaticObligation(
                     id="SV_outputs_ge_store_groups",
                     status="PASS",
-                    detail=f"store_groups={num_store_groups} mutated_inputs={_mutated_input_credit(intent)} outputs={len(intent.outputs)}",
+                    detail=(
+                        f"store_groups={num_store_groups} mutated_inputs={mutated_credit} "
+                        f"workspace={workspace_credit} outputs={len(intent.outputs)}"
+                    ),
                 )
             )
     if _needs_mask_from_cert(cert) and not any(op.op.startswith("reduce") for op in intent.ops):

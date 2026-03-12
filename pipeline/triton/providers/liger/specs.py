@@ -624,15 +624,22 @@ def _llama4_rope_runner(case: TestCase) -> Dict[str, np.ndarray]:
     k = _torch_randn((b, s, kh, hd), seed=int(case.seed) + 54)
     real = _torch_randn((s, hd // 2), seed=int(case.seed) + 55)
     imag = _torch_randn((s, hd // 2), seed=int(case.seed) + 56)
+    q_in = q.clone()
+    k_in = k.clone()
     freqs_cis = torch.complex(real, imag)
     q_out, k_out = llama4_rope_forward(q, k, freqs_cis)
     torch.cuda.synchronize()
+    q_sem = torch.cat([q_in[..., 0::2], q_in[..., 1::2]], dim=-1)
+    k_sem = torch.cat([k_in[..., 0::2], k_in[..., 1::2]], dim=-1)
+    q_out_sem = torch.cat([q_out[..., 0::2], q_out[..., 1::2]], dim=-1)
+    k_out_sem = torch.cat([k_out[..., 0::2], k_out[..., 1::2]], dim=-1)
     return {
-        "q": _to_np(q),
-        "k": _to_np(k),
-        "freqs_cis": _to_np(freqs_cis),
-        "q_out": _to_np(q_out),
-        "k_out": _to_np(k_out),
+        "q": _to_np(q_sem),
+        "k": _to_np(k_sem),
+        "cos": _to_np(real),
+        "sin": _to_np(imag),
+        "q_out": _to_np(q_out_sem),
+        "k_out": _to_np(k_out_sem),
     }
 
 
@@ -734,9 +741,9 @@ def _tiled_mlp_runner(case: TestCase) -> Dict[str, np.ndarray]:
     torch.cuda.synchronize()
     return {
         "X": _to_np(x),
-        "GateW": _to_np(gate_w),
-        "UpW": _to_np(up_w),
-        "DownW": _to_np(down_w),
+        "GateW": _to_np(gate_w.transpose(0, 1).contiguous()),
+        "UpW": _to_np(up_w.transpose(0, 1).contiguous()),
+        "DownW": _to_np(down_w.transpose(0, 1).contiguous()),
         "num_shards": np.array(num_shards, dtype=np.int32),
         "Y": _to_np(y),
     }
