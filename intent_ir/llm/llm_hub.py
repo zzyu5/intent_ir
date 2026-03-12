@@ -490,6 +490,7 @@ def _poly_norm_repair_json(descriptor: KernelDescriptor, *, input_shape: tuple[i
             "Y": {"dtype": "f32", "shape": _shape_entry("M", "N"), "layout": "row_major"},
         },
         "ops": [
+            {"op": "const", "inputs": [], "output": "eps", "attrs": {"value": 1.0e-6, "dtype": "f32"}},
             {"op": "const", "inputs": [], "output": "N_scalar", "attrs": {"value": "N", "dtype": "f32"}},
             {"op": "mul", "inputs": ["X", "X"], "output": "X_sq"},
             {"op": "mul", "inputs": ["X_sq", "X"], "output": "X_cu"},

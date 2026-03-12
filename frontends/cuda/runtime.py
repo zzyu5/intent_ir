@@ -1424,6 +1424,7 @@ def run_cuda_kernel_io(
 
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
     scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), dict) else {}
+    output_init = io_spec.get("output_init") if isinstance(io_spec.get("output_init"), dict) else {}
     arg_names = io_spec.get("arg_names") if isinstance(io_spec.get("arg_names"), list) else []
     arg_names = [str(x) for x in arg_names]
     out_set = {str(x) for x in output_names}
@@ -1458,7 +1459,13 @@ def run_cuda_kernel_io(
             if shape_tpl is None:
                 raise CudaRuntimeError(f"missing output tensor shape for {base_name} in io_spec")
             shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
-            t = torch.empty(shape, device=device, dtype=_dtype_to_torch(dt))
+            init_spec = output_init.get(base_name)
+            if isinstance(init_spec, dict) and str(init_spec.get("op") or "").strip().lower() == "fill" and "value" in init_spec:
+                t = torch.full(shape, float(init_spec.get("value") or 0.0), device=device, dtype=_dtype_to_torch(dt))
+            elif isinstance(init_spec, (int, float)):
+                t = torch.full(shape, float(init_spec), device=device, dtype=_dtype_to_torch(dt))
+            else:
+                t = torch.empty(shape, device=device, dtype=_dtype_to_torch(dt))
             outputs_torch[base_name] = t
             return t
         if base_name in inputs_np:

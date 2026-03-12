@@ -19,6 +19,7 @@ from org.mapping.cuda.module_catalog import (
     layer_norm_persistent_catalog,
     masked_attention2d_catalog,
     matmul_fused_epilogue2d_catalog,
+    poly_norm2d_catalog,
     rms_norm2d_catalog,
     rope_view_catalog,
     row_reduction_catalog,
@@ -720,8 +721,17 @@ def _graph_profile(
         tag = _norm_token(getattr(mechanism, "tag", ""))
         attrs = dict(getattr(mechanism, "attrs", {}) or {})
         ops = {_norm_token(x) for x in list(attrs.get("ops") or []) if _norm_token(x)}
+        stat_count = _coerce_int(attrs.get("stat_count"))
+        affine_count = _coerce_int(attrs.get("affine_count"))
         if tag == "tvd_elementwise" or {"sub", "abs"} <= ops:
             signal_names.add("abs_sub_path")
+        if tag == "multi_output_stats_resident" and stat_count is not None and int(stat_count) >= 3:
+            signal_names.add("tri_stats_state")
+            signal_names.add("resident_state")
+            signal_names.add("stateful_recurrence")
+        if tag == "affine_epilogue" and affine_count is not None and int(affine_count) >= 3:
+            signal_names.add("triple_affine_epilogue")
+            signal_names.add("fused_epilogue")
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
     if _fact_present(ptx_facts, "pipeline.async_copy") and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False)):
@@ -1020,6 +1030,20 @@ def _resolve_family_spec(
         if profile.has_signal("vector_path"):
             scalar_score += 2.0
         _consider("tvd_loss2d", scalar_score, "graph:scalar_abs_sub_reduce")
+    if (
+        profile.has_signal("reduction_path")
+        and profile.has_signal("fused_epilogue")
+        and profile.has_signal("tri_stats_state")
+        and profile.has_signal("triple_affine_epilogue")
+    ):
+        poly_score = 121.0
+        if profile.has_signal("vector_path"):
+            poly_score += 6.0
+        if profile.has_signal("full_row_path"):
+            poly_score += 12.0
+        if profile.has_signal("resident_state"):
+            poly_score += 4.0
+        _consider("poly_norm2d", poly_score, "graph:multi_stats_affine_norm")
     if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.has_signal("reduction_path"):
         base_score = 116.0
         if profile.has_signal("resident_state"):
@@ -1954,16 +1978,70 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="tvd_loss2d",
             catalog_builder=tvd_loss2d_catalog,
             required_shape_keys=("BT", "V"),
-            base_modules=("tvd_input_resident", "tvd_abs_sub_path", "tvd_row_reduction", "tvd_scalar_finalize", "tvd_backend_v1"),
-            optional_modules=(),
-            params=(),
+            base_modules=("tvd_input_resident", "tvd_abs_sub_path", "tvd_row_reduction", "tvd_scalar_finalize"),
+            optional_modules=(OptionalModuleSpec(module_id="tvd_vector_row_io", signals=("vector_path",)),),
+            params=(
+                ParamSpec(
+                    name="TVD_BLOCK_THREADS",
+                    role="threads",
+                    dim_aliases=("block_threads", "threads_per_block", "num_warps"),
+                    defaults=(256, 128, 64),
+                    allowed_values=(64, 128, 256, 512),
+                ),
+                ParamSpec(
+                    name="TVD_VECTOR_WIDTH",
+                    role="vector_width",
+                    dim_aliases=("vector_width", "size_per_thread"),
+                    defaults=(4, 2, 1),
+                    allowed_values=(1, 2, 4),
+                ),
+            ),
             templates=(
+                TemplateSpec(
+                    kernel_kind="tvd_loss2d_v2",
+                    module_id="tvd_backend_v2",
+                    param_names=("TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"),
+                    required_signals=("scalar_output", "reduction_path", "abs_sub_path", "vector_path"),
+                    signal_weights={"resident_state": 8.0, "vector_path": 18.0},
+                ),
                 TemplateSpec(
                     kernel_kind="tvd_loss2d_v1",
                     module_id="tvd_backend_v1",
-                    param_names=(),
+                    param_names=("TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"),
                     required_signals=("scalar_output", "reduction_path", "abs_sub_path"),
                     signal_weights={"resident_state": 4.0, "vector_path": 2.0},
+                ),
+            ),
+        ),
+        "poly_norm2d": FamilySpec(
+            kernel="poly_norm2d",
+            catalog_builder=poly_norm2d_catalog,
+            required_shape_keys=("M", "N"),
+            base_modules=("poly_norm_row_tile_resident", "poly_norm_multi_output_stats_resident", "poly_norm_affine_epilogue"),
+            optional_modules=(
+                OptionalModuleSpec(module_id="poly_norm_vector_row_io", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="poly_norm_full_row_vector_resident", signals=("full_row_path",), gate_param="POLY_NORM_FULL_ROW_VECTOR"),
+            ),
+            params=(
+                ParamSpec(name="POLY_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(256, 128), allowed_values=(128, 256)),
+                ParamSpec(name="POLY_NORM_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(4, 2, 1), allowed_values=(1, 2, 4)),
+                ParamSpec(name="POLY_NORM_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
+            ),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="poly_norm_axis1_v2",
+                    module_id="poly_norm_backend_v2",
+                    param_names=("POLY_NORM_BLOCK_THREADS", "POLY_NORM_VECTOR_WIDTH", "POLY_NORM_FULL_ROW_VECTOR"),
+                    enabled_flags=("POLY_NORM_FULL_ROW_VECTOR",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "tri_stats_state", "triple_affine_epilogue", "full_row_path"),
+                    signal_weights={"vector_path": 16.0, "tri_stats_state": 20.0, "triple_affine_epilogue": 16.0, "full_row_path": 36.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="poly_norm_axis1_v1",
+                    module_id="poly_norm_backend_v1",
+                    param_names=("POLY_NORM_BLOCK_THREADS",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "tri_stats_state"),
+                    signal_weights={"vector_path": 8.0, "tri_stats_state": 20.0, "triple_affine_epilogue": 10.0},
                 ),
             ),
         ),

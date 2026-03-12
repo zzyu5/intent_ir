@@ -89,11 +89,21 @@ def _resolve_tensor_shape(shape_spec: list[Any], bindings: dict[str, Any]) -> tu
 def _build_guided_tensors(*, io_spec: dict[str, Any], baseline: dict[str, np.ndarray], bindings: dict[str, Any], outputs: list[str]) -> tuple[list[Any], dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
     scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), dict) else {}
+    output_init = io_spec.get("output_init") if isinstance(io_spec.get("output_init"), dict) else {}
     arg_names = [str(x) for x in list(io_spec.get("arg_names") or [])]
     output_set = {str(x) for x in outputs}
     args: list[Any] = []
     inputs_torch: dict[str, torch.Tensor] = {}
     outputs_torch: dict[str, torch.Tensor] = {}
+
+    def _make_output_tensor(shape: tuple[int, ...], dt: torch.dtype, init_spec: Any) -> torch.Tensor:
+        if isinstance(init_spec, dict):
+            op = str(init_spec.get("op") or "").strip().lower()
+            if op == "fill" and "value" in init_spec:
+                return torch.full(shape, float(init_spec.get("value") or 0.0), device="cuda", dtype=dt)
+        elif isinstance(init_spec, (int, float)):
+            return torch.full(shape, float(init_spec), device="cuda", dtype=dt)
+        return torch.empty(shape, device="cuda", dtype=dt)
 
     def _tensor_alias_base(name: str) -> str:
         raw = str(name).strip()
@@ -121,7 +131,7 @@ def _build_guided_tensors(*, io_spec: dict[str, Any], baseline: dict[str, np.nda
         if base_name in inputs_torch:
             return inputs_torch[base_name]
         if base_name in output_set:
-            t = torch.empty(shape, device="cuda", dtype=dt)
+            t = _make_output_tensor(tuple(shape), dt, output_init.get(base_name))
             outputs_torch[base_name] = t
             return t
         if len(shape) == 0 and base_name in bindings:
@@ -282,6 +292,29 @@ def _make_guided_postprocess_runner(
     return None
 
 
+def _make_guided_output_init_runner(*, io_spec: dict[str, Any], outputs_torch: dict[str, torch.Tensor]) -> Any | None:
+    spec = io_spec.get("output_init") if isinstance(io_spec.get("output_init"), dict) else {}
+    init_items: list[tuple[torch.Tensor, float]] = []
+    for name, cfg in dict(spec or {}).items():
+        tensor = outputs_torch.get(str(name))
+        if tensor is None:
+            continue
+        if isinstance(cfg, dict):
+            op = str(cfg.get("op") or "").strip().lower()
+            if op == "fill" and "value" in cfg:
+                init_items.append((tensor, float(cfg.get("value") or 0.0)))
+        elif isinstance(cfg, (int, float)):
+            init_items.append((tensor, float(cfg)))
+    if not init_items:
+        return None
+
+    def _runner(init_items=tuple(init_items)):
+        for tensor, value in init_items:
+            tensor.fill_(float(value))
+
+    return _runner
+
+
 def _load_guided_realizations(report: dict[str, Any]) -> list[dict[str, Any]]:
     org = report.get("org") if isinstance(report.get("org"), dict) else {}
     compile_checks = list(org.get("compile_checks") or [])
@@ -335,9 +368,21 @@ def _load_guided_realizations(report: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaLaunch, warmup: int, iters: int, repeats: int, postprocess_runner: Any | None = None) -> tuple[float, list[float]]:
+def _bench_module_launch(
+    *,
+    compiled_module: Any,
+    args: list[Any],
+    launch: CudaLaunch,
+    warmup: int,
+    iters: int,
+    repeats: int,
+    prelaunch_runner: Any | None = None,
+    postprocess_runner: Any | None = None,
+) -> tuple[float, list[float]]:
     launch_args = [*args, int(launch.grid[0]), int(launch.grid[1]), int(launch.grid[2]), int(launch.block[0]), int(launch.block[1]), int(launch.block[2]), int(launch.shared_mem)]
     for _ in range(int(warmup)):
+        if prelaunch_runner is not None:
+            prelaunch_runner()
         compiled_module.launch(*launch_args)
         if postprocess_runner is not None:
             postprocess_runner()
@@ -346,6 +391,8 @@ def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaL
     try:
         with torch.cuda.graph(g):
             for _ in range(int(iters)):
+                if prelaunch_runner is not None:
+                    prelaunch_runner()
                 compiled_module.launch(*launch_args)
                 if postprocess_runner is not None:
                     postprocess_runner()
@@ -361,6 +408,8 @@ def _bench_module_launch(*, compiled_module: Any, args: list[Any], launch: CudaL
             g.replay()
         else:
             for _ in range(int(iters)):
+                if prelaunch_runner is not None:
+                    prelaunch_runner()
                 compiled_module.launch(*launch_args)
                 if postprocess_runner is not None:
                     postprocess_runner()
@@ -869,6 +918,10 @@ def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int, sha
                 baseline=baseline_for_candidate,
                 outputs_torch=outputs_torch,
             )
+            prelaunch_runner = _make_guided_output_init_runner(
+                io_spec=dict(realization.get("io_spec") or {}),
+                outputs_torch=outputs_torch,
+            )
             ns_guided, guided_repeats = _bench_module_launch(
                 compiled_module=compiled_module,
                 args=args,
@@ -876,8 +929,25 @@ def _run_one(spec, *, out_root: Path, warmup: int, iters: int, repeats: int, sha
                 warmup=warmup,
                 iters=iters,
                 repeats=repeats,
+                prelaunch_runner=prelaunch_runner,
                 postprocess_runner=postprocess_runner,
             )
+            launch = realization["launch"]
+            launch_args = [
+                *args,
+                int(launch.grid[0]),
+                int(launch.grid[1]),
+                int(launch.grid[2]),
+                int(launch.block[0]),
+                int(launch.block[1]),
+                int(launch.block[2]),
+                int(launch.shared_mem),
+            ]
+            if prelaunch_runner is not None:
+                prelaunch_runner()
+            compiled_module.launch(*launch_args)
+            if postprocess_runner is not None:
+                postprocess_runner()
             torch.cuda.synchronize()
             guided_outputs = {str(k): v.detach().cpu().numpy() for k, v in outputs_torch.items()}
             guided_outputs = _with_io_aliases_for_names(sorted(set(list(guided_outputs.keys()) + list(output_names))), guided_outputs)

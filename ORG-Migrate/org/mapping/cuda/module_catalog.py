@@ -1094,7 +1094,7 @@ def tvd_loss2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             id="tvd_input_resident",
             kind="staging",
             provides=["tvd.input_resident"],
-            params=[],
+            params=["TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"],
             constraints=[],
         ),
         BackendModule(
@@ -1108,8 +1108,22 @@ def tvd_loss2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             id="tvd_row_reduction",
             kind="communication",
             provides=["tvd.row_reduction"],
-            params=[],
+            params=["TVD_BLOCK_THREADS"],
             constraints=[],
+        ),
+        BackendModule(
+            id="tvd_vector_row_io",
+            kind="primitive",
+            provides=["tvd.vector_row_io"],
+            params=["TVD_VECTOR_WIDTH"],
+            constraints=["TVD_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id="tvd_warp_tree_reduction",
+            kind="communication",
+            provides=["tvd.warp_tree_reduction"],
+            params=["TVD_BLOCK_THREADS"],
+            constraints=["TVD_BLOCK_THREADS in {64,128,256,512}"],
         ),
         BackendModule(
             id="tvd_scalar_finalize",
@@ -1128,8 +1142,22 @@ def tvd_loss2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
                 "tvd.row_reduction",
                 "tvd.scalar_finalize",
             ],
-            params=[],
+            params=["TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"],
             constraints=[],
+        ),
+        BackendModule(
+            id="tvd_backend_v2",
+            kind="template",
+            provides=["backend.kernel_kind.tvd_loss2d_v2"],
+            requires=[
+                "tvd.input_resident",
+                "tvd.abs_sub_path",
+                "tvd.row_reduction",
+                "tvd.warp_tree_reduction",
+                "tvd.scalar_finalize",
+            ],
+            params=["TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"],
+            constraints=["TVD_BLOCK_THREADS in {64,128,256,512}", "TVD_VECTOR_WIDTH in {1,2,4}"],
         ),
     ]
     edges = [
@@ -1137,6 +1165,91 @@ def tvd_loss2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
         BackendModuleEdge(src="tvd_backend_v1", dst="tvd_abs_sub_path", edge_type="uses"),
         BackendModuleEdge(src="tvd_backend_v1", dst="tvd_row_reduction", edge_type="uses"),
         BackendModuleEdge(src="tvd_backend_v1", dst="tvd_scalar_finalize", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v1", dst="tvd_vector_row_io", edge_type="optional"),
+        BackendModuleEdge(src="tvd_backend_v2", dst="tvd_input_resident", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v2", dst="tvd_abs_sub_path", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v2", dst="tvd_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v2", dst="tvd_warp_tree_reduction", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v2", dst="tvd_scalar_finalize", edge_type="uses"),
+        BackendModuleEdge(src="tvd_backend_v2", dst="tvd_vector_row_io", edge_type="optional"),
+    ]
+    return modules, edges, list(PASS_SEQUENCE)
+
+
+def poly_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModule], list[BackendModuleEdge], list[str]]:
+    _ = hardware_model
+    modules = [
+        BackendModule(
+            id="poly_norm_row_tile_resident",
+            kind="staging",
+            provides=["poly_norm.row_tile_resident"],
+            params=["POLY_NORM_BLOCK_THREADS", "POLY_NORM_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="poly_norm_multi_output_stats_resident",
+            kind="communication",
+            provides=["poly_norm.multi_output_stats_resident"],
+            params=["POLY_NORM_BLOCK_THREADS"],
+            constraints=["POLY_NORM_BLOCK_THREADS in {128,256}"],
+        ),
+        BackendModule(
+            id="poly_norm_full_row_vector_resident",
+            kind="primitive",
+            provides=["poly_norm.full_row_vector_resident"],
+            params=["POLY_NORM_FULL_ROW_VECTOR", "POLY_NORM_BLOCK_THREADS", "POLY_NORM_VECTOR_WIDTH"],
+            constraints=["POLY_NORM_FULL_ROW_VECTOR in {1}", "POLY_NORM_VECTOR_WIDTH in {4}"],
+        ),
+        BackendModule(
+            id="poly_norm_vector_row_io",
+            kind="primitive",
+            provides=["poly_norm.vector_row_io"],
+            params=["POLY_NORM_VECTOR_WIDTH"],
+            constraints=["POLY_NORM_VECTOR_WIDTH in {1,2,4}"],
+        ),
+        BackendModule(
+            id="poly_norm_affine_epilogue",
+            kind="fusion",
+            provides=["poly_norm.affine_epilogue"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="poly_norm_backend_v1",
+            kind="template",
+            provides=["backend.kernel_kind.poly_norm_axis1_v1"],
+            requires=[
+                "poly_norm.row_tile_resident",
+                "poly_norm.multi_output_stats_resident",
+                "poly_norm.affine_epilogue",
+            ],
+            params=["POLY_NORM_BLOCK_THREADS"],
+            constraints=["POLY_NORM_BLOCK_THREADS in {128,256}"],
+        ),
+        BackendModule(
+            id="poly_norm_backend_v2",
+            kind="template",
+            provides=["backend.kernel_kind.poly_norm_axis1_v2"],
+            requires=[
+                "poly_norm.row_tile_resident",
+                "poly_norm.multi_output_stats_resident",
+                "poly_norm.full_row_vector_resident",
+                "poly_norm.affine_epilogue",
+            ],
+            params=["POLY_NORM_BLOCK_THREADS", "POLY_NORM_VECTOR_WIDTH", "POLY_NORM_FULL_ROW_VECTOR"],
+            constraints=["POLY_NORM_BLOCK_THREADS in {128,256}", "POLY_NORM_FULL_ROW_VECTOR in {1}", "POLY_NORM_VECTOR_WIDTH in {4}"],
+        ),
+    ]
+    edges = [
+        BackendModuleEdge(src="poly_norm_backend_v1", dst="poly_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v1", dst="poly_norm_multi_output_stats_resident", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v1", dst="poly_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v1", dst="poly_norm_vector_row_io", edge_type="optional"),
+        BackendModuleEdge(src="poly_norm_backend_v2", dst="poly_norm_row_tile_resident", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v2", dst="poly_norm_multi_output_stats_resident", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v2", dst="poly_norm_full_row_vector_resident", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v2", dst="poly_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="poly_norm_backend_v2", dst="poly_norm_vector_row_io", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 
@@ -1151,6 +1264,7 @@ __all__ = [
     "layer_norm_persistent_catalog",
     "rms_norm2d_catalog",
     "group_norm_kernel_catalog",
+    "poly_norm2d_catalog",
     "matmul_fused_epilogue2d_catalog",
     "rope_view_catalog",
     "cfg_masked_row_reduce_catalog",
