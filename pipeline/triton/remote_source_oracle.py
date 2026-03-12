@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_ROOT = ROOT.parent
 DEFAULT_LIGER_ROOT = WORKSPACE_ROOT / "Liger-Kernel"
 REMOTE_RUNNER = ROOT / "scripts" / "triton" / "liger_remote_source_oracle_runner.py"
+DEFAULT_REMOTE_SSH = "kingdom@211.87.236.70"
 
 _SUPPORTED_KERNELS = {
     "liger_swiglu",
@@ -48,7 +49,7 @@ def remote_source_enabled() -> bool:
     raw = str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_ENABLE", "") or "").strip().lower()
     if raw in {"1", "true", "yes", "y", "on"}:
         return True
-    return bool(str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", "") or "").strip())
+    return bool(str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", DEFAULT_REMOTE_SSH) or "").strip())
 
 
 def _remote_source_allow_fallback() -> bool:
@@ -64,9 +65,9 @@ def _liger_local_root() -> Path:
 
 
 def _ssh_target() -> str:
-    raw = str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", "") or "").strip()
+    raw = str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", DEFAULT_REMOTE_SSH) or "").strip()
     if not raw:
-        raise RuntimeError("INTENTIR_ORG_REMOTE_SOURCE_SSH is not set")
+        raise RuntimeError("INTENTIR_ORG_REMOTE_SOURCE_SSH is not set and no default remote target is configured")
     return raw
 
 

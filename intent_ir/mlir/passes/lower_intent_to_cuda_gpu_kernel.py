@@ -6578,15 +6578,48 @@ def lower_intent_to_cuda_gpu_kernel(
         def _op_out(op: Any) -> str:
             return str(getattr(op, "output", "") or "").strip()
 
+        def _op_name(op: Any) -> str:
+            return str(getattr(op, "op", "") or "").strip()
+
         def _dims(name: str) -> list[int] | None:
             spec = arg_specs.get(str(name))
-            if not isinstance(spec, dict):
+            if isinstance(spec, dict):
+                dims = list(spec.get("dims") or [])
+                return [int(x) for x in dims] if dims else []
+            tt = (intent.tensors or {}).get(str(name))
+            if tt is None:
                 return None
-            dims = list(spec.get("dims") or [])
-            return [int(x) for x in dims] if dims else []
+            resolved: list[int] = []
+            for dim in list(getattr(tt, "shape", []) or []):
+                iv = _resolve_dim_int(dim, bindings)
+                if iv is None or iv <= 0:
+                    return None
+                resolved.append(int(iv))
+            return resolved
 
         def _elem(name: str) -> str:
-            return str((arg_specs.get(str(name)) or {}).get("memref_elem_ty") or "").strip()
+            spec = arg_specs.get(str(name))
+            if isinstance(spec, dict):
+                return str(spec.get("memref_elem_ty") or "").strip()
+            tt = (intent.tensors or {}).get(str(name))
+            if tt is None:
+                return ""
+            return str(_dtype_to_mlir_memref_elem(str(getattr(tt, "dtype", "f32")) or "f32")).strip()
+
+        producers_by_out: dict[str, Any] = {}
+        for _op in ops_list:
+            _out = _op_out(_op)
+            if _out:
+                producers_by_out[str(_out)] = _op
+
+        def _producer(name: str) -> Any | None:
+            key = str(name or "").strip()
+            if not key:
+                return None
+            return producers_by_out.get(key)
+
+        def _perm(op: Any) -> list[int]:
+            return [int(x) for x in list(dict(getattr(op, "attrs", {}) or {}).get("perm") or [])]
 
         # Pattern: logical-public dual-rope with explicit physical transpose views.
         if op_names == ["transpose", "transpose", "rope", "rope", "transpose", "transpose"]:
@@ -6792,6 +6825,135 @@ def lower_intent_to_cuda_gpu_kernel(
                                 "Q_LAYOUT": str(q_layout),
                                 "K_LAYOUT": str(k_layout),
                             }
+
+        # Pattern: dual-rope recovered from arbitrary producer graph.
+        # This tolerates pre-rotation layout/view algebra (for example, mrope
+        # section masking and combined cos/sin construction) as long as the
+        # terminal physical structure is still:
+        #   logical q/k -> transpose(0,2,1,3) -> rope(bshd) -> transpose(0,2,1,3) -> q_out/k_out
+        if rope_dual_v1 is None and len(list(intent.outputs or [])) == 2:
+            q_out_name = str(list(intent.outputs or [])[0] or "").strip()
+            k_out_name = str(list(intent.outputs or [])[1] or "").strip()
+            q_out_prod = _producer(q_out_name)
+            k_out_prod = _producer(k_out_name)
+            if (
+                q_out_prod is not None
+                and k_out_prod is not None
+                and _op_name(q_out_prod) == "transpose"
+                and _op_name(k_out_prod) == "transpose"
+                and _perm(q_out_prod) == [0, 2, 1, 3]
+                and _perm(k_out_prod) == [0, 2, 1, 3]
+            ):
+                q_out_ins = _op_inputs(q_out_prod)
+                k_out_ins = _op_inputs(k_out_prod)
+                if len(q_out_ins) == 1 and len(k_out_ins) == 1:
+                    q_rope_out = str(q_out_ins[0])
+                    k_rope_out = str(k_out_ins[0])
+                    q_rope = _producer(q_rope_out)
+                    k_rope = _producer(k_rope_out)
+                    if (
+                        q_rope is not None
+                        and k_rope is not None
+                        and _op_name(q_rope) == "rope"
+                        and _op_name(k_rope) == "rope"
+                    ):
+                        q_rope_ins = _op_inputs(q_rope)
+                        k_rope_ins = _op_inputs(k_rope)
+                        q_rope_attrs = dict(getattr(q_rope, "attrs", {}) or {})
+                        k_rope_attrs = dict(getattr(k_rope, "attrs", {}) or {})
+                        if (
+                            len(q_rope_ins) == 3
+                            and len(k_rope_ins) == 3
+                            and str(q_rope_ins[1]) == str(k_rope_ins[1])
+                            and str(q_rope_ins[2]) == str(k_rope_ins[2])
+                            and str(q_rope_attrs.get("input_layout") or "bshd").strip().lower() == "bshd"
+                            and str(k_rope_attrs.get("input_layout") or "bshd").strip().lower() == "bshd"
+                            and str(_op_out(q_rope)) == q_rope_out
+                            and str(_op_out(k_rope)) == k_rope_out
+                        ):
+                            q_phys_name = str(q_rope_ins[0])
+                            k_phys_name = str(k_rope_ins[0])
+                            q_phys_prod = _producer(q_phys_name)
+                            k_phys_prod = _producer(k_phys_name)
+                            if (
+                                q_phys_prod is not None
+                                and k_phys_prod is not None
+                                and _op_name(q_phys_prod) == "transpose"
+                                and _op_name(k_phys_prod) == "transpose"
+                                and _perm(q_phys_prod) == [0, 2, 1, 3]
+                                and _perm(k_phys_prod) == [0, 2, 1, 3]
+                            ):
+                                q_phys_ins = _op_inputs(q_phys_prod)
+                                k_phys_ins = _op_inputs(k_phys_prod)
+                                if len(q_phys_ins) == 1 and len(k_phys_ins) == 1:
+                                    q_name = str(q_phys_ins[0])
+                                    k_name = str(k_phys_ins[0])
+                                    cos_name = str(q_rope_ins[1])
+                                    sin_name = str(q_rope_ins[2])
+                                    q_dims = _dims(q_name)
+                                    k_dims = _dims(k_name)
+                                    q_out_dims = _dims(q_out_name)
+                                    k_out_dims = _dims(k_out_name)
+                                    cos_dims = _dims(cos_name)
+                                    sin_dims = _dims(sin_name)
+                                    if (
+                                        q_dims
+                                        and k_dims
+                                        and q_out_dims
+                                        and k_out_dims
+                                        and cos_dims
+                                        and sin_dims
+                                        and len(q_dims) == 4
+                                        and len(k_dims) == 4
+                                        and len(q_out_dims) == 4
+                                        and len(k_out_dims) == 4
+                                        and len(cos_dims) in {2, 3}
+                                        and len(sin_dims) in {2, 3}
+                                    ):
+                                        b_dim, qh_dim, s_dim, hd_dim = map(int, q_dims)
+                                        bk_dim, kh_dim, sk_dim, hk_dim = map(int, k_dims)
+                                        if (
+                                            list(map(int, q_out_dims)) == [b_dim, qh_dim, s_dim, hd_dim]
+                                            and list(map(int, k_out_dims)) == [bk_dim, kh_dim, sk_dim, hk_dim]
+                                            and b_dim == bk_dim
+                                            and s_dim == sk_dim
+                                            and hd_dim == hk_dim
+                                            and hd_dim > 0
+                                            and hd_dim % 2 == 0
+                                        ):
+                                            cos_b = int(cos_dims[0]) if len(cos_dims) == 3 else 1
+                                            cos_s = int(cos_dims[-2]) if len(cos_dims) >= 2 else 0
+                                            cos_w = int(cos_dims[-1]) if len(cos_dims) >= 1 else 0
+                                            sin_b = int(sin_dims[0]) if len(sin_dims) == 3 else 1
+                                            sin_s = int(sin_dims[-2]) if len(sin_dims) >= 2 else 0
+                                            sin_w = int(sin_dims[-1]) if len(sin_dims) >= 1 else 0
+                                            half = hd_dim // 2
+                                            if (
+                                                cos_s == s_dim
+                                                and sin_s == s_dim
+                                                and cos_b in {1, b_dim}
+                                                and sin_b in {1, b_dim}
+                                                and cos_w in {half, hd_dim}
+                                                and sin_w in {half, hd_dim}
+                                            ):
+                                                rope_dual_v1 = {
+                                                    "q": q_name,
+                                                    "k": k_name,
+                                                    "cos": cos_name,
+                                                    "sin": sin_name,
+                                                    "q_out": q_out_name,
+                                                    "k_out": k_out_name,
+                                                    "B": int(b_dim),
+                                                    "S": int(s_dim),
+                                                    "QH": int(qh_dim),
+                                                    "KH": int(kh_dim),
+                                                    "HD": int(hd_dim),
+                                                    "HALF": int(half),
+                                                    "COS_B": int(cos_b),
+                                                    "COS_W": int(cos_w),
+                                                    "Q_LAYOUT": "bhsd",
+                                                    "K_LAYOUT": "bhsd",
+                                                }
 
         if tuple(op_names) in {
             (

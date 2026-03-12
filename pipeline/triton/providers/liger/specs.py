@@ -361,6 +361,13 @@ def _qwen2vl_mrope_runner(case: TestCase) -> Dict[str, np.ndarray]:
     section_h = max(1, hd // 8)
     q_out, k_out, _cos_out, _sin_out = qwen2vl_mrope_forward(q, k, cos, sin, [section_t, section_h])
     torch.cuda.synchronize()
+    hd_idx = torch.arange(hd, device=q.device)
+    t_mask = (hd_idx < int(section_t)).to(dtype=cos_in.dtype).view(1, 1, hd)
+    h_end = int(section_t) + int(section_h)
+    h_mask = ((hd_idx >= int(section_t)) & (hd_idx < h_end)).to(dtype=cos_in.dtype).view(1, 1, hd)
+    w_mask = (hd_idx >= h_end).to(dtype=cos_in.dtype).view(1, 1, hd)
+    cos_combined = (cos_in[0] * t_mask) + (cos_in[1] * h_mask) + (cos_in[2] * w_mask)
+    sin_combined = (sin_in[0] * t_mask) + (sin_in[1] * h_mask) + (sin_in[2] * w_mask)
     q_phys_in = q_in.transpose(1, 2).contiguous()
     k_phys_in = k_in.transpose(1, 2).contiguous()
     q_phys_out = q_out.transpose(1, 2).contiguous()
@@ -378,6 +385,8 @@ def _qwen2vl_mrope_runner(case: TestCase) -> Dict[str, np.ndarray]:
         "sin_t": _to_np(sin_in[0]),
         "sin_h": _to_np(sin_in[1]),
         "sin_w": _to_np(sin_in[2]),
+        "cos_combined": _to_np(cos_combined),
+        "sin_combined": _to_np(sin_combined),
         "mrope_section_t": np.array(section_t, dtype=np.int32),
         "mrope_section_h": np.array(section_h, dtype=np.int32),
         "q_out": _to_np(q_out),
@@ -559,10 +568,14 @@ def _fused_neighborhood_attention_runner(case: TestCase) -> Dict[str, np.ndarray
         "query": _to_np(query),
         "key": _to_np(key),
         "value": _to_np(value),
+        "Q": _to_np(query),
+        "K": _to_np(key),
+        "V": _to_np(value),
         "kernel_size": np.array(kernel_size, dtype=np.int32),
         "dilation": np.array(dilation, dtype=np.int32),
         "scale": scale,
         "Y": _to_np(y),
+        "O": _to_np(y),
     }
 
 

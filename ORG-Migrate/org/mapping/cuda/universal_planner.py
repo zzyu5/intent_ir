@@ -1009,6 +1009,11 @@ def _resolve_family_spec(
         if profile.has_signal("fused_epilogue"):
             _consider("matmul_fused_epilogue2d", 126.0, "graph:mma+epilogue")
         _consider("ai_bench_matmul", 118.0, "graph:mma")
+    if profile.has_signal("layout_path") and profile.has_signal("alias_view"):
+        rope_score = 109.0
+        if profile.has_signal("vector_path"):
+            rope_score += 3.0
+        _consider("liger_rope", rope_score, "graph:alias_view+layout_rotation")
     if profile.has_signal("reduction_path") and profile.has_signal("online_state"):
         if profile.has_signal("mask_path"):
             _consider("masked_softmax2d", 114.0, "graph:masked_softmax")
@@ -1926,8 +1931,8 @@ def _family_specs() -> dict[str, FamilySpec]:
                     kernel_kind="rope_dual_v1",
                     module_id="rope_backend_v1",
                     param_names=(),
-                    required_signals=("layout_path", "alias_view"),
-                    signal_weights={"vector_path": 2.0},
+                    required_signals=(),
+                    signal_weights={"layout_path": 18.0, "alias_view": 18.0, "vector_path": 2.0},
                 ),
             ),
         ),

@@ -276,6 +276,8 @@ def run_diff(
                 if arr2 is None:
                     arr2 = _unsqueeze_unit_dims_to_match(arr, tuple(expected_shape))
                 if arr2 is None:
+                    arr2 = _transpose_2d_to_match(arr, tuple(expected_shape), name=name)
+                if arr2 is None:
                     diff = DiffResult(
                         ok=False,
                         max_abs_err=0.0,
@@ -627,6 +629,21 @@ def _unsqueeze_unit_dims_to_match(arr: np.ndarray, target_shape: tuple[int, ...]
     return reshaped if tuple(reshaped.shape) == ref_shape else None
 
 
+def _transpose_2d_to_match(arr: np.ndarray, target_shape: tuple[int, ...], *, name: str = "") -> np.ndarray | None:
+    """
+    Allow a logical 2D weight tensor to match a physical transposed storage view.
+    This keeps view repair generic for fused linear / tiled-MLP style kernels.
+    """
+    if arr.ndim != 2 or len(tuple(target_shape)) != 2:
+        return None
+    if tuple(arr.T.shape) != tuple(target_shape):
+        return None
+    token = str(name or "").strip().lower()
+    if token and not any(hint in token for hint in ("weight", "proj", "kernel", "filter", "matrix", "mat")):
+        return None
+    return np.asarray(arr.T)
+
+
 def _numel(shape):
     n = 1
     for d in shape:
@@ -729,8 +746,15 @@ def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
     if k_dim is not None:
         bindings.setdefault("kernel_size", k_dim)
     hc = _binding_int(bindings, "HC")
+    c_dim = _binding_int(bindings, "C")
+    if hc is not None and c_dim is not None:
+        bindings.setdefault("HC_C", hc * c_dim)
     if hc is not None and "M" not in bindings:
         bindings["M"] = hc * hc + 2 * hc
+    t_dim = _binding_int(bindings, "T")
+    if t_dim is not None:
+        bindings.setdefault("T_plus_1", t_dim + 1)
+        bindings.setdefault("T1", t_dim + 1)
 
     if "OH" not in bindings:
         H = _binding_int(bindings, "H")
