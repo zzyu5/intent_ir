@@ -31,6 +31,16 @@ _SUPPORTED_KERNELS = {
     "liger_sparsemax",
     "liger_kl_div",
     "liger_jsd",
+    "liger_fused_linear_cross_entropy",
+    "liger_fused_linear_jsd",
+    "liger_fused_neighborhood_attention",
+    "liger_grpo_loss",
+    "liger_llama4_rope",
+    "liger_mhc",
+    "liger_multi_token_attention",
+    "liger_poly_norm",
+    "liger_tiled_mlp",
+    "liger_tvd",
 }
 
 
@@ -105,6 +115,16 @@ def _canonical_remote_bindings(spec_name: str, shape_bindings: Mapping[str, int]
         "liger_sparsemax": {"M": 2048, "N": 4096},
         "liger_kl_div": {"BT": 2048, "V": 4096},
         "liger_jsd": {"BT": 2048, "V": 4096},
+        "liger_fused_linear_cross_entropy": {"BT": 2048, "H": 2048, "V": 4096},
+        "liger_fused_linear_jsd": {"BT": 2048, "H": 2048, "V": 4096},
+        "liger_fused_neighborhood_attention": {"B": 1, "QH": 8, "S": 512, "HD": 64, "kernel_size": 7, "dilation": 1},
+        "liger_grpo_loss": {"B": 4, "T": 512, "V": 4096},
+        "liger_llama4_rope": {"B": 1, "QH": 32, "KH": 8, "S": 2048, "HD": 64},
+        "liger_mhc": {"B": 2, "T": 512, "HC": 4, "C": 128},
+        "liger_multi_token_attention": {"B": 2, "CIN": 4, "COUT": 4, "L": 128, "K": 3, "groups": 1},
+        "liger_poly_norm": {"M": 2048, "N": 4096},
+        "liger_tiled_mlp": {"B": 1, "S": 4096, "H": 2048, "I": 5632, "num_shards": 4},
+        "liger_tvd": {"BT": 2048, "V": 4096},
     }
     out = dict(defaults.get(str(spec_name), {}))
     out.update(raw)

@@ -8,6 +8,7 @@ import os
 import statistics
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -403,14 +404,27 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
         cross_entropy_forward,
         geglu_forward,
         fused_add_rms_norm_forward,
+        fused_linear_cross_entropy_forward,
+        fused_linear_jsd_forward,
+        fused_neighborhood_attention_forward,
         jsd_forward,
         kldiv_forward_triton,
+        liger_fused_neighborhood_attention,
+        liger_fused_linear_cross_entropy,
+        liger_fused_linear_jsd,
         liger_dyt_fwd,
+        liger_mhc_forward,
+        liger_multi_token_attention,
+        liger_poly_norm,
+        liger_tvd,
         group_norm_forward,
         layer_norm_forward,
+        llama4_rope_forward,
+        LigerTiledGEGLUMLP,
         qwen2vl_mrope_forward,
         rms_norm_forward,
         rope_forward,
+        triton_grpo_loss,
         _sparsemax_forward,
         _softmax_forward,
         swiglu_forward,
@@ -538,6 +552,119 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
             jsd_forward(x, y, labels, 0.5, -100, True)
 
         return _fn
+    if kernel == "liger_fused_linear_cross_entropy":
+        x = torch.as_tensor(np.asarray(baseline["input"]), device="cuda", dtype=torch.float32).contiguous()
+        w = torch.as_tensor(np.asarray(baseline["weight"]), device="cuda", dtype=torch.float32).contiguous()
+        target = torch.as_tensor(np.asarray(baseline["target"]), device="cuda", dtype=torch.int64).contiguous()
+
+        def _fn():
+            liger_fused_linear_cross_entropy(x, w, target, None, None, -100, 0.0, 0.0, "mean", None, False)
+
+        return _fn
+    if kernel == "liger_fused_linear_jsd":
+        student_input = torch.as_tensor(np.asarray(baseline["student_input"]), device="cuda", dtype=torch.float32).contiguous()
+        student_weight = torch.as_tensor(np.asarray(baseline["student_weight"]), device="cuda", dtype=torch.float32).contiguous()
+        teacher_input = torch.as_tensor(np.asarray(baseline["teacher_input"]), device="cuda", dtype=torch.float32).contiguous()
+        teacher_weight = torch.as_tensor(np.asarray(baseline["teacher_weight"]), device="cuda", dtype=torch.float32).contiguous()
+        labels = torch.as_tensor(np.asarray(baseline["shift_labels"]), device="cuda", dtype=torch.int64).contiguous()
+
+        def _fn():
+            liger_fused_linear_jsd(student_input, student_weight, teacher_input, teacher_weight, labels, 0.5, -100, 1.0)
+
+        return _fn
+    if kernel == "liger_fused_neighborhood_attention":
+        query = torch.as_tensor(np.asarray(baseline["query"]), device="cuda", dtype=torch.float32).contiguous()
+        key = torch.as_tensor(np.asarray(baseline["key"]), device="cuda", dtype=torch.float32).contiguous()
+        value = torch.as_tensor(np.asarray(baseline["value"]), device="cuda", dtype=torch.float32).contiguous()
+        kernel_size = int(np.asarray(baseline["kernel_size"]).reshape(()))
+        dilation = int(np.asarray(baseline["dilation"]).reshape(()))
+
+        def _fn():
+            liger_fused_neighborhood_attention(query, key, value, kernel_size=kernel_size, dilation=dilation, scale=None)
+
+        return _fn
+    if kernel == "liger_grpo_loss":
+        logits = torch.as_tensor(np.asarray(baseline["logits"]), device="cuda", dtype=torch.float32).contiguous()
+        old_logp = torch.as_tensor(np.asarray(baseline["old_logp"]), device="cuda", dtype=torch.float32).contiguous()
+        ref_logp = torch.as_tensor(np.asarray(baseline["ref_logp"]), device="cuda", dtype=torch.float32).contiguous()
+        completion_ids = torch.as_tensor(np.asarray(baseline["completion_ids"]), device="cuda", dtype=torch.int64).contiguous()
+        advantages = torch.as_tensor(np.asarray(baseline["advantages"]), device="cuda", dtype=torch.float32).contiguous()
+        completion_mask = torch.as_tensor(np.asarray(baseline["completion_mask"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            triton_grpo_loss(logits, old_logp, ref_logp, completion_ids, advantages, completion_mask, reduce=True)
+
+        return _fn
+    if kernel == "liger_llama4_rope":
+        q = torch.as_tensor(np.asarray(baseline["q"]), device="cuda", dtype=torch.float32).contiguous()
+        k = torch.as_tensor(np.asarray(baseline["k"]), device="cuda", dtype=torch.float32).contiguous()
+        freqs_cis = torch.as_tensor(np.asarray(baseline["freqs_cis"]), device="cuda", dtype=torch.complex64).contiguous()
+
+        def _fn():
+            llama4_rope_forward(q, k, freqs_cis)
+
+        return _fn
+    if kernel == "liger_mhc":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        phi = torch.as_tensor(np.asarray(baseline["Phi"]), device="cuda", dtype=torch.float32).contiguous()
+        bias = torch.as_tensor(np.asarray(baseline["B"]), device="cuda", dtype=torch.float32).contiguous()
+        alpha_pre = torch.as_tensor(np.asarray(baseline["AlphaPre"]).reshape(()), device="cuda", dtype=torch.float32)
+        alpha_post = torch.as_tensor(np.asarray(baseline["AlphaPost"]).reshape(()), device="cuda", dtype=torch.float32)
+        alpha_res = torch.as_tensor(np.asarray(baseline["AlphaRes"]).reshape(()), device="cuda", dtype=torch.float32)
+        layer_w = torch.as_tensor(np.asarray(baseline["LayerW"]), device="cuda", dtype=torch.float32).contiguous()
+        layer = torch.nn.Linear(int(layer_w.shape[1]), int(layer_w.shape[0]), bias=False, device="cuda", dtype=torch.float32)
+        with torch.no_grad():
+            layer.weight.copy_(layer_w)
+
+        def _fn():
+            liger_mhc_forward(x, layer, phi, bias, alpha_pre, alpha_post, alpha_res, allow_fp32=True, tmax=8)
+
+        return _fn
+    if kernel == "liger_multi_token_attention":
+        scores = torch.as_tensor(np.asarray(baseline["scores"]), device="cuda", dtype=torch.float32).contiguous()
+        weight = torch.as_tensor(np.asarray(baseline["weight"]), device="cuda", dtype=torch.float32).contiguous()
+        bias = torch.as_tensor(np.asarray(baseline["bias"]), device="cuda", dtype=torch.float32).contiguous()
+        groups = int(np.asarray(baseline["groups"]).reshape(()))
+        kernel_size = int(np.asarray(baseline["kernel_size"]).reshape(()))
+
+        def _fn():
+            liger_multi_token_attention(scores, weight, bias, 1, kernel_size // 2, 1, groups, False)
+
+        return _fn
+    if kernel == "liger_poly_norm":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        w = torch.as_tensor(np.asarray(baseline["W"]), device="cuda", dtype=torch.float32).contiguous()
+        b = torch.as_tensor(np.asarray(baseline["B"]).reshape(()), device="cuda", dtype=torch.float32)
+
+        def _fn():
+            liger_poly_norm(x, w, b, 1.0e-6, True)
+
+        return _fn
+    if kernel == "liger_tiled_mlp":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+        gate_w = torch.as_tensor(np.asarray(baseline["GateW"]), device="cuda", dtype=torch.float32).contiguous()
+        up_w = torch.as_tensor(np.asarray(baseline["UpW"]), device="cuda", dtype=torch.float32).contiguous()
+        down_w = torch.as_tensor(np.asarray(baseline["DownW"]), device="cuda", dtype=torch.float32).contiguous()
+        num_shards = int(np.asarray(baseline["num_shards"]).reshape(()))
+        cfg = SimpleNamespace(hidden_size=int(gate_w.shape[1]), intermediate_size=int(gate_w.shape[0]), hidden_act="gelu_pytorch_tanh")
+        mlp = LigerTiledGEGLUMLP(config=cfg, num_shards=num_shards).to("cuda").to(torch.float32)
+        with torch.no_grad():
+            mlp.gate_proj.weight.copy_(gate_w)
+            mlp.up_proj.weight.copy_(up_w)
+            mlp.down_proj.weight.copy_(down_w)
+
+        def _fn():
+            mlp(x)
+
+        return _fn
+    if kernel == "liger_tvd":
+        x = torch.as_tensor(np.asarray(baseline["input"]), device="cuda", dtype=torch.float32).contiguous()
+        y = torch.as_tensor(np.asarray(baseline["target"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            liger_tvd(x, y, None, "batchmean", -100)
+
+        return _fn
     raise KeyError(f"unsupported kernel={kernel}")
 
 
@@ -597,6 +724,29 @@ def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], gui
         return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
     if kernel == "liger_jsd":
         return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
+    if kernel == "liger_fused_linear_cross_entropy":
+        return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), _pick_io_value(baseline, "loss"))}
+    if kernel == "liger_fused_linear_jsd":
+        return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), _pick_io_value(baseline, "loss"))}
+    if kernel == "liger_fused_neighborhood_attention":
+        return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
+    if kernel == "liger_grpo_loss":
+        return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), _pick_io_value(baseline, "loss"))}
+    if kernel == "liger_llama4_rope":
+        return {
+            "q_out": _max_abs_diff(_pick_io_value(guided_outputs, "q_out"), _pick_io_value(baseline, "q_out")),
+            "k_out": _max_abs_diff(_pick_io_value(guided_outputs, "k_out"), _pick_io_value(baseline, "k_out")),
+        }
+    if kernel == "liger_mhc":
+        return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
+    if kernel == "liger_multi_token_attention":
+        return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
+    if kernel == "liger_poly_norm":
+        return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
+    if kernel == "liger_tiled_mlp":
+        return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
+    if kernel == "liger_tvd":
+        return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), _pick_io_value(baseline, "loss"))}
     raise KeyError(f"unsupported kernel={kernel}")
 
 

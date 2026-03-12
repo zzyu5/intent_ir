@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
-from typing import Dict, List
+from types import SimpleNamespace
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
@@ -20,21 +22,78 @@ if LIGER_SRC_ROOT.is_dir():
 
 from liger_kernel.ops.cross_entropy import liger_cross_entropy_kernel, cross_entropy_forward  # noqa: E402
 from liger_kernel.ops.dyt import _dyt_fwd_kernel, liger_dyt_fwd  # noqa: E402
+from liger_kernel.ops.fused_linear_cross_entropy import fused_linear_cross_entropy_forward  # noqa: E402
+from liger_kernel.ops.fused_linear_jsd import fused_linear_jsd_forward  # noqa: E402
 from liger_kernel.ops.geglu import _geglu_tanh_forward_kernel, geglu_forward  # noqa: E402
 from liger_kernel.ops.fused_add_rms_norm import (  # noqa: E402
     _fused_add_rms_norm_forward_kernel,
     fused_add_rms_norm_forward,
 )
+from liger_kernel.ops.fused_neighborhood_attention import (  # noqa: E402
+    _fused_neighborhood_attention_qk_kernel,
+    fused_neighborhood_attention_forward,
+)
 from liger_kernel.ops.group_norm import _group_norm_forward_kernel, group_norm_forward  # noqa: E402
 from liger_kernel.ops.jsd import _jsd_kernel, jsd_forward  # noqa: E402
 from liger_kernel.ops.kl_div import _kldiv_kernel_forward, kldiv_forward_triton  # noqa: E402
 from liger_kernel.ops.layer_norm import _layer_norm_forward_kernel, layer_norm_forward  # noqa: E402
+from liger_kernel.ops.llama4_rope import _llama4_rope_kernel, llama4_rope_forward  # noqa: E402
+from liger_kernel.ops.mhc import _mhc_mm_norm_fwd_kernel, mhc_mm_norm_fwd  # noqa: E402
+from liger_kernel.ops.poly_norm import _poly_norm_forward_kernel, poly_norm_forward  # noqa: E402
 from liger_kernel.ops.qwen2vl_mrope import _triton_qwen2vl_mrope, qwen2vl_mrope_forward  # noqa: E402
 from liger_kernel.ops.rms_norm import _rms_norm_forward_kernel, rms_norm_forward  # noqa: E402
 from liger_kernel.ops.rope import _triton_rope, rope_forward  # noqa: E402
 from liger_kernel.ops.softmax import _softmax_single_block_forward_kernel, _softmax_forward  # noqa: E402
 from liger_kernel.ops.sparsemax import _sparsemax_forward, _sparsemax_forward_kernel  # noqa: E402
 from liger_kernel.ops.swiglu import _swiglu_forward_kernel, swiglu_forward  # noqa: E402
+from liger_kernel.ops.tvd import _tv_distance_kernel, tv_distance_forward_triton  # noqa: E402
+from liger_kernel.transformers.functional import (  # noqa: E402
+    liger_fused_linear_cross_entropy,
+    liger_fused_linear_jsd,
+    liger_fused_neighborhood_attention,
+    liger_mhc_forward,
+    liger_multi_token_attention,
+    liger_poly_norm,
+    liger_tvd,
+)
+from liger_kernel.transformers.grpo_loss import triton_grpo_loss  # noqa: E402
+from liger_kernel.transformers.tiled_mlp import LigerTiledGEGLUMLP  # noqa: E402
+
+
+class _LazyModuleSource:
+    def __init__(self, mod_name: str):
+        self._mod_name = str(mod_name)
+        self._cached: str | None = None
+
+    def __str__(self) -> str:
+        if self._cached is not None:
+            return self._cached
+        try:
+            mod = importlib.import_module(self._mod_name)
+            mod_path = Path(getattr(mod, "__file__", ""))
+            if mod_path.is_file():
+                self._cached = mod_path.read_text(encoding="utf-8")
+            else:
+                self._cached = str(mod)
+        except Exception as exc:
+            self._cached = f"# source unavailable: {self._mod_name} ({type(exc).__name__}: {exc})"
+        return self._cached
+
+
+def _module_source_text(mod_name: str) -> _LazyModuleSource:
+    return _LazyModuleSource(str(mod_name))
+
+
+LIGER_FUSED_LINEAR_CE_SRC = _module_source_text("liger_kernel.transformers.fused_linear_cross_entropy")
+LIGER_FUSED_LINEAR_JSD_SRC = _module_source_text("liger_kernel.transformers.fused_linear_jsd")
+LIGER_FUSED_NEIGHBORHOOD_ATTN_SRC = _module_source_text("liger_kernel.transformers.fused_neighborhood_attention")
+LIGER_GRPO_LOSS_SRC = _module_source_text("liger_kernel.transformers.grpo_loss")
+LIGER_LLAMA4_ROPE_SRC = _module_source_text("liger_kernel.transformers.llama4_rope")
+LIGER_MHC_SRC = _module_source_text("liger_kernel.transformers.mhc")
+LIGER_MULTI_TOKEN_ATTN_SRC = _module_source_text("liger_kernel.transformers.multi_token_attention")
+LIGER_POLY_NORM_SRC = _module_source_text("liger_kernel.transformers.poly_norm")
+LIGER_TILED_MLP_SRC = _module_source_text("liger_kernel.transformers.tiled_mlp")
+LIGER_TVD_SRC = _module_source_text("liger_kernel.transformers.tvd")
 
 
 def _rng(seed: int) -> np.random.Generator:
@@ -412,6 +471,276 @@ def _jsd_runner(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _fused_linear_cross_entropy_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    bt = int(case.shapes["BT"])
+    h = int(case.shapes["H"])
+    v = int(case.shapes["V"])
+    x = _torch_randn((bt, h), seed=int(case.seed) + 37)
+    w = _torch_randn((v, h), seed=int(case.seed) + 38)
+    target = _torch_randint(v, (bt,), seed=int(case.seed) + 39)
+    x_in = x.clone()
+    w_in = w.clone()
+    target_in = target.clone()
+    loss = liger_fused_linear_cross_entropy(
+        x,
+        w,
+        target,
+        bias=None,
+        ce_weight=None,
+        ignore_index=-100,
+        lse_square_scale=0.0,
+        label_smoothing=0.0,
+        reduction="mean",
+        softcap=None,
+        return_z_loss=False,
+    )
+    torch.cuda.synchronize()
+    return {
+        "input": _to_np(x_in),
+        "weight": _to_np(w_in),
+        "target": _to_np(target_in),
+        "ignore_index": np.array(-100, dtype=np.int64),
+        "loss": _to_np(loss),
+    }
+
+
+def _fused_linear_jsd_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    bt = int(case.shapes["BT"])
+    h = int(case.shapes["H"])
+    v = int(case.shapes["V"])
+    student_input = _torch_randn((bt, h // 2), seed=int(case.seed) + 40)
+    teacher_input = _torch_randn((bt, h), seed=int(case.seed) + 41)
+    student_weight = _torch_randn((v, h // 2), seed=int(case.seed) + 42)
+    teacher_weight = _torch_randn((v, h), seed=int(case.seed) + 43)
+    shift_labels = _torch_randint(v, (bt,), seed=int(case.seed) + 44)
+    loss = liger_fused_linear_jsd(
+        student_input,
+        student_weight,
+        teacher_input,
+        teacher_weight,
+        shift_labels,
+        jsd_beta=0.5,
+        ignore_index=-100,
+        temperature=1.0,
+    )
+    torch.cuda.synchronize()
+    return {
+        "student_input": _to_np(student_input),
+        "student_weight": _to_np(student_weight),
+        "teacher_input": _to_np(teacher_input),
+        "teacher_weight": _to_np(teacher_weight),
+        "shift_labels": _to_np(shift_labels),
+        "ignore_index": np.array(-100, dtype=np.int64),
+        "temperature": np.array(1.0, dtype=np.float32),
+        "loss": _to_np(loss),
+    }
+
+
+def _fused_neighborhood_attention_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes["B"])
+    qh = int(case.shapes["QH"])
+    s = int(case.shapes["S"])
+    hd = int(case.shapes["HD"])
+    kernel_size = int(case.shapes.get("kernel_size", 7))
+    dilation = int(case.shapes.get("dilation", 1))
+    query = _torch_randn((b, qh, s, hd), seed=int(case.seed) + 45)
+    key = _torch_randn((b, qh, s, hd), seed=int(case.seed) + 46)
+    value = _torch_randn((b, qh, s, hd), seed=int(case.seed) + 47)
+    y = liger_fused_neighborhood_attention(query, key, value, kernel_size=kernel_size, dilation=dilation, scale=None)
+    torch.cuda.synchronize()
+    return {
+        "query": _to_np(query),
+        "key": _to_np(key),
+        "value": _to_np(value),
+        "kernel_size": np.array(kernel_size, dtype=np.int32),
+        "dilation": np.array(dilation, dtype=np.int32),
+        "Y": _to_np(y),
+    }
+
+
+def _grpo_loss_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes["B"])
+    t = int(case.shapes["T"])
+    v = int(case.shapes["V"])
+    logits = _torch_randn((b, t + 1, v), seed=int(case.seed) + 48)
+    old_logp = _torch_randn((b, t), seed=int(case.seed) + 49)
+    ref_logp = _torch_randn((b, t), seed=int(case.seed) + 50)
+    completion_ids = _torch_randint(v, (b, t), seed=int(case.seed) + 51)
+    advantages = _torch_randn((b,), seed=int(case.seed) + 52)
+    completion_mask = torch.ones((b, t), device="cuda", dtype=torch.float32)
+    loss, metrics = triton_grpo_loss(
+        logits,
+        old_logp,
+        ref_logp,
+        completion_ids,
+        advantages,
+        completion_mask,
+        temperature=0.9,
+        beta=0.04,
+        eps_low=0.2,
+        eps_high=0.4,
+        inplace=True,
+        loss_type="dapo",
+        importance_sampling_level="token",
+        reduce=True,
+    )
+    torch.cuda.synchronize()
+    metrics_arr = np.asarray([float(x.detach().cpu().item()) for x in list(metrics or [])], dtype=np.float32)
+    return {
+        "logits": _to_np(logits),
+        "old_logp": _to_np(old_logp),
+        "ref_logp": _to_np(ref_logp),
+        "completion_ids": _to_np(completion_ids),
+        "advantages": _to_np(advantages),
+        "completion_mask": _to_np(completion_mask),
+        "loss": _to_np(loss),
+        "metrics": metrics_arr,
+    }
+
+
+def _llama4_rope_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes["B"])
+    qh = int(case.shapes["QH"])
+    kh = int(case.shapes["KH"])
+    s = int(case.shapes["S"])
+    hd = int(case.shapes["HD"])
+    q = _torch_randn((b, s, qh, hd), seed=int(case.seed) + 53)
+    k = _torch_randn((b, s, kh, hd), seed=int(case.seed) + 54)
+    real = _torch_randn((s, hd // 2), seed=int(case.seed) + 55)
+    imag = _torch_randn((s, hd // 2), seed=int(case.seed) + 56)
+    freqs_cis = torch.complex(real, imag)
+    q_out, k_out = llama4_rope_forward(q, k, freqs_cis)
+    torch.cuda.synchronize()
+    return {
+        "q": _to_np(q),
+        "k": _to_np(k),
+        "freqs_cis": _to_np(freqs_cis),
+        "q_out": _to_np(q_out),
+        "k_out": _to_np(k_out),
+    }
+
+
+def _mhc_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes["B"])
+    t = int(case.shapes["T"])
+    hc = int(case.shapes["HC"])
+    c = int(case.shapes["C"])
+    x = _torch_randn((b, t, hc, c), seed=int(case.seed) + 57)
+    phi = _torch_randn((hc * c, hc * hc + 2 * hc), seed=int(case.seed) + 58)
+    bias = _torch_randn((hc * hc + 2 * hc,), seed=int(case.seed) + 59)
+    alpha_pre = _torch_randn((1,), seed=int(case.seed) + 60)
+    alpha_post = _torch_randn((1,), seed=int(case.seed) + 61)
+    alpha_res = _torch_randn((1,), seed=int(case.seed) + 62)
+    layer = torch.nn.Linear(c, c, bias=False, device="cuda", dtype=torch.float32)
+    layer_weight = _torch_randn((c, c), seed=int(case.seed) + 63)
+    with torch.no_grad():
+        layer.weight.copy_(layer_weight)
+    y = liger_mhc_forward(
+        x,
+        layer,
+        phi,
+        bias,
+        alpha_pre.reshape(()),
+        alpha_post.reshape(()),
+        alpha_res.reshape(()),
+        allow_fp32=True,
+        tmax=8,
+    )
+    torch.cuda.synchronize()
+    return {
+        "X": _to_np(x),
+        "Phi": _to_np(phi),
+        "B": _to_np(bias),
+        "AlphaPre": _to_np(alpha_pre.reshape(())),
+        "AlphaPost": _to_np(alpha_post.reshape(())),
+        "AlphaRes": _to_np(alpha_res.reshape(())),
+        "LayerW": _to_np(layer_weight),
+        "Y": _to_np(y),
+    }
+
+
+def _multi_token_attention_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes["B"])
+    c_in = int(case.shapes["CIN"])
+    c_out = int(case.shapes["COUT"])
+    l = int(case.shapes["L"])
+    k = int(case.shapes.get("K", 3))
+    groups = int(case.shapes.get("groups", 1))
+    scores = _torch_randn((b, c_in, l, l), seed=int(case.seed) + 64)
+    weight = _torch_randn((c_out, c_in // groups, k, k), seed=int(case.seed) + 65)
+    bias = _torch_randn((c_out,), seed=int(case.seed) + 66)
+    y = liger_multi_token_attention(scores, weight, bias, stride=1, padding=k // 2, dilation=1, groups=groups, sparse=False)
+    torch.cuda.synchronize()
+    return {
+        "scores": _to_np(scores),
+        "weight": _to_np(weight),
+        "bias": _to_np(bias),
+        "groups": np.array(groups, dtype=np.int32),
+        "kernel_size": np.array(k, dtype=np.int32),
+        "Y": _to_np(y),
+    }
+
+
+def _poly_norm_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    x = _torch_randn((m, n), seed=int(case.seed) + 67)
+    w = _torch_randn((3,), seed=int(case.seed) + 68)
+    b = _torch_randn((1,), seed=int(case.seed) + 69).reshape(())
+    y = liger_poly_norm(x, w, b, 1.0e-6, True)
+    torch.cuda.synchronize()
+    return {
+        "X": _to_np(x),
+        "W": _to_np(w),
+        "B": _to_np(b),
+        "eps": np.array(1.0e-6, dtype=np.float32),
+        "Y": _to_np(y),
+    }
+
+
+def _tiled_mlp_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes["B"])
+    s = int(case.shapes["S"])
+    h = int(case.shapes["H"])
+    i = int(case.shapes["I"])
+    num_shards = max(1, min(int(case.shapes.get("num_shards", 4)), s))
+    cfg = SimpleNamespace(hidden_size=h, intermediate_size=i, hidden_act="gelu_pytorch_tanh")
+    mlp = LigerTiledGEGLUMLP(config=cfg, num_shards=num_shards).to("cuda").to(torch.float32)
+    gate_w = _torch_randn((i, h), seed=int(case.seed) + 70)
+    up_w = _torch_randn((i, h), seed=int(case.seed) + 71)
+    down_w = _torch_randn((h, i), seed=int(case.seed) + 72)
+    with torch.no_grad():
+        mlp.gate_proj.weight.copy_(gate_w)
+        mlp.up_proj.weight.copy_(up_w)
+        mlp.down_proj.weight.copy_(down_w)
+    x = _torch_randn((b, s, h), seed=int(case.seed) + 73)
+    y = mlp(x)
+    torch.cuda.synchronize()
+    return {
+        "X": _to_np(x),
+        "GateW": _to_np(gate_w),
+        "UpW": _to_np(up_w),
+        "DownW": _to_np(down_w),
+        "num_shards": np.array(num_shards, dtype=np.int32),
+        "Y": _to_np(y),
+    }
+
+
+def _tvd_runner(case: TestCase) -> Dict[str, np.ndarray]:
+    bt = int(case.shapes["BT"])
+    v = int(case.shapes["V"])
+    p = torch.softmax(_torch_randn((bt, v), seed=int(case.seed) + 74), dim=-1)
+    q = torch.softmax(_torch_randn((bt, v), seed=int(case.seed) + 75), dim=-1)
+    loss = liger_tvd(p, q, None, reduction="batchmean", ignore_index=-100)
+    torch.cuda.synchronize()
+    return {
+        "input": _to_np(p),
+        "target": _to_np(q),
+        "ignore_index": np.array(-100, dtype=np.int64),
+        "loss": _to_np(loss),
+    }
+
+
 def _norm_group_norm_shapes(shapes: Dict[str, int]) -> Dict[str, int]:
     out = {str(k): int(v) for k, v in dict(shapes or {}).items()}
     n = int(out.get("N", 0))
@@ -573,6 +902,109 @@ def liger_kernel_specs() -> List[KernelSpec]:
             module=module,
             attr="_jsd_kernel.src",
             runner=_jsd_runner,
+            canonical_shapes={"BT": 2048, "V": 4096},
+            vary_axes=["BT", "V"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_fused_linear_cross_entropy",
+            module=module,
+            attr="LIGER_FUSED_LINEAR_CE_SRC",
+            runner=_fused_linear_cross_entropy_runner,
+            canonical_shapes={"BT": 2048, "H": 2048, "V": 4096},
+            vary_axes=["BT", "H"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_fused_linear_jsd",
+            module=module,
+            attr="LIGER_FUSED_LINEAR_JSD_SRC",
+            runner=_fused_linear_jsd_runner,
+            canonical_shapes={"BT": 2048, "H": 2048, "V": 4096},
+            vary_axes=["BT", "H"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_fused_neighborhood_attention",
+            module=module,
+            attr="LIGER_FUSED_NEIGHBORHOOD_ATTN_SRC",
+            runner=_fused_neighborhood_attention_runner,
+            canonical_shapes={"B": 1, "QH": 8, "S": 512, "HD": 64, "kernel_size": 7, "dilation": 1},
+            vary_axes=["B", "QH", "S", "HD"],
+            exclude_axes=["kernel_size", "dilation"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_grpo_loss",
+            module=module,
+            attr="LIGER_GRPO_LOSS_SRC",
+            runner=_grpo_loss_runner,
+            canonical_shapes={"B": 4, "T": 512, "V": 4096},
+            vary_axes=["B", "T"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_llama4_rope",
+            module=module,
+            attr="LIGER_LLAMA4_ROPE_SRC",
+            runner=_llama4_rope_runner,
+            canonical_shapes={"B": 1, "QH": 32, "KH": 8, "S": 2048, "HD": 64},
+            vary_axes=["B", "QH", "KH", "S", "HD"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_mhc",
+            module=module,
+            attr="LIGER_MHC_SRC",
+            runner=_mhc_runner,
+            canonical_shapes={"B": 2, "T": 512, "HC": 4, "C": 128},
+            vary_axes=["B", "T", "HC", "C"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_multi_token_attention",
+            module=module,
+            attr="LIGER_MULTI_TOKEN_ATTN_SRC",
+            runner=_multi_token_attention_runner,
+            canonical_shapes={"B": 2, "CIN": 4, "COUT": 4, "L": 128, "K": 3, "groups": 1},
+            vary_axes=["B", "CIN", "L"],
+            exclude_axes=["COUT", "K", "groups"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_poly_norm",
+            module=module,
+            attr="LIGER_POLY_NORM_SRC",
+            runner=_poly_norm_runner,
+            canonical_shapes={"M": 2048, "N": 4096},
+            vary_axes=["M", "N"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_tiled_mlp",
+            module=module,
+            attr="LIGER_TILED_MLP_SRC",
+            runner=_tiled_mlp_runner,
+            canonical_shapes={"B": 1, "S": 4096, "H": 2048, "I": 5632, "num_shards": 4},
+            vary_axes=["B", "S"],
+            exclude_axes=["H", "I", "num_shards"],
+            enable_stage_c=False,
+            enable_mutation_kill=False,
+        ),
+        KernelSpec(
+            name="liger_tvd",
+            module=module,
+            attr="LIGER_TVD_SRC",
+            runner=_tvd_runner,
             canonical_shapes={"BT": 2048, "V": 4096},
             vary_axes=["BT", "V"],
             enable_stage_c=False,

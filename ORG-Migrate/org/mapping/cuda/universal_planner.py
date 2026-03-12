@@ -516,7 +516,6 @@ def _graph_profile(
         signal_names.add("tiny_row")
     if int(row_width) >= 16384:
         signal_names.add("massive_row")
-        signal_names.add("elastic_fallback")
 
     if "resident_working_set" in goal_tags:
         signal_names.add("resident_state")
@@ -1160,7 +1159,11 @@ def _resource_fit(
             )
         if profile.has_signal("online_state"):
             full_row_register_bytes = max(int(full_row_register_bytes), int(profile.row_width or 0) * 8)
-        register_bytes = max(int(profile.register_bytes or 0), int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
+        # Graph-level register_bytes is an upper envelope over all observed resident
+        # lifetimes in the source kernel. Full-row templates stream epilogue weights
+        # and do not need that entire set live at once on the target. Use the
+        # candidate-specific full-row estimate as the governing register budget.
+        register_bytes = max(int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
     else:
         register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
     register_bytes += int(profile.cfg_divergence_penalty_bytes or 0)
