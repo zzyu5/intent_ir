@@ -154,7 +154,7 @@ def _workspace_credit(intent: IntentFunction, cert: object) -> int:
         # Generic training-time scratch/state tensors: row stats, workspace caches,
         # temporary gradient buffers, etc. These should not be forced into the
         # public output contract.
-        if any(tok in norm for tok in ("workspace", "cache", "state", "stats", "mean", "var", "rstd", "grad")):
+        if any(tok in norm for tok in ("workspace", "cache", "state", "stats", "mean", "var", "rstd", "grad", "lse")):
             seen_extra.add(norm)
             credit += 1
     return credit

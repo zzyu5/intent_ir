@@ -321,6 +321,12 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             scale = _resolve_value(op.attrs["scale"], env, shape_bindings)
             out = np.multiply(out, scale)
         return out
+    if op.op == "identity":
+        x = _get(env, op.inputs[0])
+        sliced = _slice_to_declared_shape(intent, op.output, x, shape_bindings)
+        if sliced is not None:
+            return sliced
+        return x
     if op.op in NUM_UNARY_OPS:
         x = _get(env, op.inputs[0])
         if op.op == "exp":
@@ -1765,6 +1771,33 @@ def _get(env: Dict[str, np.ndarray], name: str) -> np.ndarray:
     if name not in env:
         raise KeyError(f"undefined value referenced: {name}")
     return env[name]
+
+
+def _declared_tensor_shape(intent: IntentFunction, name: str, bindings: Dict[str, int]) -> tuple[int, ...] | None:
+    tensor = (getattr(intent, "tensors", {}) or {}).get(str(name))
+    if tensor is None:
+        return None
+    try:
+        return tuple(int(x) for x in _shape_from_attr(list(getattr(tensor, "shape", []) or []), bindings))
+    except Exception:
+        return None
+
+
+def _slice_to_declared_shape(intent: IntentFunction, out_name: str, x: np.ndarray, bindings: Dict[str, int]) -> np.ndarray | None:
+    target = _declared_tensor_shape(intent, out_name, bindings)
+    arr = np.asarray(x)
+    if target is None or arr.ndim != len(target) or tuple(arr.shape) == tuple(target):
+        return None
+    slices: list[slice] = []
+    for cur, want in zip(arr.shape, target):
+        if int(want) > int(cur):
+            return None
+        slices.append(slice(0, int(want)))
+    try:
+        out = arr[tuple(slices)]
+    except Exception:
+        return None
+    return np.asarray(out) if tuple(out.shape) == tuple(target) else None
 
 
 def _resolve_value(val, env: Dict[str, np.ndarray], bindings: Dict[str, int]):

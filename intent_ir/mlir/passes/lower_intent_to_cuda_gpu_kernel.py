@@ -443,8 +443,48 @@ def lower_intent_to_cuda_gpu_kernel(
                 "div",
             ),
         }
+        fused_linear_ce_pattern_ok = op_names_early == (
+            "const",
+            "matmul",
+            "reduce_max",
+            "broadcast_in_dim",
+            "sub",
+            "exp",
+            "reduce_sum",
+            "log",
+            "add",
+            "reshape",
+            "gather",
+            "reshape",
+            "sub",
+            "ne",
+            "where",
+            "cast",
+            "reduce_sum",
+            "reduce_sum",
+            "div",
+        )
+        if not fused_linear_ce_pattern_ok:
+            fused_linear_ce_pattern_ok = op_names_early == (
+                "const",
+                "matmul",
+                "reduce_max",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "gather",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            )
         if (
-            pattern_ok
+            (pattern_ok or fused_linear_ce_pattern_ok)
             and input_tt0 is not None
             and target_tt0 is not None
             and ignore_tt0 is not None
@@ -484,6 +524,28 @@ def lower_intent_to_cuda_gpu_kernel(
                     "V": int(v_dim0),
                     "target_dtype": str(getattr(target_tt0, "dtype", "")),
                 }
+                if fused_linear_ce_pattern_ok:
+                    weight_tt0 = (intent.tensors or {}).get("weight")
+                    weight_shape0 = list(getattr(weight_tt0, "shape", []) or []) if weight_tt0 is not None else []
+                    h_dim0 = _resolve_dim_int(list(getattr(input_tt0, "shape", []) or [None, None])[1], bindings)
+                    weight_v0 = _resolve_dim_int(weight_shape0[0], bindings) if len(weight_shape0) >= 1 else None
+                    weight_h0 = _resolve_dim_int(weight_shape0[1], bindings) if len(weight_shape0) >= 2 else None
+                    if (
+                        weight_tt0 is None
+                        or len(weight_shape0) != 2
+                        or h_dim0 is None
+                        or weight_v0 is None
+                        or weight_h0 is None
+                        or int(weight_v0) != int(v_dim0)
+                        or int(weight_h0) != int(h_dim0)
+                        or str(getattr(weight_tt0, "dtype", "")) != "f32"
+                    ):
+                        raise RuntimeError(
+                            "fused linear CE repair requires weight:[V,H] f32 compatible with input:[BT,H]"
+                        )
+                    early_cfg_masked_row_reduce_v1["project_input"] = "input"
+                    early_cfg_masked_row_reduce_v1["project_weight"] = "weight"
+                    early_cfg_masked_row_reduce_v1["H"] = int(h_dim0)
                 early_cuda_io_spec_patch = {
                     "tensors": {
                         str(out_name0): {
@@ -6993,11 +7055,62 @@ def lower_intent_to_cuda_gpu_kernel(
                 "reduce_sum",
                 "div",
             ),
+            (
+                "const",
+                "matmul",
+                "reduce_max",
+                "broadcast_in_dim",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "reshape",
+                "gather",
+                "reshape",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            ),
+            (
+                "const",
+                "matmul",
+                "reduce_max",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "gather",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            ),
         }:
             try:
-                inp_name = str(_op_inputs(ops_list[1])[0])
-                gather_idx = 9 if len(op_names) == 18 else 7
-                ne_idx = 12 if len(op_names) == 18 else 9
+                fused_linear_ce = len(op_names) in {16, 19} and op_names[1] == "matmul"
+                if fused_linear_ce:
+                    inp_name = str(_op_inputs(ops_list[1])[0])
+                    weight_name = str(_op_inputs(ops_list[1])[1])
+                    if len(op_names) == 19:
+                        gather_idx = 10
+                        ne_idx = 13
+                    else:
+                        gather_idx = 8
+                        ne_idx = 10
+                else:
+                    inp_name = str(_op_inputs(ops_list[1])[0])
+                    weight_name = ""
+                    gather_idx = 9 if len(op_names) == 18 else 7
+                    ne_idx = 12 if len(op_names) == 18 else 9
                 target_inputs = _op_inputs(ops_list[gather_idx])
                 target_name = str(target_inputs[1]) if len(target_inputs) >= 2 else ""
                 ignore_name = str(_op_inputs(ops_list[ne_idx])[1])
@@ -7005,7 +7118,8 @@ def lower_intent_to_cuda_gpu_kernel(
                 inp_dims = _dims(inp_name)
                 target_dims = _dims(target_name)
                 out_dims = _dims(out_name2)
-                if (
+                v_dim_match = int(inp_dims[1]) if inp_dims and len(inp_dims) == 2 else 0
+                ok_dims = (
                     inp_dims
                     and target_dims
                     and len(inp_dims) == 2
@@ -7016,16 +7130,32 @@ def lower_intent_to_cuda_gpu_kernel(
                     and str(_elem(out_name2)) == "f32"
                     and str(_elem(target_name)) in {"i32", "i64"}
                     and str(_elem(ignore_name)) in {"i32", "i64"}
-                ):
+                )
+                if fused_linear_ce:
+                    w_dims = _dims(weight_name)
+                    ok_dims = bool(
+                        ok_dims
+                        and w_dims
+                        and len(w_dims) == 2
+                        and int(w_dims[1]) == int(inp_dims[1])
+                        and str(_elem(weight_name)) == "f32"
+                    )
+                    if ok_dims:
+                        v_dim_match = int(w_dims[0])
+                if ok_dims:
                     cross_entropy_loss_v1 = {
                         "input": inp_name,
                         "target": target_name,
                         "ignore_index": ignore_name,
                         "loss": out_name2,
                         "BT": int(inp_dims[0]),
-                        "V": int(inp_dims[1]),
+                        "V": int(v_dim_match),
                         "target_dtype": str(_elem(target_name)),
                     }
+                    if fused_linear_ce:
+                        cross_entropy_loss_v1["project_input"] = inp_name
+                        cross_entropy_loss_v1["project_weight"] = weight_name
+                        cross_entropy_loss_v1["H"] = int(inp_dims[1])
             except Exception:
                 cross_entropy_loss_v1 = None
 
@@ -8350,6 +8480,12 @@ def lower_intent_to_cuda_gpu_kernel(
                 "matmul_tile_v2",
                 "matmul_tile_v1",
             },
+            "liger_fused_linear_cross_entropy": {
+                "cfg_masked_row_reduce_v1",
+            },
+            "liger_fused_linear_jsd": {
+                "cfg_masked_row_reduce_v1",
+            },
             "liger_rope": {
                 "rope_dual_v1",
             },
@@ -8376,8 +8512,89 @@ def lower_intent_to_cuda_gpu_kernel(
             allowed = {"cfg_masked_row_reduce_v1", "tvd_loss2d_v1", "tvd_loss2d_v2"}
         if allowed is None and poly_norm_axis1_v1 is not None:
             allowed = {"poly_norm_axis1_v1", "poly_norm_axis1_v2"}
-        if allowed is None and cross_entropy_loss_v1 is not None:
+        if allowed is None and (cross_entropy_loss_v1 is not None or early_cfg_masked_row_reduce_v1 is not None):
             allowed = {"cfg_masked_row_reduce_v1"}
+        if allowed is None and kernel_kind_override == "cfg_masked_row_reduce_v1":
+            current_op_names = tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
+            if current_op_names in {
+                (
+                    "const",
+                    "reduce_max",
+                    "broadcast_in_dim",
+                    "sub",
+                    "exp",
+                    "reduce_sum",
+                    "log",
+                    "add",
+                    "reshape",
+                    "gather",
+                    "reshape",
+                    "sub",
+                    "ne",
+                    "where",
+                    "cast",
+                    "reduce_sum",
+                    "reduce_sum",
+                    "div",
+                ),
+                (
+                    "const",
+                    "reduce_max",
+                    "sub",
+                    "exp",
+                    "reduce_sum",
+                    "log",
+                    "add",
+                    "gather",
+                    "sub",
+                    "ne",
+                    "where",
+                    "cast",
+                    "reduce_sum",
+                    "reduce_sum",
+                    "div",
+                ),
+                (
+                    "const",
+                    "matmul",
+                    "reduce_max",
+                    "broadcast_in_dim",
+                    "sub",
+                    "exp",
+                    "reduce_sum",
+                    "log",
+                    "add",
+                    "reshape",
+                    "gather",
+                    "reshape",
+                    "sub",
+                    "ne",
+                    "where",
+                    "cast",
+                    "reduce_sum",
+                    "reduce_sum",
+                    "div",
+                ),
+                (
+                    "const",
+                    "matmul",
+                    "reduce_max",
+                    "sub",
+                    "exp",
+                    "reduce_sum",
+                    "log",
+                    "add",
+                    "gather",
+                    "sub",
+                    "ne",
+                    "where",
+                    "cast",
+                    "reduce_sum",
+                    "reduce_sum",
+                    "div",
+                ),
+            }:
+                allowed = {"cfg_masked_row_reduce_v1"}
         if allowed is None and rope_v1 is not None:
             allowed = {"rope_v1"}
         if allowed is None and elementwise_override_compatible:
@@ -9135,15 +9352,81 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          memref.store %out_i8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
-    elif cross_entropy_loss_v1 is not None:
+    elif (
+        cross_entropy_loss_v1 is not None
+        or early_cfg_masked_row_reduce_v1 is not None
+        or tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
+        == (
+            "const",
+            "matmul",
+            "reduce_max",
+            "broadcast_in_dim",
+            "sub",
+            "exp",
+            "reduce_sum",
+            "log",
+            "add",
+            "reshape",
+            "gather",
+            "reshape",
+            "sub",
+            "ne",
+            "where",
+            "cast",
+            "reduce_sum",
+            "reduce_sum",
+            "div",
+        )
+        or tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
+        == (
+            "const",
+            "matmul",
+            "reduce_max",
+            "sub",
+            "exp",
+            "reduce_sum",
+            "log",
+            "add",
+            "gather",
+            "sub",
+            "ne",
+            "where",
+            "cast",
+            "reduce_sum",
+            "reduce_sum",
+            "div",
+        )
+    ):
         kernel_kind = "cfg_masked_row_reduce_v1"
-        inp_name = str(cross_entropy_loss_v1["input"])
-        target_name = str(cross_entropy_loss_v1["target"])
-        ignore_name = str(cross_entropy_loss_v1["ignore_index"])
-        out_name2 = str(cross_entropy_loss_v1["loss"])
-        bt_dim = int(cross_entropy_loss_v1["BT"])
-        v_dim = int(cross_entropy_loss_v1["V"])
-        target_dtype = str(cross_entropy_loss_v1.get("target_dtype") or "i64")
+        ce_struct = (
+            dict(cross_entropy_loss_v1)
+            if isinstance(cross_entropy_loss_v1, dict)
+            else dict(early_cfg_masked_row_reduce_v1 or {})
+        )
+        if not ce_struct:
+            ce_struct = {
+                "input": "input",
+                "target": "target",
+                "ignore_index": "ignore_index",
+                "loss": str(out_name),
+                "BT": int((arg_specs.get("input") or {}).get("dims", [0, 0])[0]),
+                "V": int((arg_specs.get("weight") or {}).get("dims", [0, 0])[0]),
+                "H": int((arg_specs.get("input") or {}).get("dims", [0, 0])[1]),
+                "target_dtype": str((arg_specs.get("target") or {}).get("memref_elem_ty") or "i64"),
+                "project_input": "input",
+                "project_weight": "weight",
+            }
+        inp_name = str(ce_struct["input"])
+        target_name = str(ce_struct["target"])
+        ignore_name = str(ce_struct["ignore_index"])
+        out_name2 = str(ce_struct["loss"])
+        bt_dim = int(ce_struct["BT"])
+        v_dim = int(ce_struct["V"])
+        target_dtype = str(ce_struct.get("target_dtype") or "i64")
+        projected_inp_name = str(ce_struct.get("project_input") or "").strip()
+        projected_weight_name = str(ce_struct.get("project_weight") or "").strip()
+        projected_h_dim = int(ce_struct.get("H") or 0)
+        fused_linear_ce = bool(projected_inp_name and projected_weight_name and projected_h_dim > 0)
         block_threads = int(bindings.get("CFG_ROW_BLOCK_THREADS") or 256)
         vector_width = int(bindings.get("CFG_ROW_VECTOR_WIDTH") or 1)
         if block_threads not in {128, 256, 512, 1024}:
@@ -9168,6 +9451,16 @@ def lower_intent_to_cuda_gpu_kernel(
 
         inp_memref = str(arg_specs[inp_name]["memref"])
         out_memref = str(arg_specs[out_name2]["memref"])
+        weight_memref = ""
+        if fused_linear_ce:
+            if projected_inp_name not in arg_specs or projected_weight_name not in arg_specs:
+                raise RuntimeError("fused linear CE lowering requires projected input/weight arg specs")
+            if str(arg_specs[projected_inp_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("fused linear CE lowering expects projected input f32")
+            if str(arg_specs[projected_weight_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("fused linear CE lowering expects projected weight f32")
+            inp_memref = str(arg_specs[projected_inp_name]["memref"])
+            weight_memref = str(arg_specs[projected_weight_name]["memref"])
         launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(bt_dim), 1, 1]}
         elems_per_thread = max(1, int(vector_width))
         elems_per_thread_source = "binding:CFG_ROW_VECTOR_WIDTH"
@@ -9185,6 +9478,8 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"      %c{int(off)}_i32 = arith.constant {int(off)} : i32")
         lines.append(f"      %cBT = arith.constant {int(bt_dim)} : index")
         lines.append(f"      %cV = arith.constant {int(v_dim)} : index")
+        if fused_linear_ce:
+            lines.append(f"      %cH = arith.constant {int(projected_h_dim)} : index")
         lines.append(f"      %cVec = arith.constant {int(vector_width)} : index")
         lines.append(f"      %cWarps = arith.constant {int(max(1, block_threads // 32))} : index")
         lines.append("      %c0f = arith.constant 0.0 : f32")
@@ -9201,6 +9496,8 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"        %target_raw = memref.load {arg_ssa[target_name]}[%bid] : {target_memref}")
         lines.append(f"        %skip = arith.cmpi eq, %target_raw, %ignore_raw : {target_elem_ty}")
         lines.append("        %row_base = arith.muli %bid, %cV : index")
+        if fused_linear_ce:
+            lines.append("        %row_in_base = arith.muli %bid, %cH : index")
         lines.append("        %j_start = arith.muli %tid, %cVec : index")
         lines.append("        %cStep = arith.muli %bdim, %cVec : index")
         lines.append("        scf.if %skip {")
@@ -9216,7 +9513,6 @@ def lower_intent_to_cuda_gpu_kernel(
             c_off = _fresh("cfg_vec_off")
             col = _fresh("cfg_col")
             in_range = _fresh("cfg_in_range")
-            idx = _fresh("cfg_idx")
             xv = _fresh("cfg_x")
             mx_next = _fresh("cfg_mx")
             is_pick = _fresh("cfg_is_pick")
@@ -9224,10 +9520,32 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"            {c_off} = arith.constant {int(group)} : index")
             lines.append(f"            {col} = arith.addi %jb, {c_off} : index")
             lines.append(f"            {in_range} = arith.cmpi ult, {col}, %cV : index")
-            lines.append(f"            {idx} = arith.addi %row_base, {col} : index")
             x_loaded = _fresh("cfg_x_loaded")
             lines.append(f"            {xv} = scf.if {in_range} -> (f32) {{")
-            lines.append(f"              {x_loaded} = memref.load {arg_ssa[inp_name]}[{idx}] : {inp_memref}")
+            if fused_linear_ce:
+                w_row_base = _fresh("cfg_w_row_base")
+                k_acc = _fresh("cfg_kacc")
+                k_idx = _fresh("cfg_kidx")
+                w_idx = _fresh("cfg_widx")
+                a_val = _fresh("cfg_a")
+                b_val = _fresh("cfg_b")
+                prod = _fresh("cfg_prod")
+                acc_next = _fresh("cfg_acc_next")
+                lines.append(f"              {w_row_base} = arith.muli {col}, %cH : index")
+                lines.append(f"              {k_acc} = scf.for %kh = %c0 to %cH step %c1 iter_args(%acc = %c0f) -> (f32) {{")
+                lines.append(f"                {k_idx} = arith.addi %row_in_base, %kh : index")
+                lines.append(f"                {w_idx} = arith.addi {w_row_base}, %kh : index")
+                lines.append(f"                {a_val} = memref.load {arg_ssa[projected_inp_name]}[{k_idx}] : {inp_memref}")
+                lines.append(f"                {b_val} = memref.load {arg_ssa[projected_weight_name]}[{w_idx}] : {weight_memref}")
+                lines.append(f"                {prod} = arith.mulf {a_val}, {b_val} : f32")
+                lines.append(f"                {acc_next} = arith.addf %acc, {prod} : f32")
+                lines.append(f"                scf.yield {acc_next} : f32")
+                lines.append("              }")
+                lines.append(f"              {x_loaded} = {k_acc}")
+            else:
+                idx = _fresh("cfg_idx")
+                lines.append(f"              {idx} = arith.addi %row_base, {col} : index")
+                lines.append(f"              {x_loaded} = memref.load {arg_ssa[inp_name]}[{idx}] : {inp_memref}")
             lines.append(f"              scf.yield {x_loaded} : f32")
             lines.append("            } else {")
             lines.append("              scf.yield %neg_inf : f32")
@@ -9316,7 +9634,6 @@ def lower_intent_to_cuda_gpu_kernel(
             c_off = _fresh("cfg_sum_off")
             col = _fresh("cfg_sum_col")
             in_range = _fresh("cfg_sum_in_range")
-            idx = _fresh("cfg_sum_idx")
             xv = _fresh("cfg_sum_x")
             centered = _fresh("cfg_centered")
             ex = _fresh("cfg_ex")
@@ -9324,10 +9641,32 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"            {c_off} = arith.constant {int(group)} : index")
             lines.append(f"            {col} = arith.addi %jb2, {c_off} : index")
             lines.append(f"            {in_range} = arith.cmpi ult, {col}, %cV : index")
-            lines.append(f"            {idx} = arith.addi %row_base, {col} : index")
             x_loaded = _fresh("cfg_sum_loaded")
             lines.append(f"            {xv} = scf.if {in_range} -> (f32) {{")
-            lines.append(f"              {x_loaded} = memref.load {arg_ssa[inp_name]}[{idx}] : {inp_memref}")
+            if fused_linear_ce:
+                w_row_base = _fresh("cfg_sum_w_row_base")
+                k_acc = _fresh("cfg_sum_kacc")
+                k_idx = _fresh("cfg_sum_kidx")
+                w_idx = _fresh("cfg_sum_widx")
+                a_val = _fresh("cfg_sum_a")
+                b_val = _fresh("cfg_sum_b")
+                prod = _fresh("cfg_sum_prod")
+                acc_next = _fresh("cfg_sum_acc_next")
+                lines.append(f"              {w_row_base} = arith.muli {col}, %cH : index")
+                lines.append(f"              {k_acc} = scf.for %kh2 = %c0 to %cH step %c1 iter_args(%acc2 = %c0f) -> (f32) {{")
+                lines.append(f"                {k_idx} = arith.addi %row_in_base, %kh2 : index")
+                lines.append(f"                {w_idx} = arith.addi {w_row_base}, %kh2 : index")
+                lines.append(f"                {a_val} = memref.load {arg_ssa[projected_inp_name]}[{k_idx}] : {inp_memref}")
+                lines.append(f"                {b_val} = memref.load {arg_ssa[projected_weight_name]}[{w_idx}] : {weight_memref}")
+                lines.append(f"                {prod} = arith.mulf {a_val}, {b_val} : f32")
+                lines.append(f"                {acc_next} = arith.addf %acc2, {prod} : f32")
+                lines.append(f"                scf.yield {acc_next} : f32")
+                lines.append("              }")
+                lines.append(f"              {x_loaded} = {k_acc}")
+            else:
+                idx = _fresh("cfg_sum_idx")
+                lines.append(f"              {idx} = arith.addi %row_base, {col} : index")
+                lines.append(f"              {x_loaded} = memref.load {arg_ssa[inp_name]}[{idx}] : {inp_memref}")
             lines.append(f"              scf.yield {x_loaded} : f32")
             lines.append("            } else {")
             lines.append("              scf.yield %neg_inf : f32")
