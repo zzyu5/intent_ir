@@ -229,6 +229,13 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
             constraints=["SOFTMAX_FULL_ROW_VECTOR in {1}", "SOFTMAX_VECTOR_WIDTH in {4}"],
         ),
         BackendModule(
+            id=f"{prefix}_grid_stride_persistent_reduction",
+            kind="staging",
+            provides=[f"{prefix}.grid_stride_persistent_reduction"],
+            params=["SOFTMAX_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
             id=f"{prefix}_mask_apply",
             kind="communication",
             provides=[f"{prefix}.mask_apply"],
@@ -276,6 +283,7 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
         BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_vector_row_path", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_row_reduction", edge_type="uses"),
         BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_online_safe_math_reduction", edge_type="uses"),
+        BackendModuleEdge(src=f"{prefix}_backend_v1", dst=f"{prefix}_grid_stride_persistent_reduction", edge_type="optional"),
     ]
     if not masked:
         edges.extend(
@@ -285,6 +293,8 @@ def row_softmax_catalog(hardware_model: HardwareModel, *, masked: bool) -> tuple
                 BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_online_safe_math_reduction", edge_type="uses"),
                 BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_vector_row_path", edge_type="uses"),
                 BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_full_row_vector_resident", edge_type="uses"),
+                BackendModuleEdge(src=f"{prefix}_backend_triton_v1", dst=f"{prefix}_grid_stride_persistent_reduction", edge_type="optional"),
+                BackendModuleEdge(src=f"{prefix}_backend_fullrow_v2", dst=f"{prefix}_grid_stride_persistent_reduction", edge_type="optional"),
             ]
         )
     if masked:
@@ -655,6 +665,13 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
             constraints=(["shared_mem_kb >= 64"] if int(hardware_model.shared_mem_kb or 0) >= 64 else []),
         ),
         BackendModule(
+            id="layer_norm_grid_stride_persistent_reduction",
+            kind="staging",
+            provides=["layer_norm.grid_stride_persistent_reduction"],
+            params=["LAYER_NORM_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
             id="layer_norm_affine_epilogue",
             kind="fusion",
             provides=["layer_norm.affine_epilogue"],
@@ -696,12 +713,14 @@ def layer_norm_persistent_catalog(hardware_model: HardwareModel) -> tuple[list[B
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_register_stage", edge_type="optional"),
         BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_persistent_row_cache", edge_type="optional"),
+        BackendModuleEdge(src="layer_norm_backend_v1", dst="layer_norm_grid_stride_persistent_reduction", edge_type="optional"),
         BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_warp_statistics", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_multi_output_stats_resident", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_full_row_vector_resident", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_register_stage", edge_type="optional"),
+        BackendModuleEdge(src="layer_norm_backend_v2", dst="layer_norm_grid_stride_persistent_reduction", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 
@@ -752,6 +771,13 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
             constraints=[],
         ),
         BackendModule(
+            id="rms_norm_grid_stride_persistent_reduction",
+            kind="staging",
+            provides=["rms_norm.grid_stride_persistent_reduction"],
+            params=["RMS_NORM_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
             id="rms_norm_backend_v2",
             kind="template",
             provides=["backend.kernel_kind.rms_norm_axis1_v2"],
@@ -794,14 +820,17 @@ def rms_norm2d_catalog(hardware_model: HardwareModel) -> tuple[list[BackendModul
         BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_cta_statistics", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_vector_row_io", edge_type="optional"),
+        BackendModuleEdge(src="rms_norm_backend_v2", dst="rms_norm_grid_stride_persistent_reduction", edge_type="optional"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_warp_statistics", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_affine_epilogue", edge_type="uses"),
+        BackendModuleEdge(src="rms_norm_backend_v3", dst="rms_norm_grid_stride_persistent_reduction", edge_type="optional"),
         BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_row_tile_resident", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_cta_statistics", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_full_row_vector_resident", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_affine_epilogue", edge_type="uses"),
         BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_vector_row_io", edge_type="optional"),
+        BackendModuleEdge(src="rms_norm_backend_v4", dst="rms_norm_grid_stride_persistent_reduction", edge_type="optional"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 
@@ -1014,6 +1043,13 @@ def cfg_masked_row_reduce_catalog(hardware_model: HardwareModel) -> tuple[list[B
             constraints=[],
         ),
         BackendModule(
+            id="cfg_masked_grid_stride_persistent_reduction",
+            kind="staging",
+            provides=["cfg_masked_row.grid_stride_persistent_reduction"],
+            params=["CFG_ROW_BLOCK_THREADS"],
+            constraints=[],
+        ),
+        BackendModule(
             id="cfg_masked_atomic_finalize",
             kind="fusion",
             provides=["cfg_masked_row.atomic_finalize"],
@@ -1038,6 +1074,7 @@ def cfg_masked_row_reduce_catalog(hardware_model: HardwareModel) -> tuple[list[B
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_row_tile_resident", edge_type="optional"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_vector_io", edge_type="optional"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_register_residency", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_grid_stride_persistent_reduction", edge_type="optional"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_row_reduction", edge_type="uses"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_label_gather", edge_type="uses"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_branch_predicate", edge_type="uses"),

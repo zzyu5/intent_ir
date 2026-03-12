@@ -288,6 +288,11 @@ def _build_existing_result_index(*, search_root: Path, exclude_root: Path) -> di
                 shapes = row.get("shapes") if isinstance(row.get("shapes"), dict) else {}
                 if not kernel or not shapes:
                     continue
+                guided_status = row.get("guided_status") if isinstance(row.get("guided_status"), dict) else {}
+                max_abs = row.get("max_abs") if isinstance(row.get("max_abs"), dict) else {}
+                ok = bool(guided_status.get("ok")) and bool(max_abs) and max(float(v) for v in max_abs.values()) <= SUCCESS_TOL
+                if not ok:
+                    continue
                 key = _shape_key(kernel, {str(k): int(v) for k, v in shapes.items()})
                 score = float(path.stat().st_mtime)
                 prev = index.get(key)

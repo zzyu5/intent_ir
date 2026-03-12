@@ -16,7 +16,7 @@ import json
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import numpy as np
 
@@ -191,6 +191,13 @@ def _shape_entry(*dims: str | int) -> list[str | int]:
     return [int(x) if isinstance(x, int) else str(x) for x in dims]
 
 
+def _descriptor_arg_names(descriptor: KernelDescriptor) -> set[str]:
+    io_spec = getattr(descriptor, "io_spec", None)
+    if not isinstance(io_spec, Mapping):
+        return set()
+    return {str(x).strip() for x in list(io_spec.get("arg_names") or []) if str(x).strip()}
+
+
 def _rope_repair_json(descriptor: KernelDescriptor, *, q_shape: tuple[int, ...], k_shape: tuple[int, ...], cos_shape: tuple[int, ...]) -> dict[str, Any]:
     b_dim, qh_dim, s_dim, hd_dim = map(int, q_shape)
     _bk, kh_dim, _sk, _hk = map(int, k_shape)
@@ -345,13 +352,22 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
     """
     repairs: list[str] = []
     shapes = _baseline_array_shapes(descriptor)
+    arg_names = _descriptor_arg_names(descriptor)
+    source_text = str(getattr(descriptor, "source_text", "") or "")
+    has_dense_distribution_target = (
+        {"Y_ptr", "Y_stride"} <= arg_names
+        or {"gt_ptr", "gt_stride"} <= arg_names
+        or "Y_ptr +=" in source_text
+        or "gt_ptr +=" in source_text
+    )
+    has_mrope_planes = any(str(name).startswith("mrope_section") for name in arg_names) or ("mrope_section" in source_text)
     canonical_shapes = {
         str(k): int(v)
         for k, v in dict((descriptor.launch or {}).get("canonical_shapes") or {}).items()
         if str(k).strip()
     }
 
-    if not shapes and {"B", "QH", "KH", "S", "HD"} <= set(canonical_shapes):
+    if (not shapes) and (not has_mrope_planes) and {"B", "QH", "KH", "S", "HD"} <= set(canonical_shapes):
         shapes = {
             "q": (
                 int(canonical_shapes["B"]),
@@ -368,29 +384,42 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
             "cos": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
             "sin": (1, int(canonical_shapes["S"]), int(canonical_shapes["HD"])),
         }
-    if "q" in shapes and "k" in shapes and "cos" in shapes and "sin" in shapes:
+    q_shape = tuple(shapes.get("q", ()))
+    k_shape = tuple(shapes.get("k", ()))
+    cos_shape = tuple(shapes.get("cos", ()))
+    sin_shape = tuple(shapes.get("sin", ()))
+    # Narrow the deterministic rope repair to the simple dual-view RoPE case.
+    # Multi-plane rotary variants (for example M-RoPE with an extra plane axis)
+    # must go through the live frontend instead of being collapsed into the
+    # standard [1,S,HD] cosine/sine model.
+    if len(q_shape) == 4 and len(k_shape) == 4 and len(cos_shape) == 3 and len(sin_shape) == 3:
         repaired = parse_candidate_json(
             _rope_repair_json(
                 descriptor,
-                q_shape=tuple(shapes["q"]),
-                k_shape=tuple(shapes["k"]),
-                cos_shape=tuple(shapes["cos"]),
+                q_shape=q_shape,
+                k_shape=k_shape,
+                cos_shape=cos_shape,
             )
         )
         repairs.append("liger_rope_view_repair_v1")
         return repaired, repairs
 
-    if not shapes and {"BT", "V"} <= set(canonical_shapes):
+    if (not shapes) and (not has_dense_distribution_target) and {"BT", "V"} <= set(canonical_shapes):
         shapes = {
             "input": (int(canonical_shapes["BT"]), int(canonical_shapes["V"])),
             "target": (int(canonical_shapes["BT"]),),
             "loss": tuple(),
         }
-    if "input" in shapes and "target" in shapes and "loss" in shapes:
+    input_shape = tuple(shapes.get("input", ()))
+    target_shape = tuple(shapes.get("target", ()))
+    loss_shape = tuple(shapes.get("loss", ()))
+    # Cross-entropy repair only applies to class-index targets [BT], not dense
+    # distribution targets [BT,V] used by KL/JSD-like kernels.
+    if len(input_shape) == 2 and len(target_shape) == 1 and len(loss_shape) == 0:
         repaired = parse_candidate_json(
             _cross_entropy_repair_json(
                 descriptor,
-                input_shape=tuple(shapes["input"]),
+                input_shape=input_shape,
             )
         )
         repairs.append("liger_cross_entropy_loss_repair_v1")

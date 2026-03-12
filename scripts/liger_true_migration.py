@@ -403,11 +403,15 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
         cross_entropy_forward,
         geglu_forward,
         fused_add_rms_norm_forward,
+        jsd_forward,
+        kldiv_forward_triton,
         liger_dyt_fwd,
         group_norm_forward,
         layer_norm_forward,
+        qwen2vl_mrope_forward,
         rms_norm_forward,
         rope_forward,
+        _sparsemax_forward,
         _softmax_forward,
         swiglu_forward,
     )
@@ -499,6 +503,41 @@ def _native_callable(kernel: str, baseline: dict[str, np.ndarray]):
             _softmax_forward(x)
 
         return _fn
+    if kernel == "liger_qwen2vl_mrope":
+        q = torch.as_tensor(np.asarray(baseline["q"]), device="cuda", dtype=torch.float32).contiguous()
+        k = torch.as_tensor(np.asarray(baseline["k"]), device="cuda", dtype=torch.float32).contiguous()
+        cos = torch.as_tensor(np.asarray(baseline["cos"]), device="cuda", dtype=torch.float32).contiguous()
+        sin = torch.as_tensor(np.asarray(baseline["sin"]), device="cuda", dtype=torch.float32).contiguous()
+        mrope_section = [int(x) for x in np.asarray(baseline["mrope_section"]).reshape(-1).tolist()]
+
+        def _fn():
+            qwen2vl_mrope_forward(q, k, cos, sin, mrope_section)
+
+        return _fn
+    if kernel == "liger_sparsemax":
+        x = torch.as_tensor(np.asarray(baseline["X"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            _sparsemax_forward(x, -1)
+
+        return _fn
+    if kernel == "liger_kl_div":
+        x = torch.as_tensor(np.asarray(baseline["input"]), device="cuda", dtype=torch.float32).contiguous()
+        y = torch.as_tensor(np.asarray(baseline["target"]), device="cuda", dtype=torch.float32).contiguous()
+
+        def _fn():
+            kldiv_forward_triton(x, y, False, "batchmean", 1.0e-10)
+
+        return _fn
+    if kernel == "liger_jsd":
+        x = torch.as_tensor(np.asarray(baseline["input"]), device="cuda", dtype=torch.float32).contiguous()
+        y = torch.as_tensor(np.asarray(baseline["target"]), device="cuda", dtype=torch.float32).contiguous()
+        labels = torch.as_tensor(np.asarray(baseline["shift_labels"]), device="cuda", dtype=torch.int64).contiguous()
+
+        def _fn():
+            jsd_forward(x, y, labels, 0.5, -100, True)
+
+        return _fn
     raise KeyError(f"unsupported kernel={kernel}")
 
 
@@ -547,6 +586,17 @@ def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], gui
         }
     if kernel == "liger_softmax":
         return {"Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"])}
+    if kernel == "liger_qwen2vl_mrope":
+        return {
+            "q_out": _max_abs_diff(guided_outputs["q_out"], baseline["q_out"]),
+            "k_out": _max_abs_diff(guided_outputs["k_out"], baseline["k_out"]),
+        }
+    if kernel == "liger_sparsemax":
+        return {"Y": _max_abs_diff(guided_outputs["Y"], baseline["Y"])}
+    if kernel == "liger_kl_div":
+        return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
+    if kernel == "liger_jsd":
+        return {"loss": _max_abs_diff(guided_outputs["loss"], baseline["loss"])}
     raise KeyError(f"unsupported kernel={kernel}")
 
 

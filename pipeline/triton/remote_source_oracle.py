@@ -27,6 +27,10 @@ _SUPPORTED_KERNELS = {
     "liger_softmax",
     "liger_group_norm",
     "liger_dyt",
+    "liger_qwen2vl_mrope",
+    "liger_sparsemax",
+    "liger_kl_div",
+    "liger_jsd",
 }
 
 
@@ -97,6 +101,10 @@ def _canonical_remote_bindings(spec_name: str, shape_bindings: Mapping[str, int]
         "liger_softmax": {"M": 2048, "N": 4096},
         "liger_group_norm": {"N": 32, "C": 512, "HW": 64, "num_groups": 32},
         "liger_dyt": {"M": 2048, "N": 4096},
+        "liger_qwen2vl_mrope": {"B": 2, "QH": 32, "KH": 8, "S": 2048, "HD": 128},
+        "liger_sparsemax": {"M": 2048, "N": 4096},
+        "liger_kl_div": {"BT": 2048, "V": 4096},
+        "liger_jsd": {"BT": 2048, "V": 4096},
     }
     out = dict(defaults.get(str(spec_name), {}))
     out.update(raw)

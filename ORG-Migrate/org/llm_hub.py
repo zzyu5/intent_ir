@@ -297,6 +297,19 @@ _TTGIR_SLICE_PATTERNS = [
     )
 ]
 
+_TTGIR_NOISE_PATTERNS = [
+    re.compile(p)
+    for p in (
+        r"\btt\.(?:splat|broadcast)\b",
+        r"\barith\.constant\b",
+        r"\barith\.(?:addi|subi|muli|divsi|divui|floordivsi|remsi|remui)\b",
+        r"\barith\.(?:extsi|extui|trunci|index_cast|sitofp|fptosi|uitofp|fptoui)\b",
+        r"\barith\.(?:and|or|xor)i\b",
+        r"\bbuiltin\.unrealized_conversion_cast\b",
+        r"\btensor\.(?:extract|insert)\b",
+    )
+]
+
 _PTX_SLICE_PATTERNS = [
     re.compile(p)
     for p in (
@@ -316,6 +329,21 @@ _PTX_SLICE_PATTERNS = [
         r"\bbra\b",
         r"\bld\.global\b",
         r"\bst\.global\b",
+    )
+]
+
+_PTX_NOISE_PATTERNS = [
+    re.compile(p)
+    for p in (
+        r"^\s*mov\.",
+        r"^\s*cvt\.",
+        r"^\s*add\.(?:s|u|f)",
+        r"^\s*mul\.(?:lo|wide|hi|f)",
+        r"^\s*mad\.(?:lo|wide|hi)",
+        r"^\s*shl\.",
+        r"^\s*shr\.",
+        r"^\s*and\.",
+        r"^\s*or\.",
     )
 ]
 
@@ -344,6 +372,42 @@ def _slice_lines(text: str, *, patterns: list[re.Pattern[str]], context: int = 1
     return ordered[: max(0, int(limit))]
 
 
+def _fold_noisy_slice_lines(lines: list[str], *, kind: str) -> list[str]:
+    kind_token = _norm_token(kind)
+    if not lines:
+        return []
+    patterns: list[re.Pattern[str]] = []
+    if kind_token == "ttgir":
+        patterns = list(_TTGIR_NOISE_PATTERNS)
+    elif kind_token == "ptx":
+        patterns = list(_PTX_NOISE_PATTERNS)
+    if not patterns:
+        return list(lines)
+
+    def _payload(line: str) -> str:
+        _, sep, rhs = str(line).partition(":")
+        return rhs if sep else str(line)
+
+    out: list[str] = []
+    folded = 0
+
+    def _flush() -> None:
+        nonlocal folded
+        if folded > 0:
+            out.append(f"... [Folded {int(folded)} data-flow ops] ...")
+            folded = 0
+
+    for line in list(lines):
+        payload = _payload(str(line))
+        if any(p.search(payload) for p in patterns):
+            folded += 1
+            continue
+        _flush()
+        out.append(str(line))
+    _flush()
+    return out
+
+
 def _distill_source_text(source_text: str) -> str:
     text = str(source_text or "")
     sliced = _slice_lines(text, patterns=_TRITON_SLICE_PATTERNS, context=1, limit=140)
@@ -369,9 +433,11 @@ def _slice_artifact_text(path_like: Any, *, kind: str) -> list[str]:
     if not text:
         return []
     if kind == "ttgir":
-        return _slice_lines(text, patterns=_TTGIR_SLICE_PATTERNS, context=1, limit=48)
+        sliced = _slice_lines(text, patterns=_TTGIR_SLICE_PATTERNS, context=1, limit=96)
+        return _fold_noisy_slice_lines(sliced, kind="ttgir")[:48]
     if kind == "ptx":
-        return _slice_lines(text, patterns=_PTX_SLICE_PATTERNS, context=0, limit=48)
+        sliced = _slice_lines(text, patterns=_PTX_SLICE_PATTERNS, context=0, limit=72)
+        return _fold_noisy_slice_lines(sliced, kind="ptx")[:48]
     return []
 
 

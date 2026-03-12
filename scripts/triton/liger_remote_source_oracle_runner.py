@@ -249,6 +249,83 @@ def _run_kernel(kernel: str, bindings: dict[str, int]) -> dict[str, Any]:
             "beta_shape": list(beta.shape),
         }
 
+    if kernel == "liger_qwen2vl_mrope":
+        from liger_kernel.ops.qwen2vl_mrope import _triton_qwen2vl_mrope, qwen2vl_mrope_forward
+
+        b = int(bindings.get("B", 2))
+        qh = int(bindings.get("QH", 32))
+        kh = int(bindings.get("KH", 8))
+        s = int(bindings.get("S", 2048))
+        hd = int(bindings.get("HD", 128))
+        q = torch.randn((b, qh, s, hd), device=device, dtype=dtype)
+        k = torch.randn((b, kh, s, hd), device=device, dtype=dtype)
+        cos = torch.randn((3, b, s, hd), device=device, dtype=dtype)
+        sin = torch.randn((3, b, s, hd), device=device, dtype=dtype)
+        section_t = max(1, hd // 8)
+        section_h = max(1, hd // 8)
+        q_out, k_out, _cos_out, _sin_out = qwen2vl_mrope_forward(q, k, cos, sin, [section_t, section_h])
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_triton_qwen2vl_mrope",
+            "source_attr": str(_triton_qwen2vl_mrope.src),
+            "q_shape": list(q_out.shape),
+            "k_shape": list(k_out.shape),
+            "cos_shape": list(cos.shape),
+            "sin_shape": list(sin.shape),
+            "mrope_section": [int(section_t), int(section_h)],
+        }
+
+    if kernel == "liger_sparsemax":
+        from liger_kernel.ops.sparsemax import _sparsemax_forward, _sparsemax_forward_kernel
+
+        m = int(bindings.get("M", 2048))
+        n = int(bindings.get("N", 4096))
+        x = torch.randn((m, n), device=device, dtype=dtype)
+        y, out_flat = _sparsemax_forward(x, -1)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_sparsemax_forward_kernel",
+            "source_attr": str(_sparsemax_forward_kernel.src),
+            "output_shape": list(y.shape),
+            "flat_shape": list(out_flat.shape),
+        }
+
+    if kernel == "liger_kl_div":
+        from liger_kernel.ops.kl_div import _kldiv_kernel_forward, kldiv_forward_triton
+
+        bt = int(bindings.get("BT", 2048))
+        v = int(bindings.get("V", 4096))
+        y_pred = torch.log_softmax(torch.randn((bt, v), device=device, dtype=dtype), dim=-1)
+        y_true = torch.softmax(torch.randn((bt, v), device=device, dtype=dtype), dim=-1)
+        loss = kldiv_forward_triton(y_pred, y_true, False, "batchmean", 1.0e-10)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_kldiv_kernel_forward",
+            "source_attr": str(_kldiv_kernel_forward.src),
+            "loss_shape": list(loss.shape),
+            "input_shape": list(y_pred.shape),
+            "target_shape": list(y_true.shape),
+        }
+
+    if kernel == "liger_jsd":
+        from liger_kernel.ops.jsd import _jsd_kernel, jsd_forward
+
+        bt = int(bindings.get("BT", 2048))
+        v = int(bindings.get("V", 4096))
+        x = torch.log_softmax(torch.randn((bt, v), device=device, dtype=dtype), dim=-1)
+        y = torch.log_softmax(torch.randn((bt, v), device=device, dtype=dtype), dim=-1)
+        labels = torch.randint(0, v, (bt,), device=device, dtype=torch.int64)
+        loss, d_x = jsd_forward(x, y, labels, 0.5, -100, True)
+        torch.cuda.synchronize()
+        return {
+            "entry_hint": "_jsd_kernel",
+            "source_attr": str(_jsd_kernel.src),
+            "loss_shape": list(loss.shape),
+            "input_shape": list(x.shape),
+            "target_shape": list(y.shape),
+            "dx_shape": list(d_x.shape),
+        }
+
     raise KeyError(f"unsupported kernel: {kernel}")
 
 

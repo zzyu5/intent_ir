@@ -80,6 +80,14 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
     model both. Keep public tensors with logical shape, create explicit transpose ops for the physical view,
     and use tensor metadata to preserve the alias/view relation.
   - `HD` / `HEAD_DIM` is the full logical channel width. RoPE rotates channel pairs, so preserve even head-width pairing and align cos/sin to the sequence axis instead of inventing half-width public tensors.
+  - If cos/sin carry extra structural axes (for example multi-plane rotary embeddings with shapes like [P,B,S,HD]),
+    preserve those axes exactly; do NOT collapse them into the simpler [1,S,HD] RoPE form.
+- IMPORTANT dense-distribution losses:
+  - If two dense tensors are loaded with the same row/column offsets (for example prediction and target distributions),
+    model the second tensor as a full dense tensor with the same logical shape. Do NOT rewrite it into class-index
+    targets plus gather unless the source evidence actually performs indirect indexing through that tensor.
+  - `ignore_index` / optional label tensors do not by themselves imply cross-entropy semantics. Only use gather-based
+    class targets when the dataflow explicitly indexes logits by label positions.
 - IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW
   (mean = sum/num_elements; var = sumsq/num_elements; rstd = rsqrt(var+eps)). Use reduce_sum(attrs.scale=...) or explicit div ops.
 - IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N).

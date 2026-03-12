@@ -246,11 +246,57 @@ def _run_compile_check_candidates(
     compile_root.mkdir(parents=True, exist_ok=True)
     compiler_stack = str(_compiler_stack_name())
     compiler_cpp_wave = str(_compiler_cpp_wave_name()) if compiler_stack in {"cpp", "cpp_plugin", "c++"} else ""
+    def _append_compile_check(
+        *,
+        idx: int,
+        candidate_line: str,
+        kernel_kind: str,
+        bindings: Mapping[str, int],
+        env_updates: Mapping[str, str],
+    ) -> None:
+        cand_dir = compile_root / _compile_check_id(candidate_line, idx=idx)
+        cand_dir.mkdir(parents=True, exist_ok=True)
+        report_path = cand_dir / f"{spec_name}.json"
+        contract_path = ""
+        ptx_path = ""
+        entry = ""
+        requested_sm = ""
+        effective_sm = ""
+        downleveled: bool | None = None
+        error = ""
+        ok, report, run_error = _run_inline_compile_check(
+            spec_name=str(spec_name),
+            cand_dir=Path(cand_dir),
+            backend_target=backend_target,
+            intent=intent,
+            shape_bindings=shape_bindings,
+            env_updates=env_updates,
+        )
+        contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
+        if not error:
+            error = str(run_error or "")
+        ok = bool(ok and contract_path and ptx_path and entry)
+        check = CompileCheck(
+            candidate=str(candidate_line),
+            kernel_kind=str(kernel_kind),
+            bindings={str(k): int(v) for k, v in dict(bindings or {}).items()},
+            report_path=str(report_path),
+            contract_path=str(contract_path),
+            ptx_path=str(ptx_path),
+            entry=str(entry),
+            requested_sm=str(requested_sm),
+            effective_sm=str(effective_sm),
+            downleveled=downleveled,
+            ok=bool(ok),
+            error=str(error),
+        )
+        checks.append(check.to_json_dict())
+
     for idx, candidate in enumerate(list(candidates or [])[: int(limit)]):
         cand_line = _candidate_line(getattr(candidate, "kernel_kind"), getattr(candidate, "bindings"))
         cand_dir = compile_root / _compile_check_id(cand_line, idx=idx)
-        cand_dir.mkdir(parents=True, exist_ok=True)
         tuning_path = cand_dir / "tuning.jsonl"
+        cand_dir.mkdir(parents=True, exist_ok=True)
         tuning_path.write_text(
             json.dumps(
                 {
@@ -275,42 +321,29 @@ def _run_compile_check_candidates(
         }
         if compiler_cpp_wave:
             env_updates["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
-        report_path = cand_dir / f"{spec_name}.json"
-        contract_path = ""
-        ptx_path = ""
-        entry = ""
-        requested_sm = ""
-        effective_sm = ""
-        downleveled: bool | None = None
-        error = ""
         env_updates.update(_toolchain_env_overrides(toolchain_model))
-        ok, report, run_error = _run_inline_compile_check(
-            spec_name=str(spec_name),
-            cand_dir=Path(cand_dir),
-            backend_target=backend_target,
-            intent=intent,
-            shape_bindings=shape_bindings,
-            env_updates=env_updates,
-        )
-        contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
-        if not error:
-            error = str(run_error or "")
-        ok = bool(ok and contract_path and ptx_path and entry)
-        check = CompileCheck(
-            candidate=str(cand_line),
+        _append_compile_check(
+            idx=idx,
+            candidate_line=str(cand_line),
             kernel_kind=str(getattr(candidate, "kernel_kind")),
             bindings={str(k): int(v) for k, v in dict(getattr(candidate, "bindings", {}) or {}).items()},
-            report_path=str(report_path),
-            contract_path=str(contract_path),
-            ptx_path=str(ptx_path),
-            entry=str(entry),
-            requested_sm=str(requested_sm),
-            effective_sm=str(effective_sm),
-            downleveled=downleveled,
-            ok=bool(ok),
-            error=str(error),
+            env_updates=env_updates,
         )
-        checks.append(check.to_json_dict())
+    if not any(bool(dict(x).get("ok")) for x in list(checks or [])):
+        fallback_env = {
+            "INTENTIR_ORG_MODE": "off",
+            "INTENTIR_COMPILER_STACK": compiler_stack,
+        }
+        if compiler_cpp_wave:
+            fallback_env["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
+        fallback_env.update(_toolchain_env_overrides(toolchain_model))
+        _append_compile_check(
+            idx=int(len(checks)),
+            candidate_line="generic_fallback_v1",
+            kernel_kind="generic_fallback_v1",
+            bindings={},
+            env_updates=fallback_env,
+        )
     return checks
 
 
