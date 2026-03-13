@@ -40,18 +40,25 @@ def test_rvv_remote_run_avoids_direct_intentfunction_json_rehydration() -> None:
     assert "compat_c_src" not in src
 
 
-def test_rvv_remote_llvm_compile_uses_two_step_clang_ir_then_link() -> None:
+def test_rvv_remote_llvm_compile_uses_local_llc_then_remote_link() -> None:
     src = (ROOT / "scripts" / "rvv_remote_run.py").read_text(encoding="utf-8")
-    assert "clang -O3 -x ir {q_remote_target} -c -o {q_remote_obj} {q_remote_ll} && " in src
-    assert (
-        "clang -O3 {q_remote_target} -fopenmp -std=c11 -D_POSIX_C_SOURCE=200809L -I{q_remote_dir} "
-        "-o {q_remote_bin} {q_remote_obj} "
-    ) in src
+    assert "_compile_llvm_ir_to_rvv_obj_bytes(" in src
+    assert "_sftp_write_bytes(sftp, remote_obj, obj_bytes)" in src
+    assert "link_inputs = f\"{q_remote_obj} {q_runtime_c} {q_driver_c} {q_ops_c}\"" in src
+
+
+def test_rvv_ssh_connect_kwargs_prefers_host_alias_without_forcing_username() -> None:
+    mod = _load_module()
+    kwargs = mod._ssh_connect_kwargs(host="rvv", user="", password=None, port=22, timeout=20)
+    assert kwargs == {"hostname": "rvv", "port": 22, "timeout": 20}
+    kwargs = mod._ssh_connect_kwargs(host="rvv", user="kingdom", password=None, port=22, timeout=20)
+    assert kwargs["hostname"] == "rvv"
+    assert kwargs["username"] == "kingdom"
 
 
 def test_rvv_staging_dtype_promotes_half_for_strict_modes() -> None:
     mod = _load_module()
-    assert mod._rvv_staging_dtype("f16", execution_mode="remote_llvm") == "f32"
+    assert mod._rvv_staging_dtype("f16", execution_mode="remote_llvm") == "f16"
     assert mod._rvv_staging_dtype("bf16", execution_mode="prebuilt_elf") == "f32"
     assert mod._rvv_staging_dtype("f16", execution_mode="rvv_elf") == "f16"
     assert mod._rvv_staging_dtype("f32", execution_mode="remote_llvm") == "f32"

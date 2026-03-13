@@ -205,9 +205,12 @@ Kernel-specific expectations:
 - For softmax_inner, capture:
   resident_working_set, streaming_softmax_state, avoid_materialization, latency_hiding
   and prefer mechanism tags such as:
-  row_reduction, vector_row_path, row_tile_resident
+  online_safe_math_reduction, row_reduction, vector_row_path, row_tile_resident
   and prefer dims/attrs such as:
   row_width, block_threads, communication_scope
+  and explicitly model tensors/lifetimes such as:
+  input_row -> max_state + sum_state -> normalized_row -> store
+  with max_state/sum_state carried across the online update sequence
 - For row_sum, capture:
   resident_working_set, reduction_tree_balance, memory_coalescing, latency_hiding
   and prefer mechanism tags such as:
@@ -223,12 +226,12 @@ Kernel-specific expectations:
 - For layer_norm_persistent, capture:
   resident_working_set, persistent_row_state, memory_coalescing, affine_epilogue_fusion, latency_hiding
   and prefer mechanism tags such as:
-  row_tile_resident, warp_reduction, register_staging, persistent_row_cache, affine_epilogue
+  row_tile_resident, multi_output_stats_resident, warp_reduction, register_staging, persistent_row_cache, affine_epilogue
   and prefer dims/attrs such as:
   row_width, block_threads, vector_width, resident_bytes, communication_scope
   and explicitly model tensors/lifetimes such as:
-  input_row -> row_resident_tile -> row_stats -> affine_out
-  with row_stats or row_resident_tile spanning from reduction into affine epilogue when persistence is present
+  input_row -> row_resident_tile -> mean_state + rstd_state -> affine_out
+  with mean_state/rstd_state or row_resident_tile spanning from reduction into affine epilogue when persistence is present
 - For add2d, capture:
   resident_working_set, memory_coalescing, avoid_materialization, latency_hiding
   and prefer mechanism tags such as:
@@ -278,6 +281,31 @@ Kernel-specific expectations:
   and prefer a region_graph with:
   if(target == ignore_index) / else(target != ignore_index)
   and explicitly attach branch paths to the masked-loss and active-loss lifetimes
+- For RMSNorm or fused residual RMSNorm kernels, capture:
+  resident_working_set, persistent_row_state, affine_epilogue_fusion, reduction_tree_balance
+  and prefer mechanism tags such as:
+  row_tile_resident, blocked_register_layout, vector_row_path, warp_reduction, affine_epilogue
+  and when a blocked register row stays live from normalization into epilogue, set:
+  reuse_window=full_row
+  and report bytes_hint for the resident full-row representation rather than only a per-thread fragment
+- For layer-norm style kernels with multiple statistics outputs, capture:
+  resident_working_set, reduction_tree_balance, affine_epilogue_fusion
+  and prefer mechanism tags such as:
+  multi_output_stats_resident, warp_reduction, vector_row_path, affine_epilogue
+  and explicitly model:
+  at least two resident stats tensors/lifetimes (for example mean and rstd) rather than collapsing them into one anonymous row_stats blob
+- For softmax kernels, capture:
+  streaming_softmax_state, reduction_tree_balance, avoid_materialization
+  and prefer mechanism tags such as:
+  online_safe_math_reduction, row_tile_resident, vector_row_path, power2_padding
+  and explicitly model:
+  online max/sum state lifetimes and the normalization/store path
+- For GeGLU/GELU-mul fused elementwise kernels, capture:
+  avoid_materialization, memory_coalescing, fused_epilogue_avoid_writeback
+  and prefer mechanism tags such as:
+  vector_global_io, blocked_register_layout, activation_then_mul_fusion
+  and explicitly model:
+  a -> activation(a) -> fused_mul_with_b -> output without materializing the activation result to global memory
 - For RoPE kernels with logical/physical layout mismatch, capture:
   avoid_materialization, memory_coalescing, latency_hiding
   and prefer tensor view metadata:
@@ -290,9 +318,29 @@ Kernel-specific expectations:
 SYSTEM_PROMPT_COMPACT = """Return ONE strict ORG JSON object.
 
 Required keys: schema_version, kernel, goals, mechanisms, dims, tensors, tensor_lifetimes, dataflow_edges, mechanism_topology, schedule_edges, evidence (region_graph and notes optional, but region_graph is required when branches exist).
+schema_version MUST be exactly "intentir_org_v1".
 Runtime injects source_context/source_oracle; do not output hardware mapping or target numeric assignments.
 Each goal/mechanism/dim must be evidence-backed.
 Emit a real optimization topology: tensors, their residency intervals, dataflow edges, mechanism dependencies, explicit schedule/control edges for layout or synchronization, and a region_graph for branch structure when present.
+Use these exact field names, not substitutes:
+- goal = {id, tag, summary, scope, tensors, evidence_refs}
+- mechanism = {id, tag, category, supports_goals, attrs, dims, evidence_refs}
+- dim = {name, role, candidates or range, constraints, evidence_refs}
+- tensor = {id, name, role, dtype?, layout?, view_of?, alias_group?, aliases?, shape_refs?, evidence_refs}
+- tensor_lifetime = {id, tensor, region, storage, start, end, scope?, layout?, producer_mechanisms, consumer_mechanisms, supports_goals, dims, bytes_hint?, pipeline_stage?, reuse_window?, evidence_refs}
+- dataflow_edge = {id, src, dst, tensor, kind, order, mechanisms, evidence_refs}
+- mechanism_topology edge = {id, src, dst, relation, tensors, lifetimes, evidence_refs}
+- schedule_edge = {id, src, dst, relation, scope?, resources?, attrs?, evidence_refs}
+- evidence = {id, kind, path, summary, text?}
+Do NOT replace `tag` with `kind`. Do NOT replace `summary` with `description`.
+Use the SMALLEST topology that preserves the kernel's core optimization logic. In compact mode, prefer no more than:
+- 8 tensors
+- 12 tensor_lifetimes
+- 12 mechanisms
+- 16 total edges across dataflow/mechanism_topology/schedule_edges/region_graph
+Do not duplicate equivalent views or anonymous temporary blobs.
+When the evidence shows row-statistics normalization, prefer canonical tags `warp_reduction`, `multi_output_stats_resident`, and `affine_epilogue`.
+When the evidence shows softmax-style max/sum recurrence, prefer canonical tag `online_safe_math_reduction`.
 """
 
 

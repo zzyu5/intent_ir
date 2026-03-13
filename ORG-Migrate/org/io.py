@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,35 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _blindfold_enabled() -> bool:
+    raw = str(os.environ.get("INTENTIR_ORG_BLINDFOLD") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _blindfold_label() -> str:
+    raw = str(os.environ.get("INTENTIR_ORG_BLINDFOLD_LABEL") or "").strip()
+    return raw or "target_kernel_func"
+
+
+def _blindfold_seed_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if not _blindfold_enabled():
+        return dict(payload or {})
+    label = _blindfold_label()
+    obj = dict(payload or {})
+    obj["kernel"] = label
+    org = obj.get("org")
+    if isinstance(org, Mapping):
+        org_obj = dict(org)
+        org_obj["kernel"] = label
+        obj["org"] = org_obj
+    raw_json = obj.get("raw_json")
+    if isinstance(raw_json, Mapping):
+        raw_obj = dict(raw_json)
+        raw_obj["kernel"] = label
+        obj["raw_json"] = raw_obj
+    return obj
+
+
 def save_org_seed(
     *,
     path: Path,
@@ -78,8 +108,9 @@ def save_org_seed(
         llm_trace=(dict(llm_trace) if isinstance(llm_trace, Mapping) else {}),
         quality=(dict(quality) if isinstance(quality, Mapping) else {}),
     )
+    payload = _blindfold_seed_payload(seed.to_json_dict())
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(seed.to_json_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def load_org_seed(path: Path) -> OrgSeed:

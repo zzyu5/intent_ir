@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any, Callable, Mapping
@@ -10,6 +11,7 @@ from org.mapping.cuda.module_catalog import (
     ai_bench_matmul_catalog,
     ai_bench_softmax_catalog,
     attn_fwd_catalog,
+    cfg_masked_row_reduce_catalog,
     cross_entropy_loss_catalog,
     elementwise2d_catalog,
     flash_attention2d_catalog,
@@ -17,10 +19,12 @@ from org.mapping.cuda.module_catalog import (
     layer_norm_persistent_catalog,
     masked_attention2d_catalog,
     matmul_fused_epilogue2d_catalog,
+    poly_norm2d_catalog,
     rms_norm2d_catalog,
     rope_view_catalog,
     row_reduction_catalog,
     row_softmax_catalog,
+    tvd_loss2d_catalog,
 )
 from org.mapping.hardware_model import HardwareModel
 from org.schema import OrgDoc, OrgTensorLifetime
@@ -53,6 +57,138 @@ def _require_dim(bindings: Mapping[str, Any], key: str) -> int:
     if value is None:
         raise ValueError(f"missing shape_bindings[{key!r}]")
     return int(value)
+
+
+def _constraint_env(
+    *,
+    bindings: Mapping[str, Any],
+    shape_bindings: Mapping[str, Any],
+    hardware_model: HardwareModel,
+) -> dict[str, Any]:
+    env: dict[str, Any] = {}
+    for source in (shape_bindings, bindings):
+        for key, value in dict(source or {}).items():
+            name = str(key).strip()
+            if not name:
+                continue
+            iv = _coerce_int(value)
+            env[name] = int(iv) if iv is not None else value
+    env["shared_mem_kb"] = int(hardware_model.shared_mem_kb or 0)
+    env["register_budget"] = int(hardware_model.register_budget or 0)
+    env["supports_async_copy"] = bool(hardware_model.supports_async_copy)
+    env["supports_mma"] = bool(hardware_model.supports_mma)
+    return env
+
+
+def _eval_int_expr(expr: str, env: Mapping[str, Any]) -> int:
+    node = ast.parse(str(expr).strip(), mode="eval")
+
+    def _walk(cur: ast.AST) -> int:
+        if isinstance(cur, ast.Expression):
+            return _walk(cur.body)
+        if isinstance(cur, ast.Constant):
+            if isinstance(cur.value, bool):
+                return int(cur.value)
+            return int(cur.value)
+        if isinstance(cur, ast.Name):
+            value = env.get(str(cur.id))
+            if isinstance(value, bool):
+                return int(value)
+            iv = _coerce_int(value)
+            if iv is None:
+                raise ValueError(f"unknown constraint symbol: {cur.id}")
+            return int(iv)
+        if isinstance(cur, ast.UnaryOp) and isinstance(cur.op, ast.USub):
+            return -_walk(cur.operand)
+        if isinstance(cur, ast.BinOp) and isinstance(cur.op, (ast.Add, ast.Sub, ast.Mult, ast.Mod, ast.FloorDiv)):
+            lhs = _walk(cur.left)
+            rhs = _walk(cur.right)
+            if isinstance(cur.op, ast.Add):
+                return lhs + rhs
+            if isinstance(cur.op, ast.Sub):
+                return lhs - rhs
+            if isinstance(cur.op, ast.Mult):
+                return lhs * rhs
+            if isinstance(cur.op, ast.Mod):
+                return lhs % rhs
+            return lhs // rhs
+        raise ValueError(f"unsupported constraint expression: {ast.dump(cur)}")
+
+    return int(_walk(node))
+
+
+def _eval_constraint(constraint: str, env: Mapping[str, Any]) -> bool:
+    text = str(constraint or "").strip()
+    if not text:
+        return True
+    if " in {" in text and text.endswith("}"):
+        lhs, rhs = text.split(" in {", 1)
+        lhs_v = _eval_int_expr(lhs, env)
+        allowed = {int(x.strip()) for x in rhs[:-1].split(",") if str(x).strip()}
+        return int(lhs_v) in allowed
+    for op in ("==", "!=", ">=", "<=", ">", "<"):
+        if op in text:
+            lhs, rhs = text.split(op, 1)
+            lhs_v = _eval_int_expr(lhs, env)
+            rhs_v = _eval_int_expr(rhs, env)
+            if op == "==":
+                return lhs_v == rhs_v
+            if op == "!=":
+                return lhs_v != rhs_v
+            if op == ">=":
+                return lhs_v >= rhs_v
+            if op == "<=":
+                return lhs_v <= rhs_v
+            if op == ">":
+                return lhs_v > rhs_v
+            return lhs_v < rhs_v
+    value = env.get(text)
+    if isinstance(value, bool):
+        return bool(value)
+    iv = _coerce_int(value)
+    return bool(iv) if iv is not None else False
+
+
+def _candidate_module_ids(
+    *,
+    spec: FamilySpec,
+    template: TemplateSpec,
+    profile: GraphProfile,
+    bindings: Mapping[str, int],
+) -> set[str]:
+    selected = set(str(x) for x in list(spec.base_modules or ()))
+    selected.add(str(template.module_id))
+    enabled_params = set(_active_flag_params(spec, template, bindings))
+    for optional in list(spec.optional_modules or ()):
+        if optional.gate_param and str(optional.gate_param) not in enabled_params:
+            continue
+        if optional.signals and not all(profile.has_signal(sig) for sig in list(optional.signals or ())):
+            continue
+        selected.add(str(optional.module_id))
+    return selected
+
+
+def _constraint_failure(
+    *,
+    module_ids: set[str],
+    module_map: Mapping[str, BackendModule],
+    bindings: Mapping[str, int],
+    shape_bindings: Mapping[str, Any],
+    hardware_model: HardwareModel,
+) -> str:
+    env = _constraint_env(bindings=bindings, shape_bindings=shape_bindings, hardware_model=hardware_model)
+    for module_id in sorted(module_ids):
+        module = module_map.get(str(module_id))
+        if module is None:
+            continue
+        for constraint in list(getattr(module, "constraints", []) or ()):
+            try:
+                ok = _eval_constraint(str(constraint), env)
+            except Exception:
+                ok = False
+            if not ok:
+                return f"{module_id}:{constraint}"
+    return ""
 
 
 def _ordered_unique(values: list[int]) -> list[int]:
@@ -97,7 +233,23 @@ def _tensor_role_tokens(org: OrgDoc) -> dict[str, set[str]]:
             tokens.add("view")
         for alias in list(getattr(tensor, "aliases", []) or []):
             tokens.add(_norm_token(alias))
-        out[str(tensor_id)] = {x for x in tokens if x}
+        expanded = set(tokens)
+        for token in list(tokens):
+            if not token:
+                continue
+            if "mean" in token:
+                expanded.update({"mean", "mean_state", "row_mean"})
+            if "rstd" in token or "inv_rms" in token or "rms" in token:
+                expanded.update({"rstd", "rms_state"})
+            if token in {"output_tile", "output", "output_accumulator"} or token.endswith("_out") or token.endswith("_output"):
+                expanded.update({"output", "output_accumulator"})
+            if token in {"input_tile", "input_row"} or token.startswith("x_"):
+                expanded.add("input_row")
+            if token in {"param_tile", "weight"}:
+                expanded.add("weight")
+            if token in {"bias", "b_tile"}:
+                expanded.add("bias")
+        out[str(tensor_id)] = {x for x in expanded if x}
     return out
 
 
@@ -135,11 +287,49 @@ def _normalize_scope(value: Any) -> str:
         return "tile"
     if token in {"row_reduce", "row", "row_scope"}:
         return "row"
-    if token in {"row_epilogue", "full_row", "kv_loop", "loop", "loop_carried", "outer_loop"}:
+    if token in {
+        "row_epilogue",
+        "full_row",
+        "row_processing",
+        "row_normalization",
+        "row_normalization_epilogue",
+        "kv_loop",
+        "loop",
+        "loop_carried",
+        "outer_loop",
+    }:
         return "loop"
     if token in {"warp", "warp_reduce"}:
         return "warp"
     return token
+
+
+def _is_full_row_reuse_window(value: Any) -> bool:
+    token = _norm_token(value)
+    return token in {
+        "full_row",
+        "full_row_program",
+        "row_processing",
+        "row_normalization",
+        "row_normalization_epilogue",
+    }
+
+
+def _blocked_layout_full_row_hint(
+    *,
+    row_width: int,
+    blocked_threads_hint: int | None,
+    blocked_vector_hint: int | None,
+) -> bool:
+    threads = int(blocked_threads_hint or 0)
+    vector_width = int(blocked_vector_hint or 0)
+    if row_width <= 0 or threads <= 0 or vector_width <= 0:
+        return False
+    lane_width = int(threads * vector_width)
+    if lane_width <= 0 or (int(row_width) % lane_width) != 0:
+        return False
+    chunk_count = int(row_width // lane_width)
+    return 0 < chunk_count <= 32
 
 
 @dataclass(frozen=True)
@@ -167,6 +357,9 @@ class GraphProfile:
     cfg_shared_bytes: int = 0
     cfg_register_bytes: int = 0
     cfg_path_bytes: dict[str, int] = field(default_factory=dict)
+    cfg_path_count: int = 0
+    cfg_uniform_branch: bool = False
+    cfg_divergence_penalty_bytes: int = 0
     resource_groups: dict[str, ResourceGroup] = field(default_factory=dict)
     resident_window_scope: str = ""
     full_row_bytes: int = 0
@@ -271,6 +464,7 @@ def _graph_profile(
     dim_candidates = collect_dim_candidate_ints_normalized(org)
     blocked_threads_hint, blocked_vector_hint = _blocked_layout_hints(ttgir_facts)
     reduction_scope = str(_fact_attr(ttgir_facts, "communication.reduction", "reduction_scope", "") or "")
+    program_axes = list(_fact_attr(ttgir_facts, "mapping.program_axes", "axes", []) or [])
     schedule_relations = {
         _norm_token(getattr(edge, "relation", ""))
         for edge in list(getattr(org, "schedule_edges", []) or [])
@@ -291,6 +485,13 @@ def _graph_profile(
         values = union_dim_candidate_ints(dim_candidates, key)
         if values:
             pipeline_depth = max(pipeline_depth, int(values[0]))
+    row_width = 0
+    for key in ("N", "KV_CTX", "Q_CTX"):
+        iv = _coerce_int(shape_bindings.get(key))
+        if iv is not None and iv > 0:
+            row_width = int(iv)
+            break
+    row_bytes_hint = int(row_width * 4) if int(row_width) > 0 else 0
 
     signal_names: set[str] = set()
     resource_groups: dict[str, ResourceGroup] = {}
@@ -299,6 +500,9 @@ def _graph_profile(
     cfg_shared_bytes = 0
     cfg_register_bytes = 0
     cfg_path_bytes: dict[str, int] = {}
+    cfg_path_count = 0
+    cfg_uniform_branch = False
+    cfg_divergence_penalty_bytes = 0
     resident_window_scope = ""
     stream_shared_ids: list[str] = []
     row_shared_ids: list[str] = []
@@ -307,8 +511,18 @@ def _graph_profile(
     output_ids: list[str] = []
     state_ids: list[str] = []
     full_row_ids: list[str] = []
+    has_weight_like = False
+    has_bias_like = False
+    has_scalar_param = False
+    has_scalar_output = False
+    if 0 < int(row_width) <= 128:
+        signal_names.add("tiny_row")
+    if int(row_width) >= 16384:
+        signal_names.add("massive_row")
 
     if "resident_working_set" in goal_tags:
+        signal_names.add("resident_state")
+    if "operand_reuse" in goal_tags:
         signal_names.add("resident_state")
     if "streaming_softmax_state" in goal_tags:
         signal_names.add("online_state")
@@ -320,12 +534,24 @@ def _graph_profile(
         signal_names.add("vector_path")
     if "persistent_row_state" in goal_tags:
         signal_names.add("persistent_path")
+    if len(program_axes) >= 2:
+        signal_names.add("multi_program_axis")
+    if _blocked_layout_full_row_hint(
+        row_width=int(row_width),
+        blocked_threads_hint=blocked_threads_hint,
+        blocked_vector_hint=blocked_vector_hint,
+    ) and (
+        "vector_path" in signal_names
+        or "memory_coalescing" in goal_tags
+        or mechanism_tags & {"blocked_register_layout", "tile_load_stage"}
+    ):
+        signal_names.add("full_row_path")
 
     if mechanism_tags & {"shared_staging", "block_synchronization"}:
         signal_names.add("sync_path")
     if mechanism_tags & {"vector_row_path", "vector_global_io", "tile_load_stage", "blocked_register_layout", "vector_group_io", "vector_dot_fragment"}:
         signal_names.add("vector_path")
-    if mechanism_tags & {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization"}:
+    if mechanism_tags & {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization", "online_safe_math_reduction"}:
         signal_names.add("reduction_path")
     if mechanism_tags & {"mask_apply", "mask_causal_apply"}:
         signal_names.add("mask_path")
@@ -337,8 +563,10 @@ def _graph_profile(
         signal_names.add("persistent_path")
     if mechanism_tags & {"kv_streamed_tiles", "qkv_stage", "tiny_kv_stage"}:
         signal_names.add("stream_stage")
-    if mechanism_tags & {"q_resident_state", "row_tile_resident", "group_tile_resident", "tile_resident"}:
+    if mechanism_tags & {"q_resident_state", "row_tile_resident", "group_tile_resident", "tile_resident", "multi_output_stats_resident"}:
         signal_names.add("resident_state")
+    if mechanism_tags & {"online_softmax_reduce", "parallel_softmax", "online_safe_math_reduction"}:
+        signal_names.add("online_state")
     if mechanism_tags & {"mma_core", "dot_op"}:
         signal_names.add("mma_path")
     if mechanism_tags & {"label_gather", "index_gather"}:
@@ -346,6 +574,13 @@ def _graph_profile(
     if mechanism_tags & {"branch_mask", "ignore_mask"}:
         signal_names.add("cfg_path")
         signal_names.add("branch_mask")
+    branch_mechanisms = [
+        mechanism
+        for mechanism in list(getattr(org, "mechanisms", []) or [])
+        if _norm_token(getattr(mechanism, "tag", "")) in {"branch_mask", "ignore_mask"}
+    ]
+    if branch_mechanisms and all(bool((dict(getattr(mechanism, "attrs", {}) or {})).get("early_exit")) for mechanism in branch_mechanisms):
+        cfg_uniform_branch = True
 
     def _ensure_group(name: str, *, lifetimes: list[OrgTensorLifetime], storage: str = "", reuse_scope: str = "") -> None:
         nonlocal resource_groups
@@ -366,23 +601,47 @@ def _graph_profile(
         role_tokens = set(tensor_roles.get(tensor_id) or set())
         mech_tokens = lifetime_mechanism_tags(org, lifetime)
         all_tokens = set(role_tokens) | set(mech_tokens)
+        if any(tok in role_tokens for tok in {"scalar_param", "scalar", "alpha"}):
+            has_scalar_param = True
+        if any(tok in role_tokens for tok in {"weight", "w", "gamma", "scale"}):
+            has_weight_like = True
+        if any(tok in role_tokens for tok in {"bias", "b", "beta", "shift"}):
+            has_bias_like = True
         reuse_scope = _normalize_scope(getattr(lifetime, "reuse_window", "") or getattr(lifetime, "scope", "") or getattr(lifetime, "region", ""))
         raw_reuse_window = _norm_token(getattr(lifetime, "reuse_window", "") or "")
         storage = _norm_token(getattr(lifetime, "storage", ""))
         bytes_hint = max(0, int(getattr(lifetime, "bytes_hint", 0) or 0))
+        is_full_row_lifetime = storage == "register" and _is_full_row_reuse_window(raw_reuse_window)
+        region_token = _norm_token(getattr(lifetime, "region", ""))
+        epilogue_stream_bytes = max(
+            16,
+            int(min(bytes_hint, max(1, min(int(blocked_threads_hint or 256), 256)) * max(1, int(blocked_vector_hint or 1)) * 4)),
+        )
+        is_epilogue_stream_lifetime = (
+            storage == "register"
+            and not is_full_row_lifetime
+            and row_bytes_hint > 0
+            and bytes_hint >= row_bytes_hint
+            and region_token in {"affine_epilogue", "row_epilogue", "epilogue"}
+            and (
+                "affine_epilogue_fusion" in goal_tags
+                or "fused_epilogue" in signal_names
+                or any(tok in all_tokens for tok in {"affine_epilogue", "output_layout_convert", "vector_row_path"})
+            )
+        )
         if storage == "shared":
             shared_bytes += int(bytes_hint)
-        if storage == "register":
-            register_bytes += int(bytes_hint)
+        if storage == "register" and not is_full_row_lifetime:
+            register_bytes += int(epilogue_stream_bytes if is_epilogue_stream_lifetime else bytes_hint)
         if reuse_scope in {"tile", "loop"} and not resident_window_scope:
             resident_window_scope = reuse_scope
         if "resident_working_set" in goal_tags or any(tok in all_tokens for tok in {"row_tile_resident", "group_tile_resident", "tile_resident", "q_resident_state"}):
             signal_names.add("resident_state")
         if any(tok in all_tokens for tok in {"kv_streamed_tiles", "qkv_stage", "tiny_kv_stage", "operand_tile_stage", "ab_tile_stage"}):
             signal_names.add("stream_stage")
-        if any(tok in all_tokens for tok in {"online_softmax_reduce", "parallel_softmax"}):
+        if any(tok in all_tokens for tok in {"online_softmax_reduce", "parallel_softmax", "online_safe_math_reduction"}):
             signal_names.add("online_state")
-        if any(tok in all_tokens for tok in {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization"}):
+        if any(tok in all_tokens for tok in {"row_reduction", "warp_reduction", "warp_reduction_tree", "warp_statistics", "online_normalization", "online_safe_math_reduction"}):
             signal_names.add("reduction_path")
         if any(tok in all_tokens for tok in {"vector_row_path", "vector_global_io", "tile_load_stage", "blocked_register_layout", "vector_group_io", "vector_dot_fragment"}):
             signal_names.add("vector_path")
@@ -394,9 +653,9 @@ def _graph_profile(
             signal_names.add("mma_path")
         if any(tok in all_tokens for tok in {"output_layout_convert", "affine_epilogue", "affine_fused_epilogue", "bias_fused_epilogue", "epilogue_fused_writeback"}):
             signal_names.add("fused_epilogue")
-        if any(tok in all_tokens for tok in {"persistent_row_cache", "row_stats"}) or "persistent_row_state" in goal_tags:
+        if any(tok in all_tokens for tok in {"persistent_row_cache", "row_stats", "multi_output_stats_resident"}) or "persistent_row_state" in goal_tags:
             signal_names.add("persistent_path")
-        if storage == "register" and raw_reuse_window == "full_row":
+        if is_full_row_lifetime:
             signal_names.add("full_row_path")
         if any(tok in all_tokens for tok in {"blocked_register_layout", "output_layout_convert"}) or _norm_token(getattr(lifetime, "layout", "")):
             signal_names.add("layout_path")
@@ -405,6 +664,10 @@ def _graph_profile(
         if any(tok in role_tokens for tok in {"output_accumulator", "affine_out", "out", "output"}):
             signal_names.add("output_accumulator")
             output_ids.append(lifetime_id)
+        tensor_obj = tensor_by_id(org).get(tensor_id, None)
+        shape_refs = list(getattr(tensor_obj, "shape_refs", []) or []) if tensor_obj is not None else []
+        if not shape_refs and any(tok in role_tokens for tok in {"output", "output_accumulator", "accumulator", "loss", "scalar"}):
+            has_scalar_output = True
         if any(tok in role_tokens for tok in {"softmax_max", "softmax_sum", "row_stats", "mean", "rstd", "state", "max_state", "sum_state"}):
             signal_names.add("stateful_recurrence")
             state_ids.append(lifetime_id)
@@ -412,6 +675,9 @@ def _graph_profile(
             signal_names.add("mean_state")
         if any(tok in role_tokens for tok in {"rstd", "inv_rms", "rms_state"}):
             signal_names.add("rms_state")
+        if any(tok in all_tokens for tok in {"multi_output_stats_resident", "mean_state", "rstd_state"}):
+            signal_names.add("stateful_recurrence")
+            signal_names.add("resident_state")
         if any(tok in role_tokens for tok in {"target", "target_col", "picked", "picked_col", "label"}):
             signal_names.add("gather_path")
         if str(getattr(tensor_by_id(org).get(tensor_id, None), "view_of", "")).strip():
@@ -432,8 +698,40 @@ def _graph_profile(
             and any(tok in all_tokens for tok in {"input_row", "row_tile_resident", "group_tile_resident", "tile_resident"})
         ):
             persistent_ids.append(lifetime_id)
-        if storage == "register" and raw_reuse_window == "full_row":
+        if is_full_row_lifetime:
             full_row_ids.append(lifetime_id)
+    if signal_names >= {"mean_state", "rms_state"}:
+        signal_names.add("reduction_path")
+        signal_names.add("stateful_recurrence")
+    if has_weight_like and has_bias_like and signal_names >= {"mean_state", "rms_state", "output_accumulator"}:
+        signal_names.add("fused_epilogue")
+    if has_weight_like:
+        signal_names.add("scale_param")
+    if has_bias_like:
+        signal_names.add("bias_param")
+    if has_scalar_param and (has_weight_like or has_bias_like) and "vector_path" in signal_names:
+        signal_names.add("resident_state")
+    if has_scalar_param:
+        signal_names.add("scalar_param")
+    if has_scalar_output:
+        signal_names.add("scalar_output")
+    if has_weight_like and (not has_bias_like) and ("rms_state" in signal_names or "reduction_path" in signal_names):
+        signal_names.add("rms_only_norm")
+    for mechanism in list(getattr(org, "mechanisms", []) or []):
+        tag = _norm_token(getattr(mechanism, "tag", ""))
+        attrs = dict(getattr(mechanism, "attrs", {}) or {})
+        ops = {_norm_token(x) for x in list(attrs.get("ops") or []) if _norm_token(x)}
+        stat_count = _coerce_int(attrs.get("stat_count"))
+        affine_count = _coerce_int(attrs.get("affine_count"))
+        if tag == "tvd_elementwise" or {"sub", "abs"} <= ops:
+            signal_names.add("abs_sub_path")
+        if tag == "multi_output_stats_resident" and stat_count is not None and int(stat_count) >= 3:
+            signal_names.add("tri_stats_state")
+            signal_names.add("resident_state")
+            signal_names.add("stateful_recurrence")
+        if tag == "affine_epilogue" and affine_count is not None and int(affine_count) >= 3:
+            signal_names.add("triple_affine_epilogue")
+            signal_names.add("fused_epilogue")
     if "latency_hiding" in goal_tags and ("async_pipeline" in signal_names or _fact_present(ptx_facts, "pipeline.async_copy")):
         signal_names.add("async_pipeline")
     if _fact_present(ptx_facts, "pipeline.async_copy") and bool(_fact_attr(ptx_facts, "pipeline.async_copy", "complete_async_pipeline", False)):
@@ -485,10 +783,13 @@ def _graph_profile(
             path_register[path_id] = int(register_acc)
         cfg_shared_bytes = max([0, *path_shared.values()])
         cfg_register_bytes = max([0, *path_register.values()])
+        cfg_path_count = int(len(set(path_shared) | set(path_register)))
         cfg_path_bytes = {
             str(path_id): int(path_shared.get(path_id, 0)) + int(path_register.get(path_id, 0))
             for path_id in sorted(set(path_shared) | set(path_register))
         }
+    if cfg_path_bytes and not cfg_uniform_branch:
+        cfg_divergence_penalty_bytes = int(max(cfg_path_bytes.values()) - min(cfg_path_bytes.values()))
     _ensure_group("stream_shared", lifetimes=[lifetimes_by_id[x] for x in stream_shared_ids if x in lifetimes_by_id], storage="shared", reuse_scope="tile")
     _ensure_group("row_shared", lifetimes=[lifetimes_by_id[x] for x in row_shared_ids if x in lifetimes_by_id], storage="shared", reuse_scope=resident_window_scope or "tile")
     _ensure_group("operand_stage", lifetimes=[lifetimes_by_id[x] for x in operand_ids if x in lifetimes_by_id], storage="shared", reuse_scope="tile")
@@ -504,18 +805,28 @@ def _graph_profile(
         signal_names.add("shared_stage_path")
 
     total_work = 1
-    row_width = 0
     for key in ("M", "N", "K", "Q_CTX", "KV_CTX", "HEAD_DIM"):
         iv = _coerce_int(shape_bindings.get(key))
         if iv is not None and iv > 0:
             total_work *= int(iv)
-    for key in ("N", "KV_CTX", "Q_CTX"):
-        iv = _coerce_int(shape_bindings.get(key))
-        if iv is not None and iv > 0:
-            row_width = int(iv)
-            break
     if int(row_width) == 64:
         signal_names.add("row_width_64")
+    if int(row_width) >= 65536:
+        signal_names.add("elastic_fallback")
+    if (
+        "full_row_path" in signal_names
+        and "full_row_register" in resource_groups
+        and int(resource_groups["full_row_register"].bytes_hint or 0) == 0
+        and int(row_width) > 0
+    ):
+        resource_groups["full_row_register"] = ResourceGroup(
+            name="full_row_register",
+            lifetime_ids=tuple(resource_groups["full_row_register"].lifetime_ids),
+            bytes_hint=int(row_width * 4),
+            reuse_scope="loop",
+            storage="register",
+            tensor_count=max(1, int(resource_groups["full_row_register"].tensor_count or 0)),
+        )
     head_dim = int(_coerce_int(shape_bindings.get("HEAD_DIM")) or 0)
 
     notes = [
@@ -523,7 +834,14 @@ def _graph_profile(
         f"topology_pipeline_depth={int(pipeline_depth)}",
         f"topology_pipeline_path={bool('async_pipeline' in signal_names)}",
         f"topology_shared_stage_path={bool(('stream_shared' in resource_groups and resource_groups['stream_shared'].bytes_hint > 0) or ('row_shared' in resource_groups and resource_groups['row_shared'].bytes_hint > 0))}",
+        f"topology_program_axes={len(program_axes)}",
     ]
+    if "tiny_row" in signal_names:
+        notes.append("topology_shape_regime=tiny")
+    if "massive_row" in signal_names:
+        notes.append("topology_shape_regime=massive")
+    if "elastic_fallback" in signal_names:
+        notes.append("topology_elastic_fallback=true")
     if resident_window_scope:
         notes.append(f"topology_resident_window_scope={resident_window_scope}")
     full_row_bytes = int(resource_groups.get("full_row_register", ResourceGroup(name="")).bytes_hint or 0)
@@ -531,6 +849,7 @@ def _graph_profile(
         notes.append(f"topology_full_row_bytes={full_row_bytes}")
     if cfg_path_bytes:
         notes.append(f"topology_cfg_max_path_bytes={int(max(cfg_path_bytes.values()))}")
+        notes.append(f"topology_cfg_uniform_branch={bool(cfg_uniform_branch)}")
         notes.append(
             "topology_cfg_paths="
             + ";".join(f"{path_id}:{int(bytes_hint)}" for path_id, bytes_hint in sorted(cfg_path_bytes.items()))
@@ -550,6 +869,9 @@ def _graph_profile(
         cfg_shared_bytes=int(cfg_shared_bytes),
         cfg_register_bytes=int(cfg_register_bytes),
         cfg_path_bytes={str(k): int(v) for k, v in dict(cfg_path_bytes or {}).items()},
+        cfg_path_count=int(cfg_path_count),
+        cfg_uniform_branch=bool(cfg_uniform_branch),
+        cfg_divergence_penalty_bytes=int(cfg_divergence_penalty_bytes),
         resource_groups=resource_groups,
         resident_window_scope=str(resident_window_scope),
         full_row_bytes=int(full_row_bytes),
@@ -578,6 +900,7 @@ def _resolve_param_values(
     hardware_model: HardwareModel,
 ) -> list[int]:
     values: list[int] = []
+    row_width = int(profile.row_width or _coerce_int(_lookup_binding(shape_bindings, "N")) or 0)
     source_value = _coerce_int(source_bindings.get(param.name))
     if source_value is not None:
         values.append(int(source_value))
@@ -607,6 +930,33 @@ def _resolve_param_values(
             values = [int(x) for x in values if int(x) <= int(softmax_cap)]
             if softmax_cap not in values and softmax_cap in set(int(x) for x in list(param.allowed_values or ()) or [softmax_cap]):
                 values.insert(0, int(softmax_cap))
+    role = _norm_token(param.role)
+    if role == "threads" and profile.has_signal("tiny_row") and row_width > 0:
+        thread_cap = max(32, min(128, _next_power_of_two(max(1, row_width))))
+        capped = [int(x) for x in values if int(x) <= int(thread_cap)]
+        if capped:
+            values = capped
+    if role == "vector_width" and profile.has_signal("tiny_row") and row_width > 0:
+        vec_cap = 1 if int(row_width) <= 64 else 2
+        capped = [int(x) for x in values if int(x) <= int(vec_cap)]
+        if capped:
+            values = capped
+    if role == "full_row_stage":
+        if profile.has_signal("tiny_row"):
+            return [0] if 0 in set(values or [0]) else [0]
+        if profile.has_signal("elastic_fallback") and int(row_width) >= 65536:
+            ordered = [x for x in values if int(x) == 0]
+            return ordered or [0]
+        if profile.has_signal("full_row_path"):
+            values = [*([1] if 1 in set(values) else []), *[int(x) for x in values if int(x) != 1]]
+    if role in {"shared_stage", "persistent_stage"} and profile.has_signal("elastic_fallback"):
+        preferred = [int(x) for x in values if int(x) == 1]
+        rest = [int(x) for x in values if int(x) != 1]
+        values = preferred + rest
+    if role == "threads" and profile.has_signal("massive_row"):
+        values = sorted([int(x) for x in values], reverse=True)
+    if role == "vector_width" and profile.has_signal("massive_row"):
+        values = sorted([int(x) for x in values], reverse=True)
     return values
 
 
@@ -636,14 +986,8 @@ def _resolve_family_spec(
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
 ) -> tuple[FamilySpec, str]:
-    direct = specs.get(str(kernel_name))
-    if direct is not None:
-        return direct, f"family_exact={kernel_name}"
-
-    source_kind = str(source_oracle.get("kernel_kind") or "").strip()
-    source_spec = specs.get(source_kind)
-    if source_spec is not None and _shape_keys_present(shape_bindings, tuple(source_spec.required_shape_keys or ())):
-        return source_spec, f"family_source_oracle={source_kind}"
+    del kernel_name
+    del source_oracle
 
     scored: list[tuple[float, str, str]] = []
 
@@ -665,17 +1009,75 @@ def _resolve_family_spec(
         if profile.has_signal("fused_epilogue"):
             _consider("matmul_fused_epilogue2d", 126.0, "graph:mma+epilogue")
         _consider("ai_bench_matmul", 118.0, "graph:mma")
+    if profile.has_signal("layout_path") and profile.has_signal("alias_view"):
+        rope_score = 109.0
+        if profile.has_signal("vector_path"):
+            rope_score += 3.0
+        _consider("liger_rope", rope_score, "graph:alias_view+layout_rotation")
     if profile.has_signal("reduction_path") and profile.has_signal("online_state"):
         if profile.has_signal("mask_path"):
             _consider("masked_softmax2d", 114.0, "graph:masked_softmax")
-        if profile.has_signal("vector_path"):
+        if profile.has_signal("vector_path") and int(profile.row_width or 0) <= 1024:
             _consider("ai_bench_softmax", 112.0, "graph:vector_softmax")
         _consider("softmax_inner", 110.0, "graph:softmax")
+    if (
+        profile.has_signal("scalar_output")
+        and profile.has_signal("reduction_path")
+        and profile.has_signal("abs_sub_path")
+        and not profile.has_signal("online_state")
+        and not profile.has_signal("mma_path")
+        and not profile.has_signal("mean_state")
+        and not profile.has_signal("rms_state")
+    ):
+        scalar_score = 117.0
+        if profile.has_signal("resident_state"):
+            scalar_score += 3.0
+        if profile.has_signal("vector_path"):
+            scalar_score += 2.0
+        _consider("tvd_loss2d", scalar_score, "graph:scalar_abs_sub_reduce")
+    if (
+        profile.has_signal("reduction_path")
+        and profile.has_signal("fused_epilogue")
+        and profile.has_signal("tri_stats_state")
+        and profile.has_signal("triple_affine_epilogue")
+    ):
+        poly_score = 121.0
+        if profile.has_signal("vector_path"):
+            poly_score += 6.0
+        if profile.has_signal("full_row_path"):
+            poly_score += 12.0
+        if profile.has_signal("resident_state"):
+            poly_score += 4.0
+        _consider("poly_norm2d", poly_score, "graph:multi_stats_affine_norm")
     if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.has_signal("reduction_path"):
-        _consider("cross_entropy_loss2d", 116.0, "graph:cfg+gather+reduction")
+        base_score = 116.0
+        if profile.has_signal("resident_state"):
+            base_score += 6.0
+        if profile.cfg_uniform_branch:
+            base_score += 10.0
+        _consider("cfg_masked_row_reduce2d", base_score, "graph:cfg+gather+reduction")
+    if profile.has_signal("mean_state") and profile.has_signal("rms_state"):
+        norm_score = 109.0
+        if profile.has_signal("fused_epilogue"):
+            norm_score += 4.0
+        if profile.has_signal("vector_path"):
+            norm_score += 2.0
+        if profile.has_signal("persistent_path"):
+            norm_score += 1.0
+        if profile.has_signal("bias_param"):
+            _consider("layer_norm_persistent", norm_score + 4.0, "graph:mean+rstd+bias_norm")
+        else:
+            _consider("layer_norm_persistent", norm_score - 8.0, "graph:mean+rstd_norm")
+    if profile.has_signal("rms_only_norm") and not profile.has_signal("bias_param"):
+        rms_only_score = 112.0
+        if profile.has_signal("vector_path"):
+            rms_only_score += 2.0
+        if profile.has_signal("full_row_path"):
+            rms_only_score += 3.0
+        _consider("rms_norm2d", rms_only_score, "graph:rms_only_norm")
     if profile.has_signal("reduction_path") and profile.has_signal("fused_epilogue"):
-        if _shape_keys_present(shape_bindings, ("N", "GROUP_SIZE")):
-            _consider("group_norm_kernel", 108.0, "graph:group_norm")
+        if profile.has_signal("multi_program_axis") and profile.has_signal("mean_state") and profile.has_signal("rms_state"):
+            _consider("group_norm_kernel", 108.0, "graph:multi_axis_norm")
         if profile.has_signal("rms_state") and not profile.has_signal("mean_state"):
             _consider("rms_norm2d", 107.0, "graph:rms_norm")
         _consider("layer_norm_persistent", 106.0, "graph:norm")
@@ -692,7 +1094,7 @@ def _resolve_family_spec(
                 scored.append((0.0, str(name), "graph:shape_compatible"))
 
     if not scored:
-        raise ValueError(f"no graph-driven family matches kernel={kernel_name!r}")
+        raise ValueError("no graph-driven family matches structure")
     scored.sort(key=lambda item: (-float(item[0]), str(item[1])))
     _, family_name, reason = scored[0]
     return specs[family_name], f"family_inferred={family_name};reason={reason}"
@@ -765,7 +1167,9 @@ def _resource_fit(
 ) -> ResourceFit:
     # Region-graph resource calculus:
     #   bytes(path pi) = sum_{g in active_groups(pi)} bytes(g)
-    #   resource_cfg = max_{pi in Paths(region_graph)} bytes(path pi)
+    #   divergence(pi) = 0                                 if predicate is CTA-uniform early-exit
+    #                 = bytes(path pi) - min_j bytes(path j) otherwise
+    #   resource_cfg = max_{pi in Paths(region_graph)} (bytes(path pi) + divergence(pi))
     # When no RegionGraph is present, the system collapses to a single static path and
     # the equations below evaluate that degenerate case directly.
     shared_budget = int(hardware_model.shared_mem_kb) * 1024
@@ -781,7 +1185,7 @@ def _resource_fit(
     if any(_norm_token(x) == "mma_async_copy" for x in enabled_flag_names):
         shared_bytes += _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="operand_stage", hardware_model=hardware_model)
         shared_bytes *= max(1, int(profile.pipeline_depth))
-    if any(_norm_token(x) == "rms_norm_full_row_vector" for x in enabled_flag_names):
+    if any("full_row_vector" in _norm_token(x) for x in enabled_flag_names):
         if int(profile.row_width or 0) < 1024:
             return ResourceFit(
                 allowed=False,
@@ -811,9 +1215,16 @@ def _resource_fit(
                 shared_ratio=float(shared_bytes) / float(max(1, shared_budget)),
                 register_ratio=float(full_row_register_bytes) / float(max(1, register_budget_bytes)),
             )
-        register_bytes = max(int(profile.register_bytes or 0), int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
+        if profile.has_signal("online_state"):
+            full_row_register_bytes = max(int(full_row_register_bytes), int(profile.row_width or 0) * 8)
+        # Graph-level register_bytes is an upper envelope over all observed resident
+        # lifetimes in the source kernel. Full-row templates stream epilogue weights
+        # and do not need that entire set live at once on the target. Use the
+        # candidate-specific full-row estimate as the governing register budget.
+        register_bytes = max(int(full_row_register_bytes), int(profile.cfg_register_bytes or 0))
     else:
         register_bytes = max(int(profile.register_bytes or 0), int(profile.cfg_register_bytes or 0))
+    register_bytes += int(profile.cfg_divergence_penalty_bytes or 0)
     if any(_norm_token(x).endswith("shared_stage") for x in enabled_flag_names) and not profile.has_signal("async_evidence") and profile.has_signal("async_pipeline"):
         shared_bytes = max(shared_bytes, _effective_group_bytes(spec=spec, profile=profile, bindings=bindings, group_name="stream_shared", hardware_model=hardware_model))
     shared_bytes = max(shared_bytes, int(profile.cfg_shared_bytes or 0))
@@ -853,12 +1264,23 @@ def _score_param(
         score += 10.0
         reasons.append(f"source:{param.name}")
     if param.role == "threads":
+        if profile.has_signal("tiny_row") and profile.row_width > 0:
+            ideal = max(32, min(64, _next_power_of_two(max(1, int(profile.row_width)))))
+            if iv == ideal:
+                score += 28.0
+                reasons.append("tiny_threads_ideal")
+            elif iv > ideal:
+                score -= 24.0
+                reasons.append("tiny_threads_oversized")
         if profile.blocked_threads_hint is not None and int(profile.blocked_threads_hint) == iv:
             score += 8.0
             reasons.append("ttgir_threads")
         if profile.total_work >= 1_000_000 and iv in {256, 512}:
             score += 8.0
             reasons.append("large_work_threads")
+        if profile.has_signal("elastic_fallback") and profile.has_signal("reduction_path") and iv in {128, 256, 512, 1024}:
+            score += 12.0
+            reasons.append("elastic_fallback_threads")
         if profile.has_signal("full_row_path") and profile.row_width >= 1024:
             live_values_per_thread = int(profile.row_width // max(1, iv))
             if live_values_per_thread <= 128 and iv == 256:
@@ -881,7 +1303,25 @@ def _score_param(
         if profile.has_signal("reduction_path") and profile.reduction_scope == "warp" and iv in {32, 64, 128}:
             score += 6.0
             reasons.append("warp_reduction_threads")
+        if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.row_width >= 1024:
+            if profile.cfg_uniform_branch and iv == 1024:
+                score += 34.0
+                reasons.append("cfg_uniform_full_cta")
+            elif iv == 512:
+                score += 12.0
+                reasons.append("cfg_half_cta")
+            elif iv < 256:
+                score -= 28.0
+                reasons.append("cfg_underthreaded")
     elif param.role == "vector_width":
+        if profile.has_signal("tiny_row"):
+            preferred = 1 if int(profile.row_width or 0) <= 64 else 2
+            if iv == preferred:
+                score += 22.0
+                reasons.append("tiny_vector_ideal")
+            elif iv > preferred:
+                score -= 20.0
+                reasons.append("tiny_vector_oversized")
         if profile.blocked_vector_hint is not None and int(profile.blocked_vector_hint) == iv:
             score += 10.0
             reasons.append("ttgir_vector")
@@ -899,6 +1339,13 @@ def _score_param(
             score += {4: 16.0, 2: 8.0}.get(iv, 0.0)
             if iv > 1:
                 reasons.append("bandwidth_vector")
+        if profile.has_signal("cfg_path") and profile.has_signal("gather_path") and profile.row_width >= 1024:
+            if iv == 4:
+                score += 18.0
+                reasons.append("cfg_vec4")
+            elif iv == 1:
+                score -= 10.0
+                reasons.append("cfg_scalar")
         group_size = _coerce_int(_lookup_binding(shape_bindings, "GROUP_SIZE"))
         if group_size is not None and profile.has_signal("vector_path"):
             if int(group_size) == 1 and iv > 1:
@@ -923,10 +1370,16 @@ def _score_param(
         if iv == 1 and profile.has_signal("stream_shared"):
             score += 36.0
             reasons.append("shared_stage_path")
+        if iv == 1 and profile.has_signal("elastic_fallback"):
+            score += 16.0
+            reasons.append("elastic_shared_stage")
     elif param.role == "persistent_stage":
         if iv == 1 and profile.has_signal("persistent_path"):
             score += 28.0
             reasons.append("persistent_path")
+        if iv == 1 and profile.has_signal("elastic_fallback"):
+            score += 18.0
+            reasons.append("elastic_persistent")
     elif param.role == "async_copy":
         if iv == 1 and profile.has_signal("async_pipeline"):
             score += 24.0
@@ -935,6 +1388,12 @@ def _score_param(
         if iv == 1 and profile.has_signal("full_row_path"):
             score += 42.0
             reasons.append("full_row_path")
+        if profile.has_signal("tiny_row") and iv == 1:
+            score -= 80.0
+            reasons.append("tiny_disable_full_row")
+        if profile.has_signal("elastic_fallback") and iv == 1:
+            score -= 64.0
+            reasons.append("elastic_disable_full_row")
     elif param.role in {"tile_m", "tile_n", "tile_k"}:
         if profile.has_signal("mma_path"):
             score += 6.0
@@ -951,6 +1410,7 @@ def _evaluate_template_candidate(
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
+    module_map: Mapping[str, BackendModule],
 ) -> CandidateEval:
     score = 100.0
     reasons: list[str] = [f"cluster={hardware_model.arch_cluster}", f"kind={template.kernel_kind}"]
@@ -1009,6 +1469,23 @@ def _evaluate_template_candidate(
         if bindings == source_bindings:
             score += 48.0
             reasons.append("source_exact")
+    candidate_module_ids = _candidate_module_ids(
+        spec=spec,
+        template=template,
+        profile=profile,
+        bindings=bindings,
+    )
+    constraint_failure = _constraint_failure(
+        module_ids=candidate_module_ids,
+        module_map=module_map,
+        bindings=bindings,
+        shape_bindings=shape_bindings,
+        hardware_model=hardware_model,
+    )
+    if constraint_failure:
+        score -= 320.0
+        portability = "constraint_blocked"
+        reasons.append(f"constraint_blocked={constraint_failure}")
     fit = _resource_fit(
         spec=spec,
         template=template,
@@ -1037,7 +1514,7 @@ def _evaluate_template_candidate(
         cluster=str(hardware_model.arch_cluster),
         portability_note=str(portability),
     )
-    modules = tuple(sorted(set(spec.base_modules) | {str(template.module_id)}))
+    modules = tuple(sorted(candidate_module_ids))
     return CandidateEval(
         candidate=candidate,
         template=template,
@@ -1061,6 +1538,7 @@ def _generate_candidate_evals(
     shape_bindings: Mapping[str, Any],
     source_oracle: Mapping[str, Any],
     hardware_model: HardwareModel,
+    module_map: Mapping[str, BackendModule],
 ) -> list[CandidateEval]:
     source_bindings = {str(k): int(v) for k, v in dict(source_oracle.get("bindings") or {}).items() if str(k).strip()}
     param_map = {str(param.name): param for param in list(spec.params or ())}
@@ -1106,6 +1584,7 @@ def _generate_candidate_evals(
                     shape_bindings=shape_bindings,
                     source_oracle=source_oracle,
                     hardware_model=hardware_model,
+                    module_map=module_map,
                 )
             )
     out.sort(key=lambda item: (-float(item.score), str(item.candidate.kernel_kind), sorted(dict(item.candidate.bindings or {}).items())))
@@ -1239,23 +1718,39 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="softmax_inner",
             catalog_builder=lambda hw: row_softmax_catalog(hw, masked=False),
             required_shape_keys=("M", "N"),
-            base_modules=("softmax_inner_row_tile_resident", "softmax_inner_row_reduction"),
-            optional_modules=(OptionalModuleSpec(module_id="softmax_inner_vector_row_path", signals=("vector_path",)),),
-            params=(ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(64, 128), allowed_values=(32, 64, 128), cap_mode="softmax_threads"),),
+            base_modules=("softmax_inner_row_tile_resident", "softmax_inner_row_reduction", "softmax_inner_online_safe_math_reduction"),
+            optional_modules=(
+                OptionalModuleSpec(module_id="softmax_inner_vector_row_path", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="softmax_inner_full_row_vector_resident", signals=("full_row_path",), gate_param="SOFTMAX_FULL_ROW_VECTOR"),
+                OptionalModuleSpec(module_id="softmax_inner_grid_stride_persistent_reduction", signals=("elastic_fallback",)),
+            ),
+            params=(
+                ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(256, 128, 64), allowed_values=(32, 64, 128, 256)),
+                ParamSpec(name="SOFTMAX_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(4, 1), allowed_values=(1, 4)),
+                ParamSpec(name="SOFTMAX_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
+            ),
             templates=(
+                TemplateSpec(
+                    kernel_kind="row_softmax_axis1_v2",
+                    module_id="softmax_inner_backend_fullrow_v2",
+                    param_names=("SOFTMAX_BLOCK_THREADS", "SOFTMAX_VECTOR_WIDTH", "SOFTMAX_FULL_ROW_VECTOR"),
+                    enabled_flags=("SOFTMAX_FULL_ROW_VECTOR",),
+                    required_signals=("reduction_path", "online_state", "vector_path", "full_row_path"),
+                    signal_weights={"vector_path": 14.0, "online_state": 18.0, "stateful_recurrence": 8.0, "full_row_path": 36.0},
+                ),
                 TemplateSpec(
                     kernel_kind="row_softmax_axis1_triton_v1",
                     module_id="softmax_inner_backend_triton_v1",
                     param_names=("SOFTMAX_BLOCK_THREADS",),
                     required_signals=("resident_state", "reduction_path"),
-                    signal_weights={"vector_path": 10.0, "online_state": 8.0},
+                    signal_weights={"vector_path": 10.0, "online_state": 14.0, "stateful_recurrence": 6.0},
                 ),
                 TemplateSpec(
                     kernel_kind="row_softmax_axis1_v1",
                     module_id="softmax_inner_backend_v1",
                     param_names=(),
                     required_signals=("reduction_path",),
-                    signal_weights={"online_state": 6.0},
+                    signal_weights={"online_state": 10.0, "stateful_recurrence": 4.0},
                 ),
             ),
         ),
@@ -1263,8 +1758,11 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="masked_softmax2d",
             catalog_builder=lambda hw: row_softmax_catalog(hw, masked=True),
             required_shape_keys=("M", "N"),
-            base_modules=("masked_softmax_row_tile_resident", "masked_softmax_row_reduction", "masked_softmax_mask_apply"),
-            optional_modules=(OptionalModuleSpec(module_id="masked_softmax_vector_row_path", signals=("vector_path",)),),
+            base_modules=("masked_softmax_row_tile_resident", "masked_softmax_row_reduction", "masked_softmax_online_safe_math_reduction", "masked_softmax_mask_apply"),
+            optional_modules=(
+                OptionalModuleSpec(module_id="masked_softmax_vector_row_path", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="masked_softmax_grid_stride_persistent_reduction", signals=("elastic_fallback",)),
+            ),
             params=(ParamSpec(name="SOFTMAX_BLOCK_THREADS", role="threads", dim_aliases=("block_threads",), defaults=(64, 128), allowed_values=(32, 64, 128), cap_mode="softmax_threads"),),
             templates=(
                 TemplateSpec(
@@ -1272,14 +1770,14 @@ def _family_specs() -> dict[str, FamilySpec]:
                     module_id="masked_softmax_backend_triton_v1",
                     param_names=("SOFTMAX_BLOCK_THREADS",),
                     required_signals=("resident_state", "reduction_path", "mask_path"),
-                    signal_weights={"vector_path": 10.0, "online_state": 8.0},
+                    signal_weights={"vector_path": 10.0, "online_state": 14.0, "stateful_recurrence": 6.0},
                 ),
                 TemplateSpec(
                     kernel_kind="row_masked_softmax_axis1_v1",
                     module_id="masked_softmax_backend_v1",
                     param_names=(),
                     required_signals=("reduction_path", "mask_path"),
-                    signal_weights={"online_state": 6.0},
+                    signal_weights={"online_state": 10.0, "stateful_recurrence": 4.0},
                 ),
             ),
         ),
@@ -1367,6 +1865,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             optional_modules=(
                 OptionalModuleSpec(module_id="elementwise_add_vector_global_io", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="elementwise_add_masked_edge_handling", signals=("sync_path", "vector_path")),
+                OptionalModuleSpec(module_id="elementwise_add_broadcast_param_resident", signals=("resident_state",)),
             ),
             params=(
                 ParamSpec(name="ELEMENTWISE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(128, 256, 512), allowed_values=(64, 128, 256, 512)),
@@ -1380,6 +1879,13 @@ def _family_specs() -> dict[str, FamilySpec]:
                     required_signals=("resident_state", "vector_path"),
                     signal_weights={"vector_path": 20.0},
                 ),
+                TemplateSpec(
+                    kernel_kind="elementwise_v2",
+                    module_id="elementwise_add_backend_v2",
+                    param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
+                    required_signals=("resident_state", "vector_path", "full_row_path"),
+                    signal_weights={"vector_path": 20.0, "full_row_path": 36.0},
+                ),
             ),
         ),
         "exp2d": FamilySpec(
@@ -1390,6 +1896,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             optional_modules=(
                 OptionalModuleSpec(module_id="elementwise_exp_vector_global_io", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="elementwise_exp_masked_edge_handling", signals=("sync_path", "vector_path")),
+                OptionalModuleSpec(module_id="elementwise_exp_broadcast_param_resident", signals=("resident_state",)),
             ),
             params=(
                 ParamSpec(name="ELEMENTWISE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(128, 256, 512), allowed_values=(64, 128, 256, 512)),
@@ -1402,6 +1909,13 @@ def _family_specs() -> dict[str, FamilySpec]:
                     param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
                     required_signals=("resident_state", "vector_path"),
                     signal_weights={"vector_path": 20.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="elementwise_v2",
+                    module_id="elementwise_exp_backend_v2",
+                    param_names=("ELEMENTWISE_BLOCK_THREADS", "ELEMENTWISE_VECTOR_WIDTH"),
+                    required_signals=("resident_state", "vector_path", "full_row_path"),
+                    signal_weights={"vector_path": 20.0, "full_row_path": 36.0},
                 ),
             ),
         ),
@@ -1417,29 +1931,136 @@ def _family_specs() -> dict[str, FamilySpec]:
                     kernel_kind="rope_dual_v1",
                     module_id="rope_backend_v1",
                     param_names=(),
-                    required_signals=("layout_path", "alias_view"),
-                    signal_weights={"vector_path": 2.0},
+                    required_signals=(),
+                    signal_weights={"layout_path": 18.0, "alias_view": 18.0, "vector_path": 2.0},
                 ),
             ),
         ),
-        "cross_entropy_loss2d": FamilySpec(
-            kernel="cross_entropy_loss2d",
-            catalog_builder=cross_entropy_loss_catalog,
+        "cfg_masked_row_reduce2d": FamilySpec(
+            kernel="cfg_masked_row_reduce2d",
+            catalog_builder=cfg_masked_row_reduce_catalog,
             required_shape_keys=("BT", "V"),
-            base_modules=("ce_row_reduction", "ce_label_gather", "ce_branch_mask", "ce_loss_finalize", "ce_backend_v1"),
+            base_modules=(
+                "cfg_masked_row_reduction",
+                "cfg_masked_label_gather",
+                "cfg_masked_branch_predicate",
+                "cfg_masked_atomic_finalize",
+                "cfg_masked_row_backend_v1",
+            ),
             optional_modules=(
-                OptionalModuleSpec(module_id="ce_row_tile_resident", signals=("resident_state",)),
+                OptionalModuleSpec(module_id="cfg_masked_row_tile_resident", signals=("resident_state",)),
+                OptionalModuleSpec(module_id="cfg_masked_vector_io", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="cfg_masked_register_residency", signals=("resident_state", "cfg_path")),
+                OptionalModuleSpec(module_id="cfg_masked_projection_row_resident", signals=("output_accumulator", "vector_path")),
+                OptionalModuleSpec(module_id="cfg_masked_grid_stride_persistent_reduction", signals=("elastic_fallback",)),
             ),
             params=(
-                ParamSpec(name="CE_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(64, 128, 256), allowed_values=(32, 64, 128, 256)),
+                ParamSpec(
+                    name="CFG_ROW_BLOCK_THREADS",
+                    role="threads",
+                    dim_aliases=("block_threads", "threads_per_block", "num_warps"),
+                    defaults=(1024, 512, 256, 128),
+                    allowed_values=(128, 256, 512, 1024),
+                ),
+                ParamSpec(
+                    name="CFG_ROW_VECTOR_WIDTH",
+                    role="vector_width",
+                    dim_aliases=("vector_width", "vec_width"),
+                    defaults=(4, 2, 1),
+                    allowed_values=(1, 2, 4),
+                ),
             ),
             templates=(
                 TemplateSpec(
-                    kernel_kind="cross_entropy_loss_v1",
-                    module_id="ce_backend_v1",
-                    param_names=("CE_BLOCK_THREADS",),
+                    kernel_kind="cfg_masked_row_reduce_v2",
+                    module_id="cfg_masked_row_backend_v2",
+                    param_names=("CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"),
+                    required_signals=("reduction_path", "output_accumulator", "vector_path", "scalar_output"),
+                    signal_weights={
+                        "online_state": 32.0,
+                        "output_accumulator": 26.0,
+                        "vector_path": 16.0,
+                        "resident_state": 12.0,
+                        "fused_epilogue": 10.0,
+                    },
+                ),
+                TemplateSpec(
+                    kernel_kind="cfg_masked_row_reduce_v1",
+                    module_id="cfg_masked_row_backend_v1",
+                    param_names=("CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"),
                     required_signals=("cfg_path", "gather_path", "reduction_path"),
-                    signal_weights={"online_state": 8.0, "branch_mask": 10.0, "resident_state": 4.0},
+                    signal_weights={"online_state": 8.0, "branch_mask": 10.0, "resident_state": 8.0, "vector_path": 6.0},
+                ),
+            ),
+        ),
+        "tvd_loss2d": FamilySpec(
+            kernel="tvd_loss2d",
+            catalog_builder=tvd_loss2d_catalog,
+            required_shape_keys=("BT", "V"),
+            base_modules=("tvd_input_resident", "tvd_abs_sub_path", "tvd_row_reduction", "tvd_scalar_finalize"),
+            optional_modules=(OptionalModuleSpec(module_id="tvd_vector_row_io", signals=("vector_path",)),),
+            params=(
+                ParamSpec(
+                    name="TVD_BLOCK_THREADS",
+                    role="threads",
+                    dim_aliases=("block_threads", "threads_per_block", "num_warps"),
+                    defaults=(256, 128, 64),
+                    allowed_values=(64, 128, 256, 512),
+                ),
+                ParamSpec(
+                    name="TVD_VECTOR_WIDTH",
+                    role="vector_width",
+                    dim_aliases=("vector_width", "size_per_thread"),
+                    defaults=(4, 2, 1),
+                    allowed_values=(1, 2, 4),
+                ),
+            ),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="tvd_loss2d_v2",
+                    module_id="tvd_backend_v2",
+                    param_names=("TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"),
+                    required_signals=("scalar_output", "reduction_path", "abs_sub_path", "vector_path"),
+                    signal_weights={"resident_state": 8.0, "vector_path": 18.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="tvd_loss2d_v1",
+                    module_id="tvd_backend_v1",
+                    param_names=("TVD_BLOCK_THREADS", "TVD_VECTOR_WIDTH"),
+                    required_signals=("scalar_output", "reduction_path", "abs_sub_path"),
+                    signal_weights={"resident_state": 4.0, "vector_path": 2.0},
+                ),
+            ),
+        ),
+        "poly_norm2d": FamilySpec(
+            kernel="poly_norm2d",
+            catalog_builder=poly_norm2d_catalog,
+            required_shape_keys=("M", "N"),
+            base_modules=("poly_norm_row_tile_resident", "poly_norm_multi_output_stats_resident", "poly_norm_affine_epilogue"),
+            optional_modules=(
+                OptionalModuleSpec(module_id="poly_norm_vector_row_io", signals=("vector_path",)),
+                OptionalModuleSpec(module_id="poly_norm_full_row_vector_resident", signals=("full_row_path",), gate_param="POLY_NORM_FULL_ROW_VECTOR"),
+            ),
+            params=(
+                ParamSpec(name="POLY_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(256, 128), allowed_values=(128, 256)),
+                ParamSpec(name="POLY_NORM_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(4, 2, 1), allowed_values=(1, 2, 4)),
+                ParamSpec(name="POLY_NORM_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
+            ),
+            templates=(
+                TemplateSpec(
+                    kernel_kind="poly_norm_axis1_v2",
+                    module_id="poly_norm_backend_v2",
+                    param_names=("POLY_NORM_BLOCK_THREADS", "POLY_NORM_VECTOR_WIDTH", "POLY_NORM_FULL_ROW_VECTOR"),
+                    enabled_flags=("POLY_NORM_FULL_ROW_VECTOR",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "tri_stats_state", "triple_affine_epilogue", "full_row_path"),
+                    signal_weights={"vector_path": 16.0, "tri_stats_state": 20.0, "triple_affine_epilogue": 16.0, "full_row_path": 36.0},
+                ),
+                TemplateSpec(
+                    kernel_kind="poly_norm_axis1_v1",
+                    module_id="poly_norm_backend_v1",
+                    param_names=("POLY_NORM_BLOCK_THREADS",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "tri_stats_state"),
+                    signal_weights={"vector_path": 8.0, "tri_stats_state": 20.0, "triple_affine_epilogue": 10.0},
                 ),
             ),
         ),
@@ -1447,23 +2068,34 @@ def _family_specs() -> dict[str, FamilySpec]:
             kernel="layer_norm_persistent",
             catalog_builder=layer_norm_persistent_catalog,
             required_shape_keys=("M", "N"),
-            base_modules=("layer_norm_row_tile_resident", "layer_norm_warp_statistics", "layer_norm_affine_epilogue", "layer_norm_backend_v1"),
+            base_modules=("layer_norm_row_tile_resident", "layer_norm_warp_statistics", "layer_norm_multi_output_stats_resident", "layer_norm_affine_epilogue", "layer_norm_backend_v1"),
             optional_modules=(
                 OptionalModuleSpec(module_id="layer_norm_register_stage", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="layer_norm_persistent_row_cache", signals=("persistent_path",), gate_param="LAYER_NORM_PERSISTENT_ROW"),
+                OptionalModuleSpec(module_id="layer_norm_full_row_vector_resident", signals=("full_row_path",), gate_param="LAYER_NORM_FULL_ROW_VECTOR"),
+                OptionalModuleSpec(module_id="layer_norm_grid_stride_persistent_reduction", signals=("elastic_fallback",)),
             ),
             params=(
                 ParamSpec(name="LAYER_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(32, 64, 128, 256), allowed_values=(32, 64, 128, 256)),
                 ParamSpec(name="LAYER_NORM_VECTOR_WIDTH", role="vector_width", dim_aliases=("vector_width", "size_per_thread"), defaults=(1, 2, 4), allowed_values=(1, 2, 4)),
                 ParamSpec(name="LAYER_NORM_PERSISTENT_ROW", role="persistent_stage", dim_aliases=("persistent_row",), defaults=(1, 0), allowed_values=(0, 1)),
+                ParamSpec(name="LAYER_NORM_FULL_ROW_VECTOR", role="full_row_stage", dim_aliases=("full_row_vector",), defaults=(1, 0), allowed_values=(0, 1)),
             ),
             templates=(
+                TemplateSpec(
+                    kernel_kind="layer_norm_axis1_v2",
+                    module_id="layer_norm_backend_v2",
+                    param_names=("LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_FULL_ROW_VECTOR"),
+                    enabled_flags=("LAYER_NORM_FULL_ROW_VECTOR",),
+                    required_signals=("resident_state", "reduction_path", "fused_epilogue", "mean_state", "rms_state", "full_row_path"),
+                    signal_weights={"vector_path": 16.0, "mean_state": 10.0, "rms_state": 10.0, "stateful_recurrence": 8.0, "full_row_path": 36.0},
+                ),
                 TemplateSpec(
                     kernel_kind="layer_norm_axis1_v1",
                     module_id="layer_norm_backend_v1",
                     param_names=("LAYER_NORM_BLOCK_THREADS", "LAYER_NORM_VECTOR_WIDTH", "LAYER_NORM_PERSISTENT_ROW"),
                     required_signals=("resident_state", "reduction_path", "fused_epilogue"),
-                    signal_weights={"persistent_path": 24.0, "vector_path": 10.0},
+                    signal_weights={"persistent_path": 24.0, "vector_path": 10.0, "mean_state": 8.0, "rms_state": 8.0, "stateful_recurrence": 6.0},
                 ),
             ),
         ),
@@ -1475,6 +2107,7 @@ def _family_specs() -> dict[str, FamilySpec]:
             optional_modules=(
                 OptionalModuleSpec(module_id="rms_norm_vector_row_io", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="rms_norm_full_row_vector_resident", signals=("full_row_path",), gate_param="RMS_NORM_FULL_ROW_VECTOR"),
+                OptionalModuleSpec(module_id="rms_norm_grid_stride_persistent_reduction", signals=("elastic_fallback",)),
             ),
             params=(
                 ParamSpec(name="RMS_NORM_BLOCK_THREADS", role="threads", dim_aliases=("block_threads", "threads_per_block", "num_warps"), defaults=(256, 128, 64, 32), allowed_values=(32, 64, 128, 256)),
@@ -1692,6 +2325,7 @@ def plan_cuda_kernel(
         shape_bindings=shape_bindings,
         source_oracle=source_oracle,
         hardware_model=hardware_model,
+        module_map={str(module.id): module for module in list(modules or [])},
     )
     limit = max(1, int(budget))
     ranked = list(ranked[:limit])

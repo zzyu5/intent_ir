@@ -57,8 +57,8 @@ from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.toolchain import detect_mlir_toolchain
 from verify.gen_cases import TestCase
 
-DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
-DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "rvv").strip() or "rvv"
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "").strip()
 
 
 def _normalize_io_name(name: str) -> str:
@@ -286,6 +286,27 @@ def _rvv_staging_dtype(dtype: str, *, execution_mode: str) -> str:
     if dt == "bf16":
         return "f32"
     return dt or "f32"
+
+
+def _ssh_connect_kwargs(
+    *,
+    host: str,
+    user: str | None,
+    password: str | None,
+    port: int,
+    timeout: int,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "hostname": str(host).strip(),
+        "port": int(port),
+        "timeout": int(timeout),
+    }
+    user_norm = str(user or "").strip()
+    if user_norm:
+        kwargs["username"] = user_norm
+    if password:
+        kwargs["password"] = str(password)
+    return kwargs
 
 
 def _tensor_specs_from_io_spec(io_spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1396,8 +1417,17 @@ def run_remote(
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    _log(f"[{frontend}:{kernel}] ssh connect: {user}@{host}:{port}")
-    client.connect(hostname=host, port=port, username=user, password=password, timeout=20)
+    display_target = f"{str(user).strip()}@" if str(user).strip() else ""
+    _log(f"[{frontend}:{kernel}] ssh connect: {display_target}{host}:{port}")
+    client.connect(
+        **_ssh_connect_kwargs(
+            host=host,
+            user=user,
+            password=password,
+            port=port,
+            timeout=20,
+        )
+    )
     sftp = client.open_sftp()
     remote_dir = f"/tmp/intentir_{kernel}_rvv"
     _sftp_mkdir_p(sftp, remote_dir)

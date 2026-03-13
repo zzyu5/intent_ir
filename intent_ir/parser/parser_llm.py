@@ -32,6 +32,9 @@ _SCALAR_ROW_ALIAS_TOKENS = ("row", "rows", "nrow", "nrows", "numrow", "numrows",
 _SCALAR_COL_ALIAS_TOKENS = ("col", "cols", "ncol", "ncols", "numcol", "numcols", "width", "stride")
 _OPTIONAL_SCALAR_DEFAULTS = {
     "offset": 0.0,
+    "labelsmoothing": 0.0,
+    "softcap": 0.0,
+    "lsesquarescale": 0.0,
 }
 
 

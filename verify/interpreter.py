@@ -321,6 +321,12 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             scale = _resolve_value(op.attrs["scale"], env, shape_bindings)
             out = np.multiply(out, scale)
         return out
+    if op.op == "identity":
+        x = _get(env, op.inputs[0])
+        sliced = _slice_to_declared_shape(intent, op.output, x, shape_bindings)
+        if sliced is not None:
+            return sliced
+        return x
     if op.op in NUM_UNARY_OPS:
         x = _get(env, op.inputs[0])
         if op.op == "exp":
@@ -1270,6 +1276,47 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             axis_i = int(axis)
             data_a = np.asarray(data)
             idx = np.asarray(idxs[0], dtype=np.int64)
+            batch_dims = int(op.attrs.get("batch_dims", 0) or 0)
+            if data_a.ndim == 1 and axis_i == 0:
+                return np.take(data_a, idx, axis=0)
+            if batch_dims > 0:
+                if idx.ndim < batch_dims or data_a.ndim < batch_dims:
+                    raise ValueError(
+                        f"axis-based gather batch_dims out of range: data rank={data_a.ndim} indices rank={idx.ndim} batch_dims={batch_dims}"
+                    )
+                if tuple(int(x) for x in idx.shape[:batch_dims]) != tuple(int(x) for x in data_a.shape[:batch_dims]):
+                    raise ValueError(
+                        "axis-based gather batch prefix mismatch: "
+                        f"data[:{batch_dims}]={data_a.shape[:batch_dims]} indices[:{batch_dims}]={idx.shape[:batch_dims]}"
+                    )
+                if axis_i < batch_dims:
+                    raise ValueError(
+                        f"axis-based gather axis must be >= batch_dims, got axis={axis_i} batch_dims={batch_dims}"
+                    )
+                batch_shape = tuple(int(x) for x in data_a.shape[:batch_dims])
+                prefix = int(np.prod(batch_shape, dtype=np.int64)) if batch_shape else 1
+                tail_data = tuple(int(x) for x in data_a.shape[batch_dims:])
+                tail_idx = tuple(int(x) for x in idx.shape[batch_dims:])
+                data_flat = np.reshape(data_a, (prefix, *tail_data))
+                idx_flat = np.reshape(idx, (prefix, *tail_idx))
+                axis_tail = axis_i - batch_dims
+                out_chunks = []
+                for p in range(prefix):
+                    data_slice = np.asarray(data_flat[p])
+                    idx_slice = np.asarray(idx_flat[p], dtype=np.int64)
+                    if idx_slice.ndim == data_slice.ndim - 1:
+                        idx_slice = np.expand_dims(idx_slice, axis=axis_tail)
+                    if idx_slice.ndim != data_slice.ndim:
+                        raise ValueError(
+                            "axis-based gather batch slice rank mismatch: "
+                            f"data rank={data_slice.ndim} indices rank={idx_slice.ndim}"
+                        )
+                    gathered = np.take_along_axis(data_slice, idx_slice, axis=axis_tail)
+                    squeeze_result = bool(op.attrs.get("squeeze", False))
+                    if squeeze_result or int(gathered.shape[axis_tail]) == 1:
+                        gathered = np.squeeze(gathered, axis=axis_tail)
+                    out_chunks.append(gathered)
+                return np.reshape(np.stack(out_chunks, axis=0), (*batch_shape, *np.asarray(out_chunks[0]).shape))
             if idx.ndim == data_a.ndim - 1:
                 idx = np.expand_dims(idx, axis=axis_i)
             if idx.ndim != data_a.ndim:
@@ -1640,9 +1687,25 @@ def _shape_from_tensor(intent: IntentFunction, tensor_name: str, bindings: Dict[
             continue
         if getattr(d, "kind", None) == "sym":
             sym = str(getattr(d, "value"))
-            if sym not in bindings:
+            if sym in bindings:
+                out.append(int(bindings[sym]))
+                continue
+            try:
+                out.append(int(eval(sym, {}, dict(bindings))))
+                continue
+            except Exception:
                 raise ValueError(f"unbound symbolic dim in tensor shape: {tensor_name}.{sym}")
-            out.append(int(bindings[sym]))
+        if isinstance(d, str):
+            if d in bindings:
+                out.append(int(bindings[d]))
+                continue
+            try:
+                out.append(int(eval(d, {}, dict(bindings))))
+                continue
+            except Exception:
+                raise ValueError(f"unbound symbolic dim in tensor shape: {tensor_name}.{d}")
+        if isinstance(d, (int, float)):
+            out.append(int(d))
             continue
         raise ValueError(f"invalid dim kind for {tensor_name}: {d}")
     return tuple(out)
@@ -1747,6 +1810,33 @@ def _get(env: Dict[str, np.ndarray], name: str) -> np.ndarray:
     if name not in env:
         raise KeyError(f"undefined value referenced: {name}")
     return env[name]
+
+
+def _declared_tensor_shape(intent: IntentFunction, name: str, bindings: Dict[str, int]) -> tuple[int, ...] | None:
+    tensor = (getattr(intent, "tensors", {}) or {}).get(str(name))
+    if tensor is None:
+        return None
+    try:
+        return tuple(int(x) for x in _shape_from_attr(list(getattr(tensor, "shape", []) or []), bindings))
+    except Exception:
+        return None
+
+
+def _slice_to_declared_shape(intent: IntentFunction, out_name: str, x: np.ndarray, bindings: Dict[str, int]) -> np.ndarray | None:
+    target = _declared_tensor_shape(intent, out_name, bindings)
+    arr = np.asarray(x)
+    if target is None or arr.ndim != len(target) or tuple(arr.shape) == tuple(target):
+        return None
+    slices: list[slice] = []
+    for cur, want in zip(arr.shape, target):
+        if int(want) > int(cur):
+            return None
+        slices.append(slice(0, int(want)))
+    try:
+        out = arr[tuple(slices)]
+    except Exception:
+        return None
+    return np.asarray(out) if tuple(out.shape) == tuple(target) else None
 
 
 def _resolve_value(val, env: Dict[str, np.ndarray], bindings: Dict[str, int]):

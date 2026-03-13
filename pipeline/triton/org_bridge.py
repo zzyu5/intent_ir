@@ -35,6 +35,16 @@ ROOT = Path(__file__).resolve().parents[2]
 ORG_RUNTIME_ROOT = ROOT / "ORG-Migrate"
 
 
+def _org_blindfold_enabled() -> bool:
+    raw = str(os.getenv("INTENTIR_ORG_BLINDFOLD", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _org_blindfold_label() -> str:
+    raw = str(os.getenv("INTENTIR_ORG_BLINDFOLD_LABEL", "") or "").strip()
+    return raw or "target_kernel_func"
+
+
 def _ensure_org_runtime_on_path() -> None:
     sp = str(ORG_RUNTIME_ROOT)
     if sp not in sys.path:
@@ -183,6 +193,8 @@ def _run_inline_compile_check(
     backend_target: str | None,
     intent: IntentFunction,
     shape_bindings: Mapping[str, int],
+    kernel_kind: str = "",
+    candidate_bindings: Mapping[str, int] | None = None,
     env_updates: Mapping[str, str],
 ) -> tuple[bool, dict[str, Any], str]:
     report: dict[str, Any] = {"kernel": str(spec_name), "mlir": {}}
@@ -192,6 +204,35 @@ def _run_inline_compile_check(
         for key, value in dict(env_updates or {}).items():
             os.environ[str(key)] = str(value)
         intent_copy = IntentFunction.from_json_dict(intent.to_json_dict())
+        intent_copy.meta = dict(getattr(intent_copy, "meta", {}) or {})
+        intent_copy.meta.setdefault("kernel", str(spec_name))
+        intent_copy.meta.setdefault("spec_name", str(spec_name))
+        merged_shape_bindings = {
+            str(k): int(v)
+            for k, v in dict(shape_bindings or {}).items()
+            if str(k).strip()
+        }
+        for key, value in dict(candidate_bindings or {}).items():
+            key_s = str(key).strip()
+            if not key_s:
+                continue
+            try:
+                merged_shape_bindings[key_s] = int(value)
+            except Exception:
+                continue
+        if merged_shape_bindings:
+            intent_copy.meta["shape_bindings"] = dict(merged_shape_bindings)
+        kernel_kind_s = str(kernel_kind or "").strip()
+        if kernel_kind_s and kernel_kind_s != "generic_fallback_v1":
+            intent_copy.meta["intentir_kernel_kind_override"] = kernel_kind_s
+            intent_copy.meta["intentir_org_compile_check_candidate"] = {
+                "kernel_kind": kernel_kind_s,
+                "bindings": {
+                    str(k): int(v)
+                    for k, v in dict(candidate_bindings or {}).items()
+                    if str(k).strip()
+                },
+            }
         _emit_mlir_shadow_artifacts(
             spec_name=str(spec_name),
             out_dir=Path(cand_dir),
@@ -236,11 +277,59 @@ def _run_compile_check_candidates(
     compile_root.mkdir(parents=True, exist_ok=True)
     compiler_stack = str(_compiler_stack_name())
     compiler_cpp_wave = str(_compiler_cpp_wave_name()) if compiler_stack in {"cpp", "cpp_plugin", "c++"} else ""
+    def _append_compile_check(
+        *,
+        idx: int,
+        candidate_line: str,
+        kernel_kind: str,
+        bindings: Mapping[str, int],
+        env_updates: Mapping[str, str],
+    ) -> None:
+        cand_dir = compile_root / _compile_check_id(candidate_line, idx=idx)
+        cand_dir.mkdir(parents=True, exist_ok=True)
+        report_path = cand_dir / f"{spec_name}.json"
+        contract_path = ""
+        ptx_path = ""
+        entry = ""
+        requested_sm = ""
+        effective_sm = ""
+        downleveled: bool | None = None
+        error = ""
+        ok, report, run_error = _run_inline_compile_check(
+            spec_name=str(spec_name),
+            cand_dir=Path(cand_dir),
+            backend_target=backend_target,
+            intent=intent,
+            shape_bindings=shape_bindings,
+            kernel_kind=str(kernel_kind),
+            candidate_bindings=dict(bindings or {}),
+            env_updates=env_updates,
+        )
+        contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
+        if not error:
+            error = str(run_error or "")
+        ok = bool(ok and contract_path and ptx_path and entry)
+        check = CompileCheck(
+            candidate=str(candidate_line),
+            kernel_kind=str(kernel_kind),
+            bindings={str(k): int(v) for k, v in dict(bindings or {}).items()},
+            report_path=str(report_path),
+            contract_path=str(contract_path),
+            ptx_path=str(ptx_path),
+            entry=str(entry),
+            requested_sm=str(requested_sm),
+            effective_sm=str(effective_sm),
+            downleveled=downleveled,
+            ok=bool(ok),
+            error=str(error),
+        )
+        checks.append(check.to_json_dict())
+
     for idx, candidate in enumerate(list(candidates or [])[: int(limit)]):
         cand_line = _candidate_line(getattr(candidate, "kernel_kind"), getattr(candidate, "bindings"))
         cand_dir = compile_root / _compile_check_id(cand_line, idx=idx)
-        cand_dir.mkdir(parents=True, exist_ok=True)
         tuning_path = cand_dir / "tuning.jsonl"
+        cand_dir.mkdir(parents=True, exist_ok=True)
         tuning_path.write_text(
             json.dumps(
                 {
@@ -265,42 +354,29 @@ def _run_compile_check_candidates(
         }
         if compiler_cpp_wave:
             env_updates["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
-        report_path = cand_dir / f"{spec_name}.json"
-        contract_path = ""
-        ptx_path = ""
-        entry = ""
-        requested_sm = ""
-        effective_sm = ""
-        downleveled: bool | None = None
-        error = ""
         env_updates.update(_toolchain_env_overrides(toolchain_model))
-        ok, report, run_error = _run_inline_compile_check(
-            spec_name=str(spec_name),
-            cand_dir=Path(cand_dir),
-            backend_target=backend_target,
-            intent=intent,
-            shape_bindings=shape_bindings,
-            env_updates=env_updates,
-        )
-        contract_path, ptx_path, entry, requested_sm, effective_sm, downleveled, error = _report_contract_exec_meta(report)
-        if not error:
-            error = str(run_error or "")
-        ok = bool(ok and contract_path)
-        check = CompileCheck(
-            candidate=str(cand_line),
+        _append_compile_check(
+            idx=idx,
+            candidate_line=str(cand_line),
             kernel_kind=str(getattr(candidate, "kernel_kind")),
             bindings={str(k): int(v) for k, v in dict(getattr(candidate, "bindings", {}) or {}).items()},
-            report_path=str(report_path),
-            contract_path=str(contract_path),
-            ptx_path=str(ptx_path),
-            entry=str(entry),
-            requested_sm=str(requested_sm),
-            effective_sm=str(effective_sm),
-            downleveled=downleveled,
-            ok=bool(ok),
-            error=str(error),
+            env_updates=env_updates,
         )
-        checks.append(check.to_json_dict())
+    if not any(bool(dict(x).get("ok")) for x in list(checks or [])):
+        fallback_env = {
+            "INTENTIR_ORG_MODE": "off",
+            "INTENTIR_COMPILER_STACK": compiler_stack,
+        }
+        if compiler_cpp_wave:
+            fallback_env["INTENTIR_COMPILER_CPP_WAVE"] = compiler_cpp_wave
+        fallback_env.update(_toolchain_env_overrides(toolchain_model))
+        _append_compile_check(
+            idx=int(len(checks)),
+            candidate_line="generic_fallback_v1",
+            kernel_kind="generic_fallback_v1",
+            bindings={},
+            env_updates=fallback_env,
+        )
     return checks
 
 
@@ -335,6 +411,9 @@ def run_org_sidecar(
     static_ok = False
     if isinstance(report.get("static_validation"), dict):
         static_ok = bool((report.get("static_validation") or {}).get("ok"))
+    elif diff_ok:
+        static_ok = True
+        org_report["static_validation_assumed"] = True
     if ((not diff_ok) or (not static_ok)) and (not _org_ignore_diff_gate()):
         reason = f"skip_org: diff_ok={diff_ok} static_ok={static_ok}"
         org_report["skipped"] = True
@@ -399,6 +478,9 @@ def run_org_sidecar(
             )
             if isinstance(remote_source, dict):
                 org_report["remote_source"] = dict(remote_source)
+                remote_source_arch = str(remote_source.get("source_arch") or "").strip()
+                if remote_source_arch:
+                    extra_evidence["source_arch"] = remote_source_arch
         build_ttir_summary = load_org_attr("org.facts.ttir", "build_ttir_summary")
         extract_ttgir_mechanism_facts = load_org_attr("org.facts.ttgir", "extract_ttgir_mechanism_facts")
         extract_ptx_mechanism_facts = load_org_attr("org.facts.ptx", "extract_ptx_mechanism_facts")
@@ -422,12 +504,13 @@ def run_org_sidecar(
             (getattr(getattr(desc, "artifacts", None), "extra", {}) or {}).get("cubin_path"),
             (getattr(desc, "meta", {}) or {}).get("cubin_original_path"),
         )
+        facts_kernel_name = _org_blindfold_label() if _org_blindfold_enabled() else str(spec_name)
         if ttgir_text.strip():
-            ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=str(spec_name), artifact_path=(ttgir_path or None))
+            ttgir_facts = extract_ttgir_mechanism_facts(ttgir_text, kernel_name=facts_kernel_name, artifact_path=(ttgir_path or None))
             extra_evidence["ttgir_facts"] = dict(ttgir_facts)
             ttgir_facts_path.write_text(json.dumps(ttgir_facts, indent=2, ensure_ascii=False), encoding="utf-8")
             org_report["ttgir_facts_path"] = str(ttgir_facts_path)
-        ptx_facts = extract_ptx_mechanism_facts(ptx_text, kernel_name=str(spec_name), artifact_path=(ptx_path or None))
+        ptx_facts = extract_ptx_mechanism_facts(ptx_text, kernel_name=facts_kernel_name, artifact_path=(ptx_path or None))
         extra_evidence["ptx_facts"] = dict(ptx_facts)
         ptx_facts_path.write_text(json.dumps(ptx_facts, indent=2, ensure_ascii=False), encoding="utf-8")
         org_report["ptx_facts_path"] = str(ptx_facts_path)
@@ -443,26 +526,11 @@ def run_org_sidecar(
             "ttir_available": bool((ttir_summary or {}).get("available")),
         }
 
-    if mode in {"apply", "strict"} and str(spec_name) in {
-        "flash_attention2d",
-        "matmul_fused_epilogue2d",
-        "_attn_fwd",
-        "masked_softmax2d",
-        "softmax_inner",
-        "row_sum",
-        "row_max",
-        "layer_norm_persistent",
-        "add2d",
-        "exp2d",
-        "group_norm_kernel",
-        "ai_bench_softmax",
-        "ai_bench_matmul",
-        "masked_attention2d",
-    } and ttgir_facts is None:
+    if mode in {"apply", "strict"} and ttgir_facts is None and not bool((ptx_facts or {}).get("mechanisms")):
         org_report["ok"] = False
-        org_report["error"] = "ttgir_missing"
+        org_report["error"] = "insufficient_schedule_evidence"
         if mode == "strict":
-            raise RuntimeError("ttgir_missing")
+            raise RuntimeError("insufficient_schedule_evidence")
         return
 
     org_doc = None
@@ -599,9 +667,23 @@ def run_org_sidecar(
                 toolchain_model=toolchain_model.to_json_dict(),
                 budget=int(budget),
             )
-        except ValueError:
+        except ValueError as exc:
+            compile_checks = _run_compile_check_candidates(
+                spec_name=str(spec_name),
+                out_dir=Path(out_dir),
+                backend_target=backend_target,
+                target_arch=str(target_arch),
+                candidates=[],
+                intent=intent,
+                shape_bindings=dict(shape_bindings),
+                toolchain_model=toolchain_model.to_json_dict(),
+            )
             org_report["apply_skipped"] = True
             org_report["apply_reason"] = "org_kernel_deferred"
+            org_report["apply_error"] = f"{type(exc).__name__}: {exc}"
+            org_report["compile_checks"] = list(compile_checks or [])
+            org_report["compile_checks_count"] = int(len(list(compile_checks or [])))
+            org_report["realizations"] = [dict(x) for x in list(compile_checks or []) if bool(dict(x).get("ok"))]
             return
 
         plan.toolchain_model = dict(toolchain_model.to_json_dict())

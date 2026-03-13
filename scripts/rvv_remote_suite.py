@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
-DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "rvv").strip() or "rvv"
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "").strip()
 
 DEFAULT_KERNELS = [
     "any_kernel_dim",

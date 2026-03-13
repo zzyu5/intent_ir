@@ -423,6 +423,8 @@ def test_universal_planner_cfg_cross_entropy_uses_region_max_path() -> None:
         budget=4,
     )
     assert plan.candidates
-    assert plan.candidates[0].kernel_kind == "cross_entropy_loss_v1"
-    assert any("family_inferred=cross_entropy_loss2d" in str(note) for note in list(plan.notes or []))
+    assert plan.candidates[0].kernel_kind == "cfg_masked_row_reduce_v1"
+    assert int(plan.candidates[0].bindings.get("CFG_ROW_BLOCK_THREADS") or 0) in {128, 256, 512, 1024}
+    assert int(plan.candidates[0].bindings.get("CFG_ROW_VECTOR_WIDTH") or 0) in {1, 2, 4}
+    assert any("family_inferred=cfg_masked_row_reduce2d" in str(note) for note in list(plan.notes or []))
     assert any("topology_cfg_max_path_bytes=1048" in str(note) for note in list(plan.notes or []))

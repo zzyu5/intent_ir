@@ -193,6 +193,7 @@ def run_diff(
             used.update(op.inputs)
         external_inputs = {n for n in used if (n in intent_exec.tensors and n not in produced)}
         inputs = {k: v for k, v in ref_out.items() if k in external_inputs}
+        _infer_bindings_from_external_inputs(intent_exec, inputs, bindings)
         # Some frontends expose semantic scalar inputs (e.g., sm_scale) that may be
         # compiled away in the runtime kernel signature (so the baseline runner
         # cannot return them). If IntentIR models them as scalar tensors, inject
@@ -274,6 +275,8 @@ def run_diff(
                 arr2 = _squeeze_unit_dims_to_match(arr, tuple(expected_shape))
                 if arr2 is None:
                     arr2 = _unsqueeze_unit_dims_to_match(arr, tuple(expected_shape))
+                if arr2 is None:
+                    arr2 = _transpose_2d_to_match(arr, tuple(expected_shape), name=name)
                 if arr2 is None:
                     diff = DiffResult(
                         ok=False,
@@ -440,6 +443,16 @@ def _with_io_aliases(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> D
             candidates = [k for k in ref_io.keys() if norm and (norm in _normalize_io_name(k))]
             if len(candidates) == 1:
                 out[name] = ref_io[candidates[0]]
+                continue
+            reverse_candidates = [
+                k
+                for k in ref_io.keys()
+                if norm
+                and len(_normalize_io_name(k)) >= 3
+                and (_normalize_io_name(k) in norm)
+            ]
+            if len(reverse_candidates) == 1:
+                out[name] = ref_io[reverse_candidates[0]]
     return out
 
 
@@ -616,6 +629,21 @@ def _unsqueeze_unit_dims_to_match(arr: np.ndarray, target_shape: tuple[int, ...]
     return reshaped if tuple(reshaped.shape) == ref_shape else None
 
 
+def _transpose_2d_to_match(arr: np.ndarray, target_shape: tuple[int, ...], *, name: str = "") -> np.ndarray | None:
+    """
+    Allow a logical 2D weight tensor to match a physical transposed storage view.
+    This keeps view repair generic for fused linear / tiled-MLP style kernels.
+    """
+    if arr.ndim != 2 or len(tuple(target_shape)) != 2:
+        return None
+    if tuple(arr.T.shape) != tuple(target_shape):
+        return None
+    token = str(name or "").strip().lower()
+    if token and not any(hint in token for hint in ("weight", "proj", "kernel", "filter", "matrix", "mat")):
+        return None
+    return np.asarray(arr.T)
+
+
 def _numel(shape):
     n = 1
     for d in shape:
@@ -623,22 +651,38 @@ def _numel(shape):
     return n
 
 
+def _resolve_dim_value(dim: Any, bindings: Dict[str, int]) -> int | None:
+    if hasattr(dim, "kind") and getattr(dim, "kind") == "sym":
+        raw = getattr(dim, "value")
+        if raw in bindings:
+            return int(bindings[raw])
+        if isinstance(raw, str):
+            try:
+                return int(eval(raw, {}, dict(bindings)))
+            except Exception:
+                return None
+        return None
+    if hasattr(dim, "kind") and getattr(dim, "kind") == "const":
+        return int(dim.value)
+    if isinstance(dim, str):
+        if dim in bindings:
+            return int(bindings[dim])
+        try:
+            return int(eval(dim, {}, dict(bindings)))
+        except Exception:
+            return None
+    if isinstance(dim, (int, float)):
+        return int(dim)
+    return None
+
+
 def _resolve_tensor_shape(tensor, bindings: Dict[str, int]):
     shape = []
     for d in tensor.shape:
-        if hasattr(d, "kind") and getattr(d, "kind") == "sym":
-            val = bindings.get(d.value)
-            if val is None:
-                return None
-            shape.append(val)
-        elif hasattr(d, "kind") and getattr(d, "kind") == "const":
-            shape.append(int(d.value))
-        elif isinstance(d, str) and d in bindings:
-            shape.append(bindings[d])
-        elif isinstance(d, (int, float)):
-            shape.append(int(d))
-        else:
+        val = _resolve_dim_value(d, bindings)
+        if val is None:
             return None
+        shape.append(val)
     return tuple(shape)
 
 
@@ -686,6 +730,33 @@ def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
         elif c_per_g is not None and groups is not None:
             bindings["C_OUT"] = c_per_g * groups
 
+    cin = _binding_int(bindings, "CIN")
+    groups_lower = _binding_int(bindings, "groups")
+    if groups is None and groups_lower is not None:
+        groups = groups_lower
+        bindings.setdefault("GROUPS", groups_lower)
+    if cin is not None and groups is not None and groups > 0:
+        bindings.setdefault("CIN_per_group", cin // groups)
+        bindings.setdefault("C_PER_G", cin // groups)
+    if c_out is None:
+        cout = _binding_int(bindings, "COUT")
+        if cout is not None:
+            bindings.setdefault("C_OUT", cout)
+    k_dim = _binding_int(bindings, "K")
+    if k_dim is not None:
+        bindings.setdefault("kernel_size", k_dim)
+    hc = _binding_int(bindings, "HC")
+    c_dim = _binding_int(bindings, "C")
+    if hc is not None and c_dim is not None:
+        bindings.setdefault("HC_C", hc * c_dim)
+        bindings.setdefault("K", hc * c_dim)
+    if hc is not None and "M" not in bindings:
+        bindings["M"] = hc * hc + 2 * hc
+    t_dim = _binding_int(bindings, "T")
+    if t_dim is not None:
+        bindings.setdefault("T_plus_1", t_dim + 1)
+        bindings.setdefault("T1", t_dim + 1)
+
     if "OH" not in bindings:
         H = _binding_int(bindings, "H")
         PH = _binding_int(bindings, "PH")
@@ -710,6 +781,44 @@ def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
         DD = _binding_int(bindings, "DD")
         if None not in (D, PD, KD, SD, DD) and SD and SD > 0:
             bindings["OD"] = (D + 2 * PD - DD * (KD - 1) - 1) // SD + 1
+
+
+def _infer_bindings_from_external_inputs(
+    intent: IntentFunction,
+    inputs: Dict[str, np.ndarray],
+    bindings: Dict[str, Any],
+) -> None:
+    if not inputs:
+        return
+    tensors = dict(getattr(intent, "tensors", {}) or {})
+    changed = True
+    rounds = 0
+    while changed and rounds < 4:
+        rounds += 1
+        changed = False
+        for name, arr in inputs.items():
+            tensor = tensors.get(str(name))
+            if tensor is None:
+                continue
+            shape_spec = list(getattr(tensor, "shape", []) or [])
+            arr_shape = tuple(int(x) for x in np.asarray(arr).shape)
+            if len(shape_spec) != len(arr_shape):
+                continue
+            for dim, size in zip(shape_spec, arr_shape):
+                sym = ""
+                if hasattr(dim, "kind") and getattr(dim, "kind") == "sym":
+                    sym = str(getattr(dim, "value"))
+                elif isinstance(dim, str):
+                    sym = str(dim)
+                if not sym:
+                    continue
+                if sym in bindings:
+                    continue
+                if sym.isidentifier():
+                    bindings[sym] = int(size)
+                    changed = True
+        if changed:
+            _add_common_derived_bindings(bindings)
 
 
 __all__ = ["DiffResult", "Counterexample", "run_diff"]

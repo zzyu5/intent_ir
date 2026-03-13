@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_ROOT = ROOT.parent
 DEFAULT_LIGER_ROOT = WORKSPACE_ROOT / "Liger-Kernel"
 REMOTE_RUNNER = ROOT / "scripts" / "triton" / "liger_remote_source_oracle_runner.py"
+DEFAULT_REMOTE_SSH = "kingdom@211.87.236.70"
 
 _SUPPORTED_KERNELS = {
     "liger_swiglu",
@@ -22,6 +23,25 @@ _SUPPORTED_KERNELS = {
     "liger_fused_add_rms_norm",
     "liger_rope",
     "liger_cross_entropy",
+    "liger_geglu",
+    "liger_layer_norm",
+    "liger_softmax",
+    "liger_group_norm",
+    "liger_dyt",
+    "liger_qwen2vl_mrope",
+    "liger_sparsemax",
+    "liger_kl_div",
+    "liger_jsd",
+    "liger_fused_linear_cross_entropy",
+    "liger_fused_linear_jsd",
+    "liger_fused_neighborhood_attention",
+    "liger_grpo_loss",
+    "liger_llama4_rope",
+    "liger_mhc",
+    "liger_multi_token_attention",
+    "liger_poly_norm",
+    "liger_tiled_mlp",
+    "liger_tvd",
 }
 
 
@@ -29,7 +49,7 @@ def remote_source_enabled() -> bool:
     raw = str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_ENABLE", "") or "").strip().lower()
     if raw in {"1", "true", "yes", "y", "on"}:
         return True
-    return bool(str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", "") or "").strip())
+    return bool(str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", DEFAULT_REMOTE_SSH) or "").strip())
 
 
 def _remote_source_allow_fallback() -> bool:
@@ -45,9 +65,9 @@ def _liger_local_root() -> Path:
 
 
 def _ssh_target() -> str:
-    raw = str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", "") or "").strip()
+    raw = str(os.getenv("INTENTIR_ORG_REMOTE_SOURCE_SSH", DEFAULT_REMOTE_SSH) or "").strip()
     if not raw:
-        raise RuntimeError("INTENTIR_ORG_REMOTE_SOURCE_SSH is not set")
+        raise RuntimeError("INTENTIR_ORG_REMOTE_SOURCE_SSH is not set and no default remote target is configured")
     return raw
 
 
@@ -87,6 +107,25 @@ def _canonical_remote_bindings(spec_name: str, shape_bindings: Mapping[str, int]
         "liger_fused_add_rms_norm": {"M": 2048, "N": 32768},
         "liger_rope": {"B": 2, "QH": 32, "KH": 8, "S": 2048, "HD": 128},
         "liger_cross_entropy": {"BT": 2048, "V": 4096},
+        "liger_geglu": {"M": 65536, "N": 256},
+        "liger_layer_norm": {"M": 2048, "N": 4096},
+        "liger_softmax": {"M": 2048, "N": 4096},
+        "liger_group_norm": {"N": 32, "C": 512, "HW": 64, "num_groups": 32},
+        "liger_dyt": {"M": 2048, "N": 4096},
+        "liger_qwen2vl_mrope": {"B": 2, "QH": 32, "KH": 8, "S": 2048, "HD": 128},
+        "liger_sparsemax": {"M": 2048, "N": 4096},
+        "liger_kl_div": {"BT": 2048, "V": 4096},
+        "liger_jsd": {"BT": 2048, "V": 4096},
+        "liger_fused_linear_cross_entropy": {"BT": 2048, "H": 2048, "V": 4096},
+        "liger_fused_linear_jsd": {"BT": 2048, "H": 2048, "V": 4096},
+        "liger_fused_neighborhood_attention": {"B": 1, "QH": 8, "S": 512, "HD": 64, "kernel_size": 7, "dilation": 1},
+        "liger_grpo_loss": {"B": 4, "T": 512, "V": 4096},
+        "liger_llama4_rope": {"B": 1, "QH": 32, "KH": 8, "S": 2048, "HD": 64},
+        "liger_mhc": {"B": 2, "T": 512, "HC": 4, "C": 128},
+        "liger_multi_token_attention": {"B": 2, "CIN": 4, "COUT": 4, "L": 128, "K": 3, "groups": 1},
+        "liger_poly_norm": {"M": 2048, "N": 4096},
+        "liger_tiled_mlp": {"B": 1, "S": 4096, "H": 2048, "I": 5632, "num_shards": 4},
+        "liger_tvd": {"BT": 2048, "V": 4096},
     }
     out = dict(defaults.get(str(spec_name), {}))
     out.update(raw)
