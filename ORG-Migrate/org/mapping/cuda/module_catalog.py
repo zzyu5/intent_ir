@@ -1057,6 +1057,20 @@ def cfg_masked_row_reduce_catalog(hardware_model: HardwareModel) -> tuple[list[B
             constraints=[],
         ),
         BackendModule(
+            id="cfg_masked_online_safe_math",
+            kind="primitive",
+            provides=["cfg_masked_row.online_safe_math"],
+            params=[],
+            constraints=[],
+        ),
+        BackendModule(
+            id="cfg_masked_projection_row_resident",
+            kind="staging",
+            provides=["cfg_masked_row.projection_row_resident"],
+            params=["CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
             id="cfg_masked_row_backend_v1",
             kind="template",
             provides=["backend.kernel_kind.cfg_masked_row_reduce_v1"],
@@ -1065,6 +1079,18 @@ def cfg_masked_row_reduce_catalog(hardware_model: HardwareModel) -> tuple[list[B
                 "cfg_masked_row.label_gather",
                 "cfg_masked_row.branch_predicate",
                 "cfg_masked_row.atomic_finalize",
+            ],
+            params=["CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"],
+            constraints=[],
+        ),
+        BackendModule(
+            id="cfg_masked_row_backend_v2",
+            kind="template",
+            provides=["backend.kernel_kind.cfg_masked_row_reduce_v2"],
+            requires=[
+                "cfg_masked_row.row_reduction",
+                "cfg_masked_row.branch_predicate",
+                "cfg_masked_row.online_safe_math",
             ],
             params=["CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"],
             constraints=[],
@@ -1079,6 +1105,14 @@ def cfg_masked_row_reduce_catalog(hardware_model: HardwareModel) -> tuple[list[B
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_label_gather", edge_type="uses"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_branch_predicate", edge_type="uses"),
         BackendModuleEdge(src="cfg_masked_row_backend_v1", dst="cfg_masked_atomic_finalize", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_row_tile_resident", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_vector_io", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_register_residency", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_projection_row_resident", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_grid_stride_persistent_reduction", edge_type="optional"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_row_reduction", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_branch_predicate", edge_type="uses"),
+        BackendModuleEdge(src="cfg_masked_row_backend_v2", dst="cfg_masked_online_safe_math", edge_type="uses"),
     ]
     return modules, edges, list(PASS_SEQUENCE)
 

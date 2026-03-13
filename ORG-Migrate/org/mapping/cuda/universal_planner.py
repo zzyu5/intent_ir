@@ -1951,6 +1951,7 @@ def _family_specs() -> dict[str, FamilySpec]:
                 OptionalModuleSpec(module_id="cfg_masked_row_tile_resident", signals=("resident_state",)),
                 OptionalModuleSpec(module_id="cfg_masked_vector_io", signals=("vector_path",)),
                 OptionalModuleSpec(module_id="cfg_masked_register_residency", signals=("resident_state", "cfg_path")),
+                OptionalModuleSpec(module_id="cfg_masked_projection_row_resident", signals=("output_accumulator", "vector_path")),
                 OptionalModuleSpec(module_id="cfg_masked_grid_stride_persistent_reduction", signals=("elastic_fallback",)),
             ),
             params=(
@@ -1970,6 +1971,19 @@ def _family_specs() -> dict[str, FamilySpec]:
                 ),
             ),
             templates=(
+                TemplateSpec(
+                    kernel_kind="cfg_masked_row_reduce_v2",
+                    module_id="cfg_masked_row_backend_v2",
+                    param_names=("CFG_ROW_BLOCK_THREADS", "CFG_ROW_VECTOR_WIDTH"),
+                    required_signals=("reduction_path", "output_accumulator", "vector_path", "scalar_output"),
+                    signal_weights={
+                        "online_state": 32.0,
+                        "output_accumulator": 26.0,
+                        "vector_path": 16.0,
+                        "resident_state": 12.0,
+                        "fused_epilogue": 10.0,
+                    },
+                ),
                 TemplateSpec(
                     kernel_kind="cfg_masked_row_reduce_v1",
                     module_id="cfg_masked_row_backend_v1",

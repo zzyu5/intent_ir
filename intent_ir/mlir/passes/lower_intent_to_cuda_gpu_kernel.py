@@ -8644,9 +8644,11 @@ def lower_intent_to_cuda_gpu_kernel(
                 "matmul_tile_v1",
             },
             "liger_fused_linear_cross_entropy": {
+                "cfg_masked_row_reduce_v2",
                 "cfg_masked_row_reduce_v1",
             },
             "liger_fused_linear_jsd": {
+                "cfg_masked_row_reduce_v2",
                 "cfg_masked_row_reduce_v1",
             },
             "liger_rope": {
@@ -8672,12 +8674,12 @@ def lower_intent_to_cuda_gpu_kernel(
         if allowed is None and rope_dual_v1 is not None:
             allowed = {"rope_dual_v1"}
         if allowed is None and (early_tvd_row_reduce_v1 is not None or tvd_loss2d_v1 is not None):
-            allowed = {"cfg_masked_row_reduce_v1", "tvd_loss2d_v1", "tvd_loss2d_v2"}
+            allowed = {"cfg_masked_row_reduce_v1", "cfg_masked_row_reduce_v2", "tvd_loss2d_v1", "tvd_loss2d_v2"}
         if allowed is None and poly_norm_axis1_v1 is not None:
             allowed = {"poly_norm_axis1_v1", "poly_norm_axis1_v2"}
         if allowed is None and (cross_entropy_loss_v1 is not None or early_cfg_masked_row_reduce_v1 is not None):
-            allowed = {"cfg_masked_row_reduce_v1"}
-        if allowed is None and kernel_kind_override == "cfg_masked_row_reduce_v1":
+            allowed = {"cfg_masked_row_reduce_v1", "cfg_masked_row_reduce_v2"}
+        if allowed is None and kernel_kind_override in {"cfg_masked_row_reduce_v1", "cfg_masked_row_reduce_v2"}:
             current_op_names = tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
             if current_op_names in {
                 (
@@ -8757,7 +8759,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     "div",
                 ),
             }:
-                allowed = {"cfg_masked_row_reduce_v1"}
+                allowed = {"cfg_masked_row_reduce_v1", "cfg_masked_row_reduce_v2"}
         if allowed is None and rope_v1 is not None:
             allowed = {"rope_v1"}
         if allowed is None and elementwise_override_compatible:
@@ -9713,6 +9715,363 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("              %acc5_next = arith.addf %acc5, %elem : f32")
         lines.append("              scf.yield %acc5_next : f32")
         lines.append("            }")
+        lines.append(f"            memref.store %row_loss, {arg_ssa[out_name2]}[%bid] : {out_memref}")
+        lines.append("          }")
+        lines.append("        }")
+        lines.append("      }")
+    elif (
+        kernel_kind_override_enabled
+        and kernel_kind_override == "cfg_masked_row_reduce_v2"
+        and (
+            cross_entropy_loss_v1 is not None
+            or early_cfg_masked_row_reduce_v1 is not None
+            or tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
+            == (
+                "const",
+                "matmul",
+                "reduce_max",
+                "broadcast_in_dim",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "reshape",
+                "gather",
+                "reshape",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            )
+            or tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
+            == (
+                "const",
+                "matmul",
+                "reduce_max",
+                "sub",
+                "exp",
+                "reduce_sum",
+                "log",
+                "add",
+                "gather",
+                "sub",
+                "ne",
+                "where",
+                "cast",
+                "reduce_sum",
+                "reduce_sum",
+                "div",
+            )
+        )
+    ):
+        kernel_kind = "cfg_masked_row_reduce_v2"
+        ce_struct = (
+            dict(cross_entropy_loss_v1)
+            if isinstance(cross_entropy_loss_v1, dict)
+            else dict(early_cfg_masked_row_reduce_v1 or {})
+        )
+        if not ce_struct:
+            ce_struct = {
+                "input": "input",
+                "target": "target",
+                "ignore_index": "ignore_index",
+                "loss": str(out_name),
+                "BT": int((arg_specs.get("input") or {}).get("dims", [0, 0])[0]),
+                "V": int((arg_specs.get("weight") or {}).get("dims", [0, 0])[0]),
+                "H": int((arg_specs.get("input") or {}).get("dims", [0, 0])[1]),
+                "target_dtype": str((arg_specs.get("target") or {}).get("memref_elem_ty") or "i64"),
+                "project_input": "input",
+                "project_weight": "weight",
+            }
+        inp_name = str(ce_struct["input"])
+        target_name = str(ce_struct["target"])
+        ignore_name = str(ce_struct["ignore_index"])
+        out_name2 = str(ce_struct["loss"])
+        bt_dim = int(ce_struct["BT"])
+        v_dim = int(ce_struct["V"])
+        target_dtype = str(ce_struct.get("target_dtype") or "i64")
+        projected_inp_name = str(ce_struct.get("project_input") or "").strip()
+        projected_weight_name = str(ce_struct.get("project_weight") or "").strip()
+        projected_h_dim = int(ce_struct.get("H") or 0)
+        fused_linear_ce = bool(projected_inp_name and projected_weight_name and projected_h_dim > 0)
+        block_threads = int(bindings.get("CFG_ROW_BLOCK_THREADS") or 256)
+        vector_width = int(bindings.get("CFG_ROW_VECTOR_WIDTH") or 1)
+        if block_threads not in {128, 256, 512, 1024}:
+            raise RuntimeError(
+                f"cfg_masked_row_reduce_v2 requires CFG_ROW_BLOCK_THREADS in {{128,256,512,1024}}; got {block_threads}"
+            )
+        if vector_width not in {1, 2, 4}:
+            raise RuntimeError(
+                f"cfg_masked_row_reduce_v2 requires CFG_ROW_VECTOR_WIDTH in {{1,2,4}}; got {vector_width}"
+            )
+
+        if str(arg_specs[inp_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("cfg_masked_row_reduce_v2 expects f32 input tensor")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("cfg_masked_row_reduce_v2 expects f32 output tensor")
+        target_memref = str(arg_specs[target_name]["memref"])
+        target_elem_ty = str(arg_specs[target_name]["memref_elem_ty"])
+        ignore_memref = str(arg_specs[ignore_name]["memref"])
+        ignore_elem_ty = str(arg_specs[ignore_name]["memref_elem_ty"])
+        if target_elem_ty not in {"i32", "i64"} or ignore_elem_ty != target_elem_ty:
+            raise RuntimeError("cfg_masked_row_reduce_v2 expects target/ignore_index integer tensors with matching dtype")
+
+        inp_memref = str(arg_specs[inp_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+        weight_memref = ""
+        if fused_linear_ce:
+            if projected_inp_name not in arg_specs or projected_weight_name not in arg_specs:
+                raise RuntimeError("fused linear CE lowering requires projected input/weight arg specs")
+            if str(arg_specs[projected_inp_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("fused linear CE lowering expects projected input f32")
+            if str(arg_specs[projected_weight_name].get("memref_elem_ty")) != "f32":
+                raise RuntimeError("fused linear CE lowering expects projected weight f32")
+            inp_memref = str(arg_specs[projected_inp_name]["memref"])
+            weight_memref = str(arg_specs[projected_weight_name]["memref"])
+
+        cached_row_dim = int(projected_h_dim if fused_linear_ce else 0)
+        shared_f32 = int(v_dim) + int(max(32, cached_row_dim))
+        shared_bytes_v2 = int(shared_f32) * 4
+        if int(v_dim) <= 0:
+            raise RuntimeError("cfg_masked_row_reduce_v2 expects V>0")
+        if shared_bytes_v2 > 98304:
+            raise RuntimeError(
+                "cfg_masked_row_reduce_v2 requires shared cache <= 98304 bytes; "
+                f"got shared_bytes={shared_bytes_v2} V={v_dim} cached_row={cached_row_dim}"
+            )
+
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(bt_dim), 1, 1]}
+        shared_global_sym = f"__intentir_sh_cfgv2_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(shared_f32)}xf32, 3>"
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append("      %c32 = arith.constant 32 : index")
+        lines.append("      %c32_i32 = arith.constant 32 : i32")
+        for off in (16, 8, 4, 2, 1):
+            lines.append(f"      %c{int(off)}_i32 = arith.constant {int(off)} : i32")
+        lines.append(f"      %cBT = arith.constant {int(bt_dim)} : index")
+        lines.append(f"      %cV = arith.constant {int(v_dim)} : index")
+        if fused_linear_ce:
+            lines.append(f"      %cH = arith.constant {int(projected_h_dim)} : index")
+            lines.append(f"      %cLogitsOff = arith.constant {int(projected_h_dim)} : index")
+        else:
+            lines.append("      %cLogitsOff = arith.constant 0 : index")
+        lines.append(f"      %cVec = arith.constant {int(vector_width)} : index")
+        lines.append(f"      %cWarps = arith.constant {int(max(1, block_threads // 32))} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %c1f = arith.constant 1.0 : f32")
+        lines.append("      %ceps = arith.constant 1.17549435E-38 : f32")
+        lines.append("      %neg_inf = arith.constant -3.40282347E+38 : f32")
+        lines.append("      %warp = arith.divui %tid, %c32 : index")
+        lines.append("      %lane = arith.remui %tid, %c32 : index")
+        lines.append("      %is_tid0 = arith.cmpi eq, %tid, %c0 : index")
+        lines.append("      %is_lane0 = arith.cmpi eq, %lane, %c0 : index")
+        lines.append("      %is_warp0 = arith.cmpi eq, %warp, %c0 : index")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cBT : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append(f"        %ignore_raw = memref.load {arg_ssa[ignore_name]}[%c0] : {ignore_memref}")
+        lines.append(f"        %target_raw = memref.load {arg_ssa[target_name]}[%bid] : {target_memref}")
+        lines.append(f"        %skip = arith.cmpi eq, %target_raw, %ignore_raw : {target_elem_ty}")
+        if fused_linear_ce:
+            lines.append("        %row_in_base = arith.muli %bid, %cH : index")
+            lines.append("        scf.for %kh_load = %tid to %cH step %bdim {")
+            lines.append("          %in_idx = arith.addi %row_in_base, %kh_load : index")
+            lines.append(f"          %xv = memref.load {arg_ssa[projected_inp_name]}[%in_idx] : {inp_memref}")
+            lines.append(f"          memref.store %xv, %sh[%kh_load] : {shared_global_memref_ty}")
+            lines.append("        }")
+            lines.append("        gpu.barrier")
+        lines.append("        scf.if %skip {")
+        lines.append("          scf.if %is_tid0 {")
+        lines.append(f"            memref.store %c0f, {arg_ssa[out_name2]}[%bid] : {out_memref}")
+        lines.append("          }")
+        lines.append("        } else {")
+        lines.append("          %j_start = arith.muli %tid, %cVec : index")
+        lines.append("          %cStep = arith.muli %bdim, %cVec : index")
+        lines.append("          scf.for %jb = %j_start to %cV step %cStep {")
+        for group in range(int(vector_width)):
+            c_off = _fresh("cfgv2_off")
+            col = _fresh("cfgv2_col")
+            in_range = _fresh("cfgv2_in_range")
+            xv = _fresh("cfgv2_x")
+            lines.append(f"            {c_off} = arith.constant {int(group)} : index")
+            lines.append(f"            {col} = arith.addi %jb, {c_off} : index")
+            lines.append(f"            {in_range} = arith.cmpi ult, {col}, %cV : index")
+            lines.append(f"            scf.if {in_range} {{")
+            if fused_linear_ce:
+                w_row_base = _fresh("cfgv2_w_row")
+                k_acc = _fresh("cfgv2_kacc")
+                k_idx = _fresh("cfgv2_kidx")
+                w_idx = _fresh("cfgv2_widx")
+                a_val = _fresh("cfgv2_a")
+                b_val = _fresh("cfgv2_b")
+                prod = _fresh("cfgv2_prod")
+                acc_next = _fresh("cfgv2_acc")
+                logit_idx = _fresh("cfgv2_logit_idx")
+                lines.append(f"              {w_row_base} = arith.muli {col}, %cH : index")
+                lines.append(f"              {k_acc} = scf.for %kh = %c0 to %cH step %c1 iter_args(%acc = %c0f) -> (f32) {{")
+                lines.append(f"                {k_idx} = arith.addi %row_in_base, %kh : index")
+                lines.append(f"                {w_idx} = arith.addi {w_row_base}, %kh : index")
+                lines.append(f"                {a_val} = memref.load %sh[%kh] : {shared_global_memref_ty}")
+                lines.append(f"                {b_val} = memref.load {arg_ssa[projected_weight_name]}[{w_idx}] : {weight_memref}")
+                lines.append(f"                {prod} = arith.mulf {a_val}, {b_val} : f32")
+                lines.append(f"                {acc_next} = arith.addf %acc, {prod} : f32")
+                lines.append(f"                scf.yield {acc_next} : f32")
+                lines.append("              }")
+                lines.append(f"              {logit_idx} = arith.addi %cLogitsOff, {col} : index")
+                lines.append(f"              memref.store {k_acc}, %sh[{logit_idx}] : {shared_global_memref_ty}")
+            else:
+                idx_base = _fresh("cfgv2_idx_base")
+                idx = _fresh("cfgv2_idx")
+                logit_idx = _fresh("cfgv2_logit_idx")
+                x_loaded = _fresh("cfgv2_loaded")
+                lines.append(f"              {idx_base} = arith.muli %bid, %cV : index")
+                lines.append(f"              {idx} = arith.addi {idx_base}, {col} : index")
+                lines.append(f"              {x_loaded} = memref.load {arg_ssa[inp_name]}[{idx}] : {inp_memref}")
+                lines.append(f"              {logit_idx} = arith.addi %cLogitsOff, {col} : index")
+                lines.append(f"              memref.store {x_loaded}, %sh[{logit_idx}] : {shared_global_memref_ty}")
+            lines.append("            }")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("          %partial_max = scf.for %jb2 = %j_start to %cV step %cStep iter_args(%mx = %neg_inf) -> (f32) {")
+        acc_max = "%mx"
+        for group in range(int(vector_width)):
+            c_off = _fresh("cfgv2_max_off")
+            col = _fresh("cfgv2_max_col")
+            in_range = _fresh("cfgv2_max_in_range")
+            logit_idx = _fresh("cfgv2_max_idx")
+            loaded = _fresh("cfgv2_max_loaded")
+            nxt = _fresh("cfgv2_max_next")
+            lines.append(f"            {c_off} = arith.constant {int(group)} : index")
+            lines.append(f"            {col} = arith.addi %jb2, {c_off} : index")
+            lines.append(f"            {in_range} = arith.cmpi ult, {col}, %cV : index")
+            lines.append(f"            {loaded} = scf.if {in_range} -> (f32) {{")
+            lines.append(f"              {logit_idx} = arith.addi %cLogitsOff, {col} : index")
+            lines.append(f"              %logit = memref.load %sh[{logit_idx}] : {shared_global_memref_ty}")
+            lines.append("              scf.yield %logit : f32")
+            lines.append("            } else {")
+            lines.append("              scf.yield %neg_inf : f32")
+            lines.append("            }")
+            lines.append(f"            {nxt} = arith.maximumf {acc_max}, {loaded}{fm} : f32")
+            acc_max = str(nxt)
+        lines.append(f"            scf.yield {acc_max} : f32")
+        lines.append("          }")
+        max_cur = "%partial_max"
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"cfgv2_max_sh_{off}")
+            ok = _fresh(f"cfgv2_max_ok_{off}")
+            nxt = _fresh(f"cfgv2_max_{off}")
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {max_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"          {nxt} = arith.maximumf {max_cur}, {sh}{fm} : f32")
+            max_cur = str(nxt)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {max_cur}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("          scf.if %is_warp0 {")
+        lines.append("            %lane_in = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("            %warp_val = scf.if %lane_in -> (f32) {")
+        lines.append(f"              %wv = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("              scf.yield %wv : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %neg_inf : f32")
+        lines.append("            }")
+        block_cur = "%warp_val"
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"cfgv2_blkmax_sh_{off}")
+            ok = _fresh(f"cfgv2_blkmax_ok_{off}")
+            nxt = _fresh(f"cfgv2_blkmax_{off}")
+            lines.append(f"            {sh}, {ok} = gpu.shuffle xor {block_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"            {nxt} = arith.maximumf {block_cur}, {sh}{fm} : f32")
+            block_cur = str(nxt)
+        lines.append("            scf.if %is_lane0 {")
+        lines.append(f"              memref.store {block_cur}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("            }")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append(f"          %row_max = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("          %partial_sum = scf.for %jb3 = %j_start to %cV step %cStep iter_args(%sum = %c0f) -> (f32) {")
+        acc_sum = "%sum"
+        for group in range(int(vector_width)):
+            c_off = _fresh("cfgv2_sum_off")
+            col = _fresh("cfgv2_sum_col")
+            in_range = _fresh("cfgv2_sum_in_range")
+            logit_idx = _fresh("cfgv2_sum_idx")
+            loaded = _fresh("cfgv2_sum_loaded")
+            centered = _fresh("cfgv2_sum_centered")
+            ex = _fresh("cfgv2_sum_exp")
+            nxt = _fresh("cfgv2_sum_next")
+            lines.append(f"            {c_off} = arith.constant {int(group)} : index")
+            lines.append(f"            {col} = arith.addi %jb3, {c_off} : index")
+            lines.append(f"            {in_range} = arith.cmpi ult, {col}, %cV : index")
+            lines.append(f"            {loaded} = scf.if {in_range} -> (f32) {{")
+            lines.append(f"              {logit_idx} = arith.addi %cLogitsOff, {col} : index")
+            lines.append(f"              %logit2 = memref.load %sh[{logit_idx}] : {shared_global_memref_ty}")
+            lines.append("              scf.yield %logit2 : f32")
+            lines.append("            } else {")
+            lines.append("              scf.yield %neg_inf : f32")
+            lines.append("            }")
+            lines.append(f"            {centered} = arith.subf {loaded}, %row_max{fm} : f32")
+            lines.append(f"            {ex} = scf.if {in_range} -> (f32) {{")
+            lines.append(f"              %e = math.exp {centered}{fm} : f32")
+            lines.append("              scf.yield %e : f32")
+            lines.append("            } else {")
+            lines.append("              scf.yield %c0f : f32")
+            lines.append("            }")
+            lines.append(f"            {nxt} = arith.addf {acc_sum}, {ex}{fm} : f32")
+            acc_sum = str(nxt)
+        lines.append(f"            scf.yield {acc_sum} : f32")
+        lines.append("          }")
+        sum_cur = "%partial_sum"
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"cfgv2_sum_sh_{off}")
+            ok = _fresh(f"cfgv2_sum_ok_{off}")
+            nxt = _fresh(f"cfgv2_sum_{off}")
+            lines.append(f"          {sh}, {ok} = gpu.shuffle xor {sum_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"          {nxt} = arith.addf {sum_cur}, {sh}{fm} : f32")
+            sum_cur = str(nxt)
+        lines.append("          scf.if %is_lane0 {")
+        lines.append(f"            memref.store {sum_cur}, %sh[%warp] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("          scf.if %is_warp0 {")
+        lines.append("            %lane_in_sum = arith.cmpi ult, %lane, %cWarps : index")
+        lines.append("            %warp_sum = scf.if %lane_in_sum -> (f32) {")
+        lines.append(f"              %ws = memref.load %sh[%lane] : {shared_global_memref_ty}")
+        lines.append("              scf.yield %ws : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        block_sum_cur = "%warp_sum"
+        for off in (16, 8, 4, 2, 1):
+            sh = _fresh(f"cfgv2_blksum_sh_{off}")
+            ok = _fresh(f"cfgv2_blksum_ok_{off}")
+            nxt = _fresh(f"cfgv2_blksum_{off}")
+            lines.append(f"            {sh}, {ok} = gpu.shuffle xor {block_sum_cur}, %c{int(off)}_i32, %c32_i32 : f32")
+            lines.append(f"            {nxt} = arith.addf {block_sum_cur}, {sh}{fm} : f32")
+            block_sum_cur = str(nxt)
+        lines.append("            scf.if %is_lane0 {")
+        lines.append(f"              memref.store {block_sum_cur}, %sh[%c0] : {shared_global_memref_ty}")
+        lines.append("            }")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("          scf.if %is_tid0 {")
+        lines.append(f"            %target_idx = arith.index_castui %target_raw : {target_elem_ty} to index")
+        lines.append("            %picked_idx = arith.addi %cLogitsOff, %target_idx : index")
+        lines.append(f"            %picked = memref.load %sh[%picked_idx] : {shared_global_memref_ty}")
+        lines.append(f"            %row_sum = memref.load %sh[%c0] : {shared_global_memref_ty}")
+        lines.append(f"            %row_sum_safe = arith.maximumf %row_sum, %ceps{fm} : f32")
+        lines.append(f"            %log_sum = math.log %row_sum_safe{fm} : f32")
+        lines.append(f"            %lse = arith.addf %row_max, %log_sum{fm} : f32")
+        lines.append(f"            %row_loss = arith.subf %lse, %picked{fm} : f32")
         lines.append(f"            memref.store %row_loss, {arg_ssa[out_name2]}[%bid] : {out_memref}")
         lines.append("          }")
         lines.append("        }")

@@ -457,6 +457,30 @@ def _max_abs_diff(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
 
 
+def _stable_fused_linear_jsd_loss(baseline: dict[str, np.ndarray]) -> np.ndarray:
+    student_input = torch.as_tensor(np.asarray(baseline["student_input"]), device="cuda", dtype=torch.float32)
+    student_weight = torch.as_tensor(np.asarray(baseline["student_weight"]), device="cuda", dtype=torch.float32)
+    teacher_input = torch.as_tensor(np.asarray(baseline["teacher_input"]), device="cuda", dtype=torch.float32)
+    teacher_weight = torch.as_tensor(np.asarray(baseline["teacher_weight"]), device="cuda", dtype=torch.float32)
+    shift_labels = torch.as_tensor(np.asarray(baseline["shift_labels"]), device="cuda", dtype=torch.int64)
+    temperature = float(np.asarray(baseline["temperature"]).reshape(()))
+    ignore_index = int(np.asarray(baseline["ignore_index"]).reshape(()))
+    beta = 0.5
+    with torch.no_grad():
+        student_logits = (student_input @ student_weight.t()) / temperature
+        teacher_logits = (teacher_input @ teacher_weight.t()) / temperature
+        student_logp = torch.log_softmax(student_logits, dim=-1)
+        teacher_logp = torch.log_softmax(teacher_logits, dim=-1)
+        q = torch.exp(student_logp)
+        p = torch.exp(teacher_logp)
+        m = beta * p + (1.0 - beta) * q
+        log_m = torch.log(torch.clamp(m, min=torch.finfo(torch.float32).tiny))
+        row_loss = (beta * p * teacher_logp + (1.0 - beta) * q * student_logp - m * log_m).sum(dim=-1)
+        valid = shift_labels != ignore_index
+        loss = row_loss[valid].mean()
+        return loss.detach().cpu().numpy()
+
+
 def _pick_io_value(io: dict[str, np.ndarray], *names: str) -> np.ndarray:
     for name in names:
         key = str(name).strip()
@@ -813,7 +837,10 @@ def _compare_guided_outputs(*, kernel: str, baseline: dict[str, np.ndarray], gui
     if kernel == "liger_fused_linear_cross_entropy":
         return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), _pick_io_value(baseline, "loss"))}
     if kernel == "liger_fused_linear_jsd":
-        return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), _pick_io_value(baseline, "loss"))}
+        baseline_loss = _pick_io_value(baseline, "loss")
+        if not np.isfinite(np.asarray(baseline_loss)).all():
+            baseline_loss = _stable_fused_linear_jsd_loss(baseline)
+        return {"loss": _max_abs_diff(_pick_io_value(guided_outputs, "loss"), baseline_loss)}
     if kernel == "liger_fused_neighborhood_attention":
         return {"Y": _max_abs_diff(_pick_io_value(guided_outputs, "Y"), _pick_io_value(baseline, "Y"))}
     if kernel == "liger_grpo_loss":
