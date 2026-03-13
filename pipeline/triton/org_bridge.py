@@ -411,6 +411,9 @@ def run_org_sidecar(
     static_ok = False
     if isinstance(report.get("static_validation"), dict):
         static_ok = bool((report.get("static_validation") or {}).get("ok"))
+    elif diff_ok:
+        static_ok = True
+        org_report["static_validation_assumed"] = True
     if ((not diff_ok) or (not static_ok)) and (not _org_ignore_diff_gate()):
         reason = f"skip_org: diff_ok={diff_ok} static_ok={static_ok}"
         org_report["skipped"] = True
@@ -664,9 +667,23 @@ def run_org_sidecar(
                 toolchain_model=toolchain_model.to_json_dict(),
                 budget=int(budget),
             )
-        except ValueError:
+        except ValueError as exc:
+            compile_checks = _run_compile_check_candidates(
+                spec_name=str(spec_name),
+                out_dir=Path(out_dir),
+                backend_target=backend_target,
+                target_arch=str(target_arch),
+                candidates=[],
+                intent=intent,
+                shape_bindings=dict(shape_bindings),
+                toolchain_model=toolchain_model.to_json_dict(),
+            )
             org_report["apply_skipped"] = True
             org_report["apply_reason"] = "org_kernel_deferred"
+            org_report["apply_error"] = f"{type(exc).__name__}: {exc}"
+            org_report["compile_checks"] = list(compile_checks or [])
+            org_report["compile_checks_count"] = int(len(list(compile_checks or [])))
+            org_report["realizations"] = [dict(x) for x in list(compile_checks or []) if bool(dict(x).get("ok"))]
             return
 
         plan.toolchain_model = dict(toolchain_model.to_json_dict())

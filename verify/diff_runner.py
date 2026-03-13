@@ -749,6 +749,7 @@ def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
     c_dim = _binding_int(bindings, "C")
     if hc is not None and c_dim is not None:
         bindings.setdefault("HC_C", hc * c_dim)
+        bindings.setdefault("K", hc * c_dim)
     if hc is not None and "M" not in bindings:
         bindings["M"] = hc * hc + 2 * hc
     t_dim = _binding_int(bindings, "T")

@@ -1276,8 +1276,47 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             axis_i = int(axis)
             data_a = np.asarray(data)
             idx = np.asarray(idxs[0], dtype=np.int64)
+            batch_dims = int(op.attrs.get("batch_dims", 0) or 0)
             if data_a.ndim == 1 and axis_i == 0:
                 return np.take(data_a, idx, axis=0)
+            if batch_dims > 0:
+                if idx.ndim < batch_dims or data_a.ndim < batch_dims:
+                    raise ValueError(
+                        f"axis-based gather batch_dims out of range: data rank={data_a.ndim} indices rank={idx.ndim} batch_dims={batch_dims}"
+                    )
+                if tuple(int(x) for x in idx.shape[:batch_dims]) != tuple(int(x) for x in data_a.shape[:batch_dims]):
+                    raise ValueError(
+                        "axis-based gather batch prefix mismatch: "
+                        f"data[:{batch_dims}]={data_a.shape[:batch_dims]} indices[:{batch_dims}]={idx.shape[:batch_dims]}"
+                    )
+                if axis_i < batch_dims:
+                    raise ValueError(
+                        f"axis-based gather axis must be >= batch_dims, got axis={axis_i} batch_dims={batch_dims}"
+                    )
+                batch_shape = tuple(int(x) for x in data_a.shape[:batch_dims])
+                prefix = int(np.prod(batch_shape, dtype=np.int64)) if batch_shape else 1
+                tail_data = tuple(int(x) for x in data_a.shape[batch_dims:])
+                tail_idx = tuple(int(x) for x in idx.shape[batch_dims:])
+                data_flat = np.reshape(data_a, (prefix, *tail_data))
+                idx_flat = np.reshape(idx, (prefix, *tail_idx))
+                axis_tail = axis_i - batch_dims
+                out_chunks = []
+                for p in range(prefix):
+                    data_slice = np.asarray(data_flat[p])
+                    idx_slice = np.asarray(idx_flat[p], dtype=np.int64)
+                    if idx_slice.ndim == data_slice.ndim - 1:
+                        idx_slice = np.expand_dims(idx_slice, axis=axis_tail)
+                    if idx_slice.ndim != data_slice.ndim:
+                        raise ValueError(
+                            "axis-based gather batch slice rank mismatch: "
+                            f"data rank={data_slice.ndim} indices rank={idx_slice.ndim}"
+                        )
+                    gathered = np.take_along_axis(data_slice, idx_slice, axis=axis_tail)
+                    squeeze_result = bool(op.attrs.get("squeeze", False))
+                    if squeeze_result or int(gathered.shape[axis_tail]) == 1:
+                        gathered = np.squeeze(gathered, axis=axis_tail)
+                    out_chunks.append(gathered)
+                return np.reshape(np.stack(out_chunks, axis=0), (*batch_shape, *np.asarray(out_chunks[0]).shape))
             if idx.ndim == data_a.ndim - 1:
                 idx = np.expand_dims(idx, axis=axis_i)
             if idx.ndim != data_a.ndim:

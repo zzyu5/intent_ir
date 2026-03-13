@@ -3898,7 +3898,11 @@ def run_pipeline_for_spec(
         "source_mode": str(source_mode),
         "cache_path": str(seed_path),
     }
-    llm_repair_allowed = bool(should_try_llm and not cache_used)
+    llm_repair_allowed = bool(
+        should_try_llm
+        and not cache_used
+        and not bool((report.get("llm_fallback") or {}).get("used"))
+    )
 
     # 4) Static validation (Intent vs certificate), if TTIR certificate exists.
     if cert is not None:

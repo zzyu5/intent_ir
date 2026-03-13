@@ -764,6 +764,170 @@ def _poly_norm_repair_json(descriptor: KernelDescriptor, *, input_shape: tuple[i
     }
 
 
+def _tiled_mlp_repair_json(
+    descriptor: KernelDescriptor,
+    *,
+    b_dim: int,
+    s_dim: int,
+    h_dim: int,
+    i_dim: int,
+) -> dict[str, Any]:
+    return {
+        "name": descriptor.name,
+        "kernel_type": descriptor.name,
+        "tensors": {
+            "X": {"dtype": "f32", "shape": _shape_entry("B", "S", "H"), "layout": "row_major"},
+            "GateW": {"dtype": "f32", "shape": _shape_entry("H", "I"), "layout": "row_major"},
+            "UpW": {"dtype": "f32", "shape": _shape_entry("H", "I"), "layout": "row_major"},
+            "DownW": {"dtype": "f32", "shape": _shape_entry("I", "H"), "layout": "row_major"},
+            "gate": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "gate_sq": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "gate_cube": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "c_044715": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "scaled_cube": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "gate_sum": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "c_sqrt2pi": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "tanh_input": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "tanh_out": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "c_1": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "gelu_factor": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "c_05": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "gate_mul": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "up": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "gelu_gate": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "gated": {"dtype": "f32", "shape": _shape_entry("B", "S", "I"), "layout": "row_major"},
+            "Y": {"dtype": "f32", "shape": _shape_entry("B", "S", "H"), "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "matmul", "inputs": ["X", "GateW"], "output": "gate"},
+            {"op": "mul", "inputs": ["gate", "gate"], "output": "gate_sq"},
+            {"op": "mul", "inputs": ["gate_sq", "gate"], "output": "gate_cube"},
+            {"op": "const", "inputs": [], "output": "c_044715", "attrs": {"value": 0.044715, "dtype": "f32"}},
+            {"op": "mul", "inputs": ["gate_cube", "c_044715"], "output": "scaled_cube"},
+            {"op": "add", "inputs": ["gate", "scaled_cube"], "output": "gate_sum"},
+            {"op": "const", "inputs": [], "output": "c_sqrt2pi", "attrs": {"value": 0.7978845608, "dtype": "f32"}},
+            {"op": "mul", "inputs": ["gate_sum", "c_sqrt2pi"], "output": "tanh_input"},
+            {"op": "tanh", "inputs": ["tanh_input"], "output": "tanh_out"},
+            {"op": "const", "inputs": [], "output": "c_1", "attrs": {"value": 1.0, "dtype": "f32"}},
+            {"op": "add", "inputs": ["c_1", "tanh_out"], "output": "gelu_factor"},
+            {"op": "const", "inputs": [], "output": "c_05", "attrs": {"value": 0.5, "dtype": "f32"}},
+            {"op": "mul", "inputs": ["gate", "gelu_factor"], "output": "gate_mul"},
+            {"op": "mul", "inputs": ["gate_mul", "c_05"], "output": "gelu_gate"},
+            {"op": "matmul", "inputs": ["X", "UpW"], "output": "up"},
+            {"op": "mul", "inputs": ["gelu_gate", "up"], "output": "gated"},
+            {"op": "matmul", "inputs": ["gated", "DownW"], "output": "Y"},
+        ],
+        "outputs": ["Y"],
+        "parallel_axes": ["B", "S"],
+        "axis_roles": {"B": "batch", "S": "spatial", "H": "channel", "I": "channel"},
+        "meta": {
+            "repaired_by": "tiled_mlp_repair_v1",
+            "shape_bindings": {"B": int(b_dim), "S": int(s_dim), "H": int(h_dim), "I": int(i_dim)},
+        },
+    }
+
+
+def _multi_token_attention_repair_json(
+    descriptor: KernelDescriptor,
+    *,
+    b_dim: int,
+    cin_dim: int,
+    cout_dim: int,
+    l_dim: int,
+    k_dim: int,
+    groups: int,
+) -> dict[str, Any]:
+    cin_per_group = int(cin_dim // max(1, groups))
+    pad = int(k_dim // 2)
+    return {
+        "name": descriptor.name,
+        "kernel_type": descriptor.name,
+        "tensors": {
+            "scores": {"dtype": "f32", "shape": _shape_entry("B", "CIN", "L", "L"), "layout": "row_major"},
+            "weight": {
+                "dtype": "f32",
+                "shape": _shape_entry("COUT", "CIN_per_group", "K", "K"),
+                "layout": "row_major",
+            },
+            "bias": {"dtype": "f32", "shape": _shape_entry("COUT"), "layout": "row_major"},
+            "row_idx": {"dtype": "i32", "shape": _shape_entry("L", "L"), "layout": "row_major"},
+            "col_idx": {"dtype": "i32", "shape": _shape_entry("L", "L"), "layout": "row_major"},
+            "future_mask": {"dtype": "bool", "shape": _shape_entry("L", "L"), "layout": "row_major"},
+            "future_mask_scores": {"dtype": "bool", "shape": _shape_entry("B", "CIN", "L", "L"), "layout": "row_major"},
+            "future_mask_out": {"dtype": "bool", "shape": _shape_entry("B", "COUT", "L", "L"), "layout": "row_major"},
+            "neg_inf": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "neg_inf_bc": {"dtype": "f32", "shape": _shape_entry("B", "CIN", "L", "L"), "layout": "row_major"},
+            "zero": {"dtype": "f32", "shape": _shape_entry(), "layout": "row_major"},
+            "zero_bc": {"dtype": "f32", "shape": _shape_entry("B", "COUT", "L", "L"), "layout": "row_major"},
+            "scores_masked": {"dtype": "f32", "shape": _shape_entry("B", "CIN", "L", "L"), "layout": "row_major"},
+            "attn_weights": {"dtype": "f32", "shape": _shape_entry("B", "CIN", "L", "L"), "layout": "row_major"},
+            "out_conv": {"dtype": "f32", "shape": _shape_entry("B", "COUT", "L", "L"), "layout": "row_major"},
+            "Y": {"dtype": "f32", "shape": _shape_entry("B", "COUT", "L", "L"), "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"shape": _shape_entry("L", "L"), "axis": 0, "dtype": "i32"}},
+            {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"shape": _shape_entry("L", "L"), "axis": 1, "dtype": "i32"}},
+            {"op": "gt", "inputs": ["col_idx", "row_idx"], "output": "future_mask"},
+            {
+                "op": "broadcast_in_dim",
+                "inputs": ["future_mask"],
+                "output": "future_mask_scores",
+                "attrs": {"out_shape": _shape_entry("B", "CIN", "L", "L"), "broadcast_dims": [2, 3]},
+            },
+            {
+                "op": "broadcast_in_dim",
+                "inputs": ["future_mask"],
+                "output": "future_mask_out",
+                "attrs": {"out_shape": _shape_entry("B", "COUT", "L", "L"), "broadcast_dims": [2, 3]},
+            },
+            {"op": "const", "inputs": [], "output": "neg_inf", "attrs": {"value": -1.0e9, "dtype": "f32"}},
+            {"op": "const", "inputs": [], "output": "zero", "attrs": {"value": 0.0, "dtype": "f32"}},
+            {
+                "op": "broadcast_in_dim",
+                "inputs": ["neg_inf"],
+                "output": "neg_inf_bc",
+                "attrs": {"out_shape": _shape_entry("B", "CIN", "L", "L"), "broadcast_dims": []},
+            },
+            {
+                "op": "broadcast_in_dim",
+                "inputs": ["zero"],
+                "output": "zero_bc",
+                "attrs": {"out_shape": _shape_entry("B", "COUT", "L", "L"), "broadcast_dims": []},
+            },
+            {"op": "where", "inputs": ["future_mask_scores", "neg_inf_bc", "scores"], "output": "scores_masked"},
+            {"op": "softmax", "inputs": ["scores_masked"], "output": "attn_weights", "attrs": {"axis": 3, "dims": [3]}},
+            {
+                "op": "conv2d",
+                "inputs": ["attn_weights", "weight", "bias"],
+                "output": "out_conv",
+                "attrs": {
+                    "stride": [1, 1],
+                    "padding": [pad, pad],
+                    "dilation": [1, 1],
+                    "groups": int(groups),
+                },
+            },
+            {"op": "where", "inputs": ["future_mask_out", "zero_bc", "out_conv"], "output": "Y"},
+        ],
+        "outputs": ["Y"],
+        "parallel_axes": ["B", "COUT", "L"],
+        "axis_roles": {"B": "batch", "CIN": "channel", "COUT": "channel", "L": "spatial", "K": "kernel"},
+        "meta": {
+            "repaired_by": "multi_token_attention_repair_v1",
+            "shape_bindings": {
+                "B": int(b_dim),
+                "CIN": int(cin_dim),
+                "COUT": int(cout_dim),
+                "CIN_per_group": int(cin_per_group),
+                "K": int(k_dim),
+                "L": int(l_dim),
+                "L_out": int(l_dim),
+                "groups": int(groups),
+            },
+        },
+    }
+
+
 def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[CandidateIntent | None, list[str]]:
     """
     Build a deterministic frontend candidate directly from descriptor evidence
@@ -791,6 +955,12 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
             {"X_ptr", "W_ptr", "B_ptr", "Y_ptr"} <= arg_names
             and "RSTD_ptr" in arg_names
         )
+    )
+    has_tiled_mlp_signature = ("apply_tiled_mlp" in source_text) or ("LigerTiledGEGLUMLP" in source_text)
+    has_multi_token_attention_signature = (
+        "liger_multi_token_attention" in source_text
+        or "multi_token_attention" in source_text
+        or "_mask_fwd_kernel" in source_text
     )
     fused_linear_ce_shapes = (
         len(tuple(shapes.get("input", ()))) == 2
@@ -928,6 +1098,47 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
             "B": tuple(),
             "Y": (int(canonical_shapes["M"]), int(canonical_shapes["N"])),
         }
+    if (not shapes) and has_tiled_mlp_signature and {"B", "S", "H", "I"} <= set(canonical_shapes):
+        shapes = {
+            "X": (
+                int(canonical_shapes["B"]),
+                int(canonical_shapes["S"]),
+                int(canonical_shapes["H"]),
+            ),
+            "GateW": (int(canonical_shapes["H"]), int(canonical_shapes["I"])),
+            "UpW": (int(canonical_shapes["H"]), int(canonical_shapes["I"])),
+            "DownW": (int(canonical_shapes["I"]), int(canonical_shapes["H"])),
+            "Y": (
+                int(canonical_shapes["B"]),
+                int(canonical_shapes["S"]),
+                int(canonical_shapes["H"]),
+            ),
+        }
+    if (not shapes) and has_multi_token_attention_signature and {"B", "CIN", "COUT", "L", "K"} <= set(canonical_shapes):
+        groups = int(canonical_shapes.get("groups", 1))
+        cin = int(canonical_shapes["CIN"])
+        shapes = {
+            "scores": (
+                int(canonical_shapes["B"]),
+                cin,
+                int(canonical_shapes["L"]),
+                int(canonical_shapes["L"]),
+            ),
+            "weight": (
+                int(canonical_shapes["COUT"]),
+                max(1, cin // max(1, groups)),
+                int(canonical_shapes["K"]),
+                int(canonical_shapes["K"]),
+            ),
+            "bias": (int(canonical_shapes["COUT"]),),
+            "Y": (
+                int(canonical_shapes["B"]),
+                int(canonical_shapes["COUT"]),
+                int(canonical_shapes["L"]),
+                int(canonical_shapes["L"]),
+            ),
+            "groups": tuple(),
+        }
     q_shape = tuple(shapes.get("q", ()))
     k_shape = tuple(shapes.get("k", ()))
     cos_shape = tuple(shapes.get("cos", ()))
@@ -976,6 +1187,15 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
     poly_weight_shape = tuple(shapes.get("W", shapes.get("weight", ())))
     poly_bias_shape = tuple(shapes.get("B", shapes.get("bias", ())))
     poly_output_shape = tuple(shapes.get("Y", ()))
+    tiled_x_shape = tuple(shapes.get("X", ()))
+    tiled_gatew_shape = tuple(shapes.get("GateW", ()))
+    tiled_upw_shape = tuple(shapes.get("UpW", ()))
+    tiled_downw_shape = tuple(shapes.get("DownW", ()))
+    tiled_y_shape = tuple(shapes.get("Y", ()))
+    mta_scores_shape = tuple(shapes.get("scores", ()))
+    mta_weight_shape = tuple(shapes.get("weight", ()))
+    mta_bias_shape = tuple(shapes.get("bias", ()))
+    mta_y_shape = tuple(shapes.get("Y", ()))
     if fused_linear_ce_shapes:
         repaired = parse_candidate_json(
             _fused_linear_cross_entropy_repair_json(
@@ -1031,6 +1251,40 @@ def prefill_candidate_for_descriptor(descriptor: KernelDescriptor) -> tuple[Cand
             )
         )
         repairs.append("poly_rms_resident_repair_v1")
+        return repaired, repairs
+    if (
+        len(tiled_x_shape) == 3
+        and tiled_gatew_shape == (int(tiled_x_shape[2]), int(canonical_shapes.get("I", tiled_gatew_shape[1] if len(tiled_gatew_shape) == 2 else 0)))
+        and tiled_upw_shape == tiled_gatew_shape
+        and len(tiled_downw_shape) == 2
+        and len(tiled_y_shape) == 3
+        and tiled_y_shape[-1] == tiled_x_shape[-1]
+    ):
+        repaired = parse_candidate_json(
+            _tiled_mlp_repair_json(
+                descriptor,
+                b_dim=int(tiled_x_shape[0]),
+                s_dim=int(tiled_x_shape[1]),
+                h_dim=int(tiled_x_shape[2]),
+                i_dim=int(tiled_gatew_shape[1]),
+            )
+        )
+        repairs.append("tiled_mlp_repair_v1")
+        return repaired, repairs
+    if len(mta_scores_shape) == 4 and len(mta_weight_shape) == 4 and len(mta_bias_shape) == 1 and len(mta_y_shape) == 4:
+        groups = max(1, int(mta_scores_shape[1] // max(1, mta_weight_shape[1])))
+        repaired = parse_candidate_json(
+            _multi_token_attention_repair_json(
+                descriptor,
+                b_dim=int(mta_scores_shape[0]),
+                cin_dim=int(mta_scores_shape[1]),
+                cout_dim=int(mta_weight_shape[0]),
+                l_dim=int(mta_scores_shape[2]),
+                k_dim=int(mta_weight_shape[2]),
+                groups=int(groups),
+            )
+        )
+        repairs.append("multi_token_attention_repair_v1")
         return repaired, repairs
 
     return None, repairs

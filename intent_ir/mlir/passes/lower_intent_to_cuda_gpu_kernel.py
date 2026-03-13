@@ -3506,9 +3506,11 @@ def lower_intent_to_cuda_gpu_kernel(
     matmul_v1: dict[str, Any] | None = None
     matvec_v1: dict[str, Any] | None = None
     mlp2d_v1: dict[str, Any] | None = None
+    tiled_mlp_v1: dict[str, Any] | None = None
     attn2d_v1: dict[str, Any] | None = None
     attn_fwd_v1: dict[str, Any] | None = None
     sdpa_bhsd_v1: dict[str, Any] | None = None
+    multi_token_attention_v1: dict[str, Any] | None = None
     conv1d_ncl_v1: dict[str, Any] | None = None
     conv2d_nchw_v1: dict[str, Any] | None = None
     conv3d_ncdhw_v1: dict[str, Any] | None = None
@@ -3520,6 +3522,34 @@ def lower_intent_to_cuda_gpu_kernel(
     cumsum2d_v1: dict[str, Any] | None = None
     normed_cumsum2d_v1: dict[str, Any] | None = None
     cummax1d_v1: dict[str, Any] | None = None
+
+    def _pattern_op_inputs(op: Any) -> list[str]:
+        return [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+
+    def _pattern_op_out(op: Any) -> str:
+        return str(getattr(op, "output", "") or "").strip()
+
+    def _pattern_op_name(op: Any) -> str:
+        return str(getattr(op, "op", "") or "").strip()
+
+    def _pattern_dims(name: str) -> list[int] | None:
+        spec = arg_specs.get(str(name))
+        if isinstance(spec, dict):
+            dims = list(spec.get("dims") or [])
+            return [int(x) for x in dims] if dims else []
+        tt = (intent.tensors or {}).get(str(name))
+        if tt is None:
+            return None
+        resolved: list[int] = []
+        for dim in list(getattr(tt, "shape", []) or []):
+            iv = _resolve_dim_int(dim, bindings)
+            if iv is None or iv <= 0:
+                return None
+            resolved.append(int(iv))
+        return resolved
+
+    def _pattern_elem(name: str) -> str:
+        return str((arg_specs.get(str(name)) or {}).get("memref_elem_ty") or "").strip()
 
     if out_rank == 2 and out_m is not None and out_n is not None:
         op_name_counts = tuple(str(getattr(op, "op", "")).strip() for op in list(intent.ops or []))
@@ -7914,6 +7944,212 @@ def lower_intent_to_cuda_gpu_kernel(
                             "reduce_n": int(out_n),
                         }
 
+    if tiled_mlp_v1 is None and out_rank == 3:
+        ops = list(intent.ops or [])
+        op_names = tuple(_pattern_op_name(op) for op in ops)
+        tiled_geglu_pattern_v0 = (
+            "matmul",
+            "matmul",
+            "mul",
+            "mul",
+            "const",
+            "mul",
+            "add",
+            "const",
+            "mul",
+            "exp",
+            "const",
+            "mul",
+            "exp",
+            "sub",
+            "add",
+            "div",
+            "const",
+            "add",
+            "const",
+            "mul",
+            "mul",
+            "mul",
+            "matmul",
+        )
+        tiled_geglu_pattern_v1 = (
+            "matmul",
+            "mul",
+            "mul",
+            "const",
+            "mul",
+            "add",
+            "const",
+            "mul",
+            "tanh",
+            "const",
+            "add",
+            "const",
+            "mul",
+            "mul",
+            "matmul",
+            "mul",
+            "matmul",
+        )
+        if op_names in {tiled_geglu_pattern_v0, tiled_geglu_pattern_v1}:
+            if op_names == tiled_geglu_pattern_v0:
+                x_name = "x"
+                gate_w_name = "gate_weight"
+                up_w_name = "up_weight"
+                down_w_name = "down_weight"
+            else:
+                x_name = str(_pattern_op_inputs(ops[0])[0]) if len(ops) > 0 and _pattern_op_inputs(ops[0]) else ""
+                gate_w_name = str(_pattern_op_inputs(ops[0])[1]) if len(ops) > 0 and len(_pattern_op_inputs(ops[0])) >= 2 else ""
+                up_w_name = str(_pattern_op_inputs(ops[14])[1]) if len(ops) > 14 and len(_pattern_op_inputs(ops[14])) >= 2 else ""
+                down_w_name = str(_pattern_op_inputs(ops[16])[1]) if len(ops) > 16 and len(_pattern_op_inputs(ops[16])) >= 2 else ""
+            out_dims = _pattern_dims(str(out_name))
+            x_dims = _pattern_dims(x_name)
+            gate_w_dims = _pattern_dims(gate_w_name)
+            up_w_dims = _pattern_dims(up_w_name)
+            down_w_dims = _pattern_dims(down_w_name)
+            if (
+                x_name
+                and gate_w_name
+                and up_w_name
+                and down_w_name
+                and out_dims
+                and x_dims
+                and gate_w_dims
+                and up_w_dims
+                and down_w_dims
+                and len(out_dims) == 3
+                and len(x_dims) == 3
+                and len(gate_w_dims) == 2
+                and len(up_w_dims) == 2
+                and len(down_w_dims) == 2
+            ):
+                b_dim, s_dim, h_dim = (int(out_dims[0]), int(out_dims[1]), int(out_dims[2]))
+                xb, xs, xh = (int(x_dims[0]), int(x_dims[1]), int(x_dims[2]))
+                gh, i_dim = (int(gate_w_dims[0]), int(gate_w_dims[1]))
+                uh, ui_dim = (int(up_w_dims[0]), int(up_w_dims[1]))
+                di, dh = (int(down_w_dims[0]), int(down_w_dims[1]))
+                if (
+                    xb == b_dim
+                    and xs == s_dim
+                    and xh == h_dim
+                    and gh == h_dim
+                    and uh == h_dim
+                    and ui_dim == i_dim
+                    and di == i_dim
+                    and dh == h_dim
+                    and _pattern_elem(x_name) == "f32"
+                    and _pattern_elem(gate_w_name) == "f32"
+                    and _pattern_elem(up_w_name) == "f32"
+                    and _pattern_elem(down_w_name) == "f32"
+                    and _pattern_elem(str(out_name)) == "f32"
+                ):
+                    tiled_mlp_v1 = {
+                        "x": x_name,
+                        "gate_weight": gate_w_name,
+                        "up_weight": up_w_name,
+                        "down_weight": down_w_name,
+                        "out": str(out_name),
+                        "B": int(b_dim),
+                        "S": int(s_dim),
+                        "H": int(h_dim),
+                        "I": int(i_dim),
+                    }
+
+    if multi_token_attention_v1 is None and out_rank == 4:
+        ops = list(intent.ops or [])
+        op_names = tuple(_pattern_op_name(op) for op in ops)
+        masked_attn_conv_pattern = (
+            "iota",
+            "iota",
+            "gt",
+            "const",
+            "const",
+            "where",
+            "reduce_max",
+            "sub",
+            "exp",
+            "reduce_sum",
+            "div",
+            "conv2d",
+            "where",
+        )
+        if op_names == masked_attn_conv_pattern:
+            where_scores = ops[5] if len(ops) > 5 else None
+            conv_op = ops[11] if len(ops) > 11 else None
+            where_out = ops[12] if len(ops) > 12 else None
+            scores_name = str(_pattern_op_inputs(where_scores)[2]) if where_scores is not None and len(_pattern_op_inputs(where_scores)) >= 3 else ""
+            mask_name = str(_pattern_op_inputs(where_scores)[0]) if where_scores is not None and len(_pattern_op_inputs(where_scores)) >= 1 else ""
+            weight_name = str(_pattern_op_inputs(conv_op)[1]) if conv_op is not None and len(_pattern_op_inputs(conv_op)) >= 2 else ""
+            bias_name = str(_pattern_op_inputs(conv_op)[2]) if conv_op is not None and len(_pattern_op_inputs(conv_op)) >= 3 else ""
+            mask_out_name = str(_pattern_op_inputs(where_out)[0]) if where_out is not None and len(_pattern_op_inputs(where_out)) >= 1 else ""
+            scores_dims = _pattern_dims(scores_name)
+            mask_valid_dims = _pattern_dims(mask_name)
+            weight_dims = _pattern_dims(weight_name)
+            bias_dims = _pattern_dims(bias_name)
+            mask_out_dims = _pattern_dims(mask_out_name)
+            out_dims = _pattern_dims(str(out_name))
+            conv_attrs = dict(getattr(conv_op, "attrs", {}) or {}) if conv_op is not None else {}
+            if (
+                scores_name
+                and mask_name
+                and weight_name
+                and bias_name
+                and mask_out_name
+                and scores_dims
+                and mask_valid_dims
+                and weight_dims
+                and bias_dims
+                and mask_out_dims
+                and out_dims
+                and len(scores_dims) == 4
+                and len(mask_valid_dims) in {2, 4}
+                and len(weight_dims) == 4
+                and len(bias_dims) == 1
+                and len(mask_out_dims) in {2, 4}
+                and len(out_dims) == 4
+            ):
+                b_dim, cin_dim, l_dim0, l_dim1 = (int(scores_dims[0]), int(scores_dims[1]), int(scores_dims[2]), int(scores_dims[3]))
+                cout_dim, cpg_dim, kh_dim, kw_dim = (int(weight_dims[0]), int(weight_dims[1]), int(weight_dims[2]), int(weight_dims[3]))
+                ob, oc, oh, ow = (int(out_dims[0]), int(out_dims[1]), int(out_dims[2]), int(out_dims[3]))
+                mask_scores_ok = mask_valid_dims == [l_dim0, l_dim1] or mask_valid_dims == scores_dims
+                mask_out_ok = mask_out_dims == [l_dim0, l_dim1] or mask_out_dims == out_dims
+                if (
+                    mask_scores_ok
+                    and mask_out_ok
+                    and int(bias_dims[0]) == cout_dim
+                    and ob == b_dim
+                    and oc == cout_dim
+                    and l_dim0 == l_dim1
+                    and _pattern_elem(scores_name) == "f32"
+                    and _pattern_elem(weight_name) == "f32"
+                    and _pattern_elem(bias_name) == "f32"
+                    and _pattern_elem(str(out_name)) == "f32"
+                ):
+                    multi_token_attention_v1 = {
+                        "scores": scores_name,
+                        "mask_valid": mask_name,
+                        "weight": weight_name,
+                        "bias": bias_name,
+                        "mask_output": mask_out_name,
+                        "out": str(out_name),
+                        "B": int(b_dim),
+                        "CIN": int(cin_dim),
+                        "COUT": int(cout_dim),
+                        "L": int(l_dim0),
+                        "CIN_PER_GROUP": int(cpg_dim),
+                        "KH": int(kh_dim),
+                        "KW": int(kw_dim),
+                        "OH": int(oh),
+                        "OW": int(ow),
+                        "GROUPS": int(conv_attrs.get("groups") or 1),
+                        "SH": int((list(conv_attrs.get("stride") or [1, 1]) + [1, 1])[0]),
+                        "SW": int((list(conv_attrs.get("stride") or [1, 1]) + [1, 1])[1]),
+                        "PH": int((list(conv_attrs.get("padding") or [0, 0]) + [0, 0])[0]),
+                        "PW": int((list(conv_attrs.get("padding") or [0, 0]) + [0, 0])[1]),
+                        "DH": int((list(conv_attrs.get("dilation") or [1, 1]) + [1, 1])[0]),
+                        "DW": int((list(conv_attrs.get("dilation") or [1, 1]) + [1, 1])[1]),
+                    }
+
     # Grouped row sum (reshape+reduce): out[m, g] = sum_k inp[m, g*group_size + k]
     #
     # Intent pattern (Triton native):
@@ -10736,6 +10972,354 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          %out8 = arith.trunci %out16 : i16 to i8")
         lines.append("          %out_idx = arith.addi %src_base, %w : index")
         lines.append(f"          memref.store %out8, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
+        lines.append("        }")
+        lines.append("      }")
+    elif multi_token_attention_v1 is not None:
+        kernel_kind = "multi_token_attention_fused_v1"
+        scores_name = str(multi_token_attention_v1["scores"])
+        mask_valid_name = str(multi_token_attention_v1["mask_valid"])
+        weight_name = str(multi_token_attention_v1["weight"])
+        bias_name = str(multi_token_attention_v1["bias"])
+        mask_output_name = str(multi_token_attention_v1["mask_output"])
+        out_name2 = str(multi_token_attention_v1["out"])
+        b_dim = int(multi_token_attention_v1["B"])
+        cin_dim = int(multi_token_attention_v1["CIN"])
+        cout_dim = int(multi_token_attention_v1["COUT"])
+        l_dim = int(multi_token_attention_v1["L"])
+        cin_per_group = int(multi_token_attention_v1["CIN_PER_GROUP"])
+        kh_dim = int(multi_token_attention_v1["KH"])
+        kw_dim = int(multi_token_attention_v1["KW"])
+        oh_dim = int(multi_token_attention_v1["OH"])
+        ow_dim = int(multi_token_attention_v1["OW"])
+        groups = int(multi_token_attention_v1["GROUPS"])
+        sh = int(multi_token_attention_v1["SH"])
+        sw = int(multi_token_attention_v1["SW"])
+        ph = int(multi_token_attention_v1["PH"])
+        pw = int(multi_token_attention_v1["PW"])
+        dh = int(multi_token_attention_v1["DH"])
+        dw = int(multi_token_attention_v1["DW"])
+        if min(b_dim, cin_dim, cout_dim, l_dim, cin_per_group, kh_dim, kw_dim, oh_dim, ow_dim, groups, sh, sw, dh, dw) <= 0:
+            raise RuntimeError("multi_token_attention_fused_v1 expects positive dims")
+        if ph < 0 or pw < 0:
+            raise RuntimeError("multi_token_attention_fused_v1 expects non-negative padding")
+        if str(arg_specs[scores_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("multi_token_attention_fused_v1 expects f32 scores")
+        if str(arg_specs[weight_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("multi_token_attention_fused_v1 expects f32 weight")
+        if str(arg_specs[bias_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("multi_token_attention_fused_v1 expects f32 bias")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("multi_token_attention_fused_v1 expects f32 output")
+        mask_valid_struct = mask_valid_name not in arg_specs
+        mask_output_struct = mask_output_name not in arg_specs
+        mask_valid_elem_ty = "i1" if mask_valid_struct else str(arg_specs[mask_valid_name].get("memref_elem_ty") or "")
+        mask_output_elem_ty = "i1" if mask_output_struct else str(arg_specs[mask_output_name].get("memref_elem_ty") or "")
+        if mask_valid_elem_ty not in {"i1", "i8"}:
+            raise RuntimeError("multi_token_attention_fused_v1 expects bool-like mask_valid")
+        if mask_output_elem_ty not in {"i1", "i8"}:
+            raise RuntimeError("multi_token_attention_fused_v1 expects bool-like mask_output")
+
+        scores_memref = str(arg_specs[scores_name]["memref"])
+        mask_valid_memref = str(arg_specs[mask_valid_name]["memref"]) if not mask_valid_struct else ""
+        weight_memref = str(arg_specs[weight_name]["memref"])
+        bias_memref = str(arg_specs[bias_name]["memref"])
+        mask_output_memref = str(arg_specs[mask_output_name]["memref"]) if not mask_output_struct else ""
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        block_threads = 256
+        total_out = int(b_dim) * int(cout_dim) * int(oh_dim) * int(ow_dim)
+        grid_x = (int(total_out) + int(block_threads) - 1) // int(block_threads)
+        c_out_per_group = max(1, int(cout_dim) // int(groups))
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(max(1, grid_x)), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %tmp = arith.muli %bid, %bdim : index")
+        lines.append("      %lin = arith.addi %tmp, %tid : index")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cTotal = arith.constant {int(total_out)} : index")
+        lines.append(f"      %cB = arith.constant {int(b_dim)} : index")
+        lines.append(f"      %cCIN = arith.constant {int(cin_dim)} : index")
+        lines.append(f"      %cCOUT = arith.constant {int(cout_dim)} : index")
+        lines.append(f"      %cL = arith.constant {int(l_dim)} : index")
+        lines.append(f"      %cCPG = arith.constant {int(cin_per_group)} : index")
+        lines.append(f"      %cKH = arith.constant {int(kh_dim)} : index")
+        lines.append(f"      %cKW = arith.constant {int(kw_dim)} : index")
+        lines.append(f"      %cOH = arith.constant {int(oh_dim)} : index")
+        lines.append(f"      %cOW = arith.constant {int(ow_dim)} : index")
+        lines.append(f"      %cCOG = arith.constant {int(c_out_per_group)} : index")
+        lines.append(f"      %cSH = arith.constant {int(sh)} : index")
+        lines.append(f"      %cSW = arith.constant {int(sw)} : index")
+        lines.append(f"      %cPH = arith.constant {int(ph)} : index")
+        lines.append(f"      %cPW = arith.constant {int(pw)} : index")
+        lines.append(f"      %cDH = arith.constant {int(dh)} : index")
+        lines.append(f"      %cDW = arith.constant {int(dw)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %ceps = arith.constant 1.17549435E-38 : f32")
+        lines.append("      %neg_inf = arith.constant -3.40282347E+38 : f32")
+        lines.append("      %pred = arith.cmpi ult, %lin, %cTotal : index")
+        lines.append("      scf.if %pred {")
+        lines.append("        %t0 = arith.divui %lin, %cOW : index")
+        lines.append("        %ow = arith.remui %lin, %cOW : index")
+        lines.append("        %t1 = arith.divui %t0, %cOH : index")
+        lines.append("        %oh = arith.remui %t0, %cOH : index")
+        lines.append("        %t2 = arith.divui %t1, %cCOUT : index")
+        lines.append("        %co = arith.remui %t1, %cCOUT : index")
+        lines.append("        %b = arith.remui %t2, %cB : index")
+        lines.append("        %group = arith.divui %co, %cCOG : index")
+        lines.append("        %cin_group_base = arith.muli %group, %cCPG : index")
+        lines.append(f"        %bias_val = memref.load {arg_ssa[bias_name]}[%co] : {bias_memref}")
+        lines.append("        %acc = scf.for %cin_local = %c0 to %cCPG step %c1 iter_args(%sum0 = %bias_val) -> (f32) {")
+        lines.append("          %cin = arith.addi %cin_group_base, %cin_local : index")
+        lines.append("          %sum1 = scf.for %kh = %c0 to %cKH step %c1 iter_args(%sum1_acc = %sum0) -> (f32) {")
+        lines.append("            %sum2 = scf.for %kw = %c0 to %cKW step %c1 iter_args(%sum2_acc = %sum1_acc) -> (f32) {")
+        lines.append("              %oh_mul = arith.muli %oh, %cSH : index")
+        lines.append("              %kh_mul = arith.muli %kh, %cDH : index")
+        lines.append("              %ih_pre = arith.addi %oh_mul, %kh_mul : index")
+        lines.append("              %ih = arith.subi %ih_pre, %cPH : index")
+        lines.append("              %ow_mul = arith.muli %ow, %cSW : index")
+        lines.append("              %kw_mul = arith.muli %kw, %cDW : index")
+        lines.append("              %iw_pre = arith.addi %ow_mul, %kw_mul : index")
+        lines.append("              %iw = arith.subi %iw_pre, %cPW : index")
+        lines.append("              %ih_ge0 = arith.cmpi sge, %ih, %c0 : index")
+        lines.append("              %iw_ge0 = arith.cmpi sge, %iw, %c0 : index")
+        lines.append("              %ih_lt = arith.cmpi slt, %ih, %cL : index")
+        lines.append("              %iw_lt = arith.cmpi slt, %iw, %cL : index")
+        lines.append("              %ok_h = arith.andi %ih_ge0, %ih_lt : i1")
+        lines.append("              %ok_w = arith.andi %iw_ge0, %iw_lt : i1")
+        lines.append("              %in_bounds = arith.andi %ok_h, %ok_w : i1")
+        lines.append("              %sum2_next = scf.if %in_bounds -> (f32) {")
+        lines.append("                %b_cin = arith.muli %b, %cCIN : index")
+        lines.append("                %bcin = arith.addi %b_cin, %cin : index")
+        lines.append("                %bcin_l = arith.muli %bcin, %cL : index")
+        lines.append("                %row_base0 = arith.addi %bcin_l, %ih : index")
+        lines.append("                %row_base = arith.muli %row_base0, %cL : index")
+        lines.append("                %row_max = scf.for %j = %c0 to %cL step %c1 iter_args(%mx = %neg_inf) -> (f32) {")
+        lines.append("                  %row_idx = arith.addi %row_base, %j : index")
+        if mask_valid_struct:
+            lines.append("                  %mask_i1 = arith.cmpi sle, %j, %ih : index")
+        elif mask_valid_elem_ty == "i8":
+            lines.append(f"                  %mask_raw = memref.load {arg_ssa[mask_valid_name]}[%row_idx] : {mask_valid_memref}")
+            lines.append("                  %c0i8 = arith.constant 0 : i8")
+            lines.append("                  %mask_i1 = arith.cmpi ne, %mask_raw, %c0i8 : i8")
+        else:
+            lines.append(f"                  %mask_i1 = memref.load {arg_ssa[mask_valid_name]}[%row_idx] : {mask_valid_memref}")
+        lines.append(f"                  %score_raw = memref.load {arg_ssa[scores_name]}[%row_idx] : {scores_memref}")
+        lines.append("                  %score = arith.select %mask_i1, %score_raw, %neg_inf : f32")
+        lines.append(f"                  %mx_next = arith.maximumf %mx, %score{fm} : f32")
+        lines.append("                  scf.yield %mx_next : f32")
+        lines.append("                }")
+        lines.append("                %row_sum = scf.for %j2 = %c0 to %cL step %c1 iter_args(%sv = %c0f) -> (f32) {")
+        lines.append("                  %row_idx2 = arith.addi %row_base, %j2 : index")
+        if mask_valid_struct:
+            lines.append("                  %mask_i1_2 = arith.cmpi sle, %j2, %ih : index")
+        elif mask_valid_elem_ty == "i8":
+            lines.append(f"                  %mask_raw2 = memref.load {arg_ssa[mask_valid_name]}[%row_idx2] : {mask_valid_memref}")
+            lines.append("                  %c0i8_2 = arith.constant 0 : i8")
+            lines.append("                  %mask_i1_2 = arith.cmpi ne, %mask_raw2, %c0i8_2 : i8")
+        else:
+            lines.append(f"                  %mask_i1_2 = memref.load {arg_ssa[mask_valid_name]}[%row_idx2] : {mask_valid_memref}")
+        lines.append(f"                  %score_raw2 = memref.load {arg_ssa[scores_name]}[%row_idx2] : {scores_memref}")
+        lines.append("                  %score2 = arith.select %mask_i1_2, %score_raw2, %neg_inf : f32")
+        lines.append(f"                  %centered = arith.subf %score2, %row_max{fm} : f32")
+        lines.append("                  %ev = scf.if %mask_i1_2 -> (f32) {")
+        lines.append(f"                    %e = math.exp %centered{fm} : f32")
+        lines.append("                    scf.yield %e : f32")
+        lines.append("                  } else {")
+        lines.append("                    scf.yield %c0f : f32")
+        lines.append("                  }")
+        lines.append(f"                  %sv_next = arith.addf %sv, %ev{fm} : f32")
+        lines.append("                  scf.yield %sv_next : f32")
+        lines.append("                }")
+        lines.append("                %pick_idx = arith.addi %row_base, %iw : index")
+        if mask_valid_struct:
+            lines.append("                %pick_mask = arith.cmpi sle, %iw, %ih : index")
+        elif mask_valid_elem_ty == "i8":
+            lines.append(f"                %pick_mask_raw = memref.load {arg_ssa[mask_valid_name]}[%pick_idx] : {mask_valid_memref}")
+            lines.append("                %c0i8_3 = arith.constant 0 : i8")
+            lines.append("                %pick_mask = arith.cmpi ne, %pick_mask_raw, %c0i8_3 : i8")
+        else:
+            lines.append(f"                %pick_mask = memref.load {arg_ssa[mask_valid_name]}[%pick_idx] : {mask_valid_memref}")
+        lines.append(f"                %pick_score_raw = memref.load {arg_ssa[scores_name]}[%pick_idx] : {scores_memref}")
+        lines.append("                %pick_score = arith.select %pick_mask, %pick_score_raw, %neg_inf : f32")
+        lines.append(f"                %pick_centered = arith.subf %pick_score, %row_max{fm} : f32")
+        lines.append("                %pick_exp = scf.if %pick_mask -> (f32) {")
+        lines.append(f"                  %e2 = math.exp %pick_centered{fm} : f32")
+        lines.append("                  scf.yield %e2 : f32")
+        lines.append("                } else {")
+        lines.append("                  scf.yield %c0f : f32")
+        lines.append("                }")
+        lines.append(f"                %row_sum_safe = arith.maximumf %row_sum, %ceps{fm} : f32")
+        lines.append(f"                %prob = arith.divf %pick_exp, %row_sum_safe{fm} : f32")
+        lines.append("                %co_mul = arith.muli %co, %cCPG : index")
+        lines.append("                %w0 = arith.addi %co_mul, %cin_local : index")
+        lines.append("                %w1 = arith.muli %w0, %cKH : index")
+        lines.append("                %w2 = arith.addi %w1, %kh : index")
+        lines.append("                %w3 = arith.muli %w2, %cKW : index")
+        lines.append("                %widx = arith.addi %w3, %kw : index")
+        lines.append(f"                %wval = memref.load {arg_ssa[weight_name]}[%widx] : {weight_memref}")
+        lines.append(f"                %prod = arith.mulf %prob, %wval{fm} : f32")
+        lines.append(f"                %sum_next = arith.addf %sum2_acc, %prod{fm} : f32")
+        lines.append("                scf.yield %sum_next : f32")
+        lines.append("              } else {")
+        lines.append("                scf.yield %sum2_acc : f32")
+        lines.append("              }")
+        lines.append("              scf.yield %sum2_next : f32")
+        lines.append("            }")
+        lines.append("            scf.yield %sum2 : f32")
+        lines.append("          }")
+        lines.append("          scf.yield %sum1 : f32")
+        lines.append("        }")
+        if mask_output_struct:
+            lines.append("        %mask_out = arith.cmpi sle, %ow, %oh : index")
+        elif mask_output_elem_ty == "i8":
+            lines.append("        %mask_out_raw = memref.load " + f"{arg_ssa[mask_output_name]}[%lin] : {mask_output_memref}")
+            lines.append("        %c0i8_out = arith.constant 0 : i8")
+            lines.append("        %mask_out = arith.cmpi ne, %mask_out_raw, %c0i8_out : i8")
+        else:
+            lines.append("        %mask_out = memref.load " + f"{arg_ssa[mask_output_name]}[%lin] : {mask_output_memref}")
+        lines.append("        %final = arith.select %mask_out, %acc, %c0f : f32")
+        lines.append(f"        memref.store %final, {arg_ssa[out_name2]}[%lin] : {out_memref}")
+        lines.append("      }")
+    elif tiled_mlp_v1 is not None:
+        kernel_kind = "tiled_mlp_row_fused_v1"
+        x_name = str(tiled_mlp_v1["x"])
+        gate_w_name = str(tiled_mlp_v1["gate_weight"])
+        up_w_name = str(tiled_mlp_v1["up_weight"])
+        down_w_name = str(tiled_mlp_v1["down_weight"])
+        out_name2 = str(tiled_mlp_v1["out"])
+        b_dim = int(tiled_mlp_v1["B"])
+        s_dim = int(tiled_mlp_v1["S"])
+        h_dim = int(tiled_mlp_v1["H"])
+        i_dim = int(tiled_mlp_v1["I"])
+        if min(b_dim, s_dim, h_dim, i_dim) <= 0:
+            raise RuntimeError("tiled_mlp_row_fused_v1 expects positive dims")
+        if str(arg_specs[x_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("tiled_mlp_row_fused_v1 expects f32 x")
+        if str(arg_specs[gate_w_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("tiled_mlp_row_fused_v1 expects f32 gate_weight")
+        if str(arg_specs[up_w_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("tiled_mlp_row_fused_v1 expects f32 up_weight")
+        if str(arg_specs[down_w_name].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("tiled_mlp_row_fused_v1 expects f32 down_weight")
+        if str(arg_specs[out_name2].get("memref_elem_ty")) != "f32":
+            raise RuntimeError("tiled_mlp_row_fused_v1 expects f32 output")
+
+        x_memref = str(arg_specs[x_name]["memref"])
+        gate_w_memref = str(arg_specs[gate_w_name]["memref"])
+        up_w_memref = str(arg_specs[up_w_name]["memref"])
+        down_w_memref = str(arg_specs[down_w_name]["memref"])
+        out_memref = str(arg_specs[out_name2]["memref"])
+
+        row_count = int(b_dim) * int(s_dim)
+        block_threads = 256
+        hidden_chunk = 32
+        out_offset = int(h_dim + hidden_chunk)
+        sh_elems = int(h_dim + hidden_chunk + h_dim)
+        shared_global_sym = f"__intentir_sh_tmlp_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(row_count), 1, 1]}
+
+        lines.append("      %tid = gpu.thread_id x")
+        lines.append("      %bid = gpu.block_id x")
+        lines.append("      %bdim = gpu.block_dim x")
+        lines.append("      %c0 = arith.constant 0 : index")
+        lines.append("      %c1 = arith.constant 1 : index")
+        lines.append(f"      %cRows = arith.constant {int(row_count)} : index")
+        lines.append(f"      %cH = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cI = arith.constant {int(i_dim)} : index")
+        lines.append(f"      %cHC = arith.constant {int(hidden_chunk)} : index")
+        lines.append(f"      %cGOff = arith.constant {int(h_dim)} : index")
+        lines.append(f"      %cOOff = arith.constant {int(out_offset)} : index")
+        lines.append("      %c0f = arith.constant 0.0 : f32")
+        lines.append("      %pred_row = arith.cmpi ult, %bid, %cRows : index")
+        lines.append("      scf.if %pred_row {")
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        %row_base_h = arith.muli %bid, %cH : index")
+        lines.append("        scf.for %j = %tid to %cH step %bdim {")
+        lines.append("          %x_idx = arith.addi %row_base_h, %j : index")
+        lines.append(f"          %xv = memref.load {arg_ssa[x_name]}[%x_idx] : {x_memref}")
+        lines.append(f"          memref.store %xv, %sh[%j] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        scf.for %j0 = %tid to %cH step %bdim {")
+        lines.append("          %o_idx0 = arith.addi %cOOff, %j0 : index")
+        lines.append(f"          memref.store %c0f, %sh[%o_idx0] : {shared_global_memref_ty}")
+        lines.append("        }")
+        lines.append("        gpu.barrier")
+        lines.append("        scf.for %h0 = %c0 to %cI step %cHC {")
+        lines.append("          %tid_in = arith.cmpi ult, %tid, %cHC : index")
+        lines.append("          scf.if %tid_in {")
+        lines.append("            %hid = arith.addi %h0, %tid : index")
+        lines.append("            %hid_ok = arith.cmpi ult, %hid, %cI : index")
+        lines.append("            %gated_v = scf.if %hid_ok -> (f32) {")
+        lines.append("              %gate_acc, %up_acc = scf.for %k = %c0 to %cH step %c1 iter_args(%g = %c0f, %u = %c0f) -> (f32, f32) {")
+        lines.append(f"                %xk = memref.load %sh[%k] : {shared_global_memref_ty}")
+        lines.append("                %gw_row = arith.muli %k, %cI : index")
+        lines.append("                %gw_idx = arith.addi %gw_row, %hid : index")
+        lines.append(f"                %gw = memref.load {arg_ssa[gate_w_name]}[%gw_idx] : {gate_w_memref}")
+        lines.append("                %uw_row = arith.muli %k, %cI : index")
+        lines.append("                %uw_idx = arith.addi %uw_row, %hid : index")
+        lines.append(f"                %uw = memref.load {arg_ssa[up_w_name]}[%uw_idx] : {up_w_memref}")
+        lines.append(f"                %gp = arith.mulf %xk, %gw{fm} : f32")
+        lines.append(f"                %up = arith.mulf %xk, %uw{fm} : f32")
+        lines.append(f"                %g_next = arith.addf %g, %gp{fm} : f32")
+        lines.append(f"                %u_next = arith.addf %u, %up{fm} : f32")
+        lines.append("                scf.yield %g_next, %u_next : f32, f32")
+        lines.append("              }")
+        lines.append("              %gate_sq = arith.mulf %gate_acc, %gate_acc : f32")
+        lines.append("              %gate_cube = arith.mulf %gate_sq, %gate_acc : f32")
+        lines.append("              %c044715 = arith.constant 4.471500e-02 : f32")
+        lines.append("              %c079788 = arith.constant 7.97884583e-01 : f32")
+        lines.append("              %c05 = arith.constant 5.000000e-01 : f32")
+        lines.append("              %c1f = arith.constant 1.0 : f32")
+        lines.append(f"              %scaled_cube = arith.mulf %c044715, %gate_cube{fm} : f32")
+        lines.append(f"              %gate_sum = arith.addf %gate_acc, %scaled_cube{fm} : f32")
+        lines.append(f"              %tanh_input = arith.mulf %c079788, %gate_sum{fm} : f32")
+        tanh_out = "%gelu_tanh"
+        lines.append(f"              {tanh_out} = math.tanh %tanh_input{fm} : f32")
+        lines.append(f"              %gelu_plus = arith.addf %c1f, {tanh_out}{fm} : f32")
+        lines.append(f"              %half_gate = arith.mulf %c05, %gate_acc{fm} : f32")
+        lines.append(f"              %gelu_gate = arith.mulf %half_gate, %gelu_plus{fm} : f32")
+        lines.append(f"              %gated = arith.mulf %gelu_gate, %up_acc{fm} : f32")
+        lines.append("              scf.yield %gated : f32")
+        lines.append("            } else {")
+        lines.append("              scf.yield %c0f : f32")
+        lines.append("            }")
+        lines.append("            %g_idx = arith.addi %cGOff, %tid : index")
+        lines.append(f"            memref.store %gated_v, %sh[%g_idx] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("          scf.for %col = %tid to %cH step %bdim {")
+        lines.append("            %o_idx = arith.addi %cOOff, %col : index")
+        lines.append(f"            %acc0 = memref.load %sh[%o_idx] : {shared_global_memref_ty}")
+        lines.append("            %acc1 = scf.for %hh = %c0 to %cHC step %c1 iter_args(%acc = %acc0) -> (f32) {")
+        lines.append("              %hid2 = arith.addi %h0, %hh : index")
+        lines.append("              %hid_ok2 = arith.cmpi ult, %hid2, %cI : index")
+        lines.append("              %acc_next = scf.if %hid_ok2 -> (f32) {")
+        lines.append("                %g_idx2 = arith.addi %cGOff, %hh : index")
+        lines.append(f"                %gval = memref.load %sh[%g_idx2] : {shared_global_memref_ty}")
+        lines.append("                %dw_row = arith.muli %hid2, %cH : index")
+        lines.append("                %dw_idx = arith.addi %dw_row, %col : index")
+        lines.append(f"                %dw = memref.load {arg_ssa[down_w_name]}[%dw_idx] : {down_w_memref}")
+        lines.append(f"                %prod = arith.mulf %gval, %dw{fm} : f32")
+        lines.append(f"                %acc2 = arith.addf %acc, %prod{fm} : f32")
+        lines.append("                scf.yield %acc2 : f32")
+        lines.append("              } else {")
+        lines.append("                scf.yield %acc : f32")
+        lines.append("              }")
+        lines.append("              scf.yield %acc_next : f32")
+        lines.append("            }")
+        lines.append(f"            memref.store %acc1, %sh[%o_idx] : {shared_global_memref_ty}")
+        lines.append("          }")
+        lines.append("          gpu.barrier")
+        lines.append("        }")
+        lines.append("        scf.for %col2 = %tid to %cH step %bdim {")
+        lines.append("          %o_idx2 = arith.addi %cOOff, %col2 : index")
+        lines.append(f"          %ov = memref.load %sh[%o_idx2] : {shared_global_memref_ty}")
+        lines.append("          %out_idx = arith.addi %row_base_h, %col2 : index")
+        lines.append(f"          memref.store %ov, {arg_ssa[out_name2]}[%out_idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")
     elif matvec_v1 is not None:
