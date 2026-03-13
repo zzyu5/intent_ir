@@ -15,6 +15,9 @@ archive/data/
 # Artifacts directory
 artifacts/
 
+# Accidental literal output directory (created when `$OUT` shell var was not expanded)
+$OUT/
+
 # External benchmark suites / large local datasets (not source-of-truth)
 experiment/
 
