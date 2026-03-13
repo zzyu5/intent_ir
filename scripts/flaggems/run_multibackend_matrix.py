@@ -983,6 +983,11 @@ def main() -> None:
 
     cuda_json = out_dir / "cuda_local.json"
     if not bool(args.skip_cuda) and not missing_provider_reports:
+        cuda_backend_target = str(args.backend_target)
+        if cuda_backend_target not in {"cuda_h100", "cuda_5090d"}:
+            # Default to the legacy H100 target when the matrix was invoked for
+            # RVV, while still allowing explicit CUDA target selection.
+            cuda_backend_target = "cuda_h100"
         cuda_compile_timeout_sec = (
             int(args.cuda_compile_timeout_sec)
             if args.cuda_compile_timeout_sec is not None
@@ -1003,7 +1008,7 @@ def main() -> None:
             "--flaggems-opset",
             str(args.flaggems_opset),
             "--backend-target",
-            "cuda_h100",
+            str(cuda_backend_target),
             "--artifact-dir",
             str(pipeline_out_dir),
             "--timeout-sec",

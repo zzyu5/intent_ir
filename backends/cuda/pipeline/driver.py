@@ -956,6 +956,30 @@ def _looks_like_explicit_launch_override(payload: object) -> bool:
     return True
 
 
+def _looks_like_structured_launch_config(payload: object) -> bool:
+    """
+    Looser than `_looks_like_explicit_launch_override`.
+
+    Treat any positive grid/block triple as structurally valid, even when the
+    grid happens to be [1,1,1]. This is important for kernels whose correct
+    launch is genuinely 1x1x1 (e.g. small-shape focus kernels) and is carried
+    via `cuda_real_mlir_launch_override`.
+    """
+
+    if not isinstance(payload, Mapping):
+        return False
+    grid = payload.get("grid")
+    block = payload.get("block")
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        return False
+    try:
+        gx, gy, gz = int(grid[0]), int(grid[1]), int(grid[2])
+        bx, by, bz = int(block[0]), int(block[1]), int(block[2])
+    except Exception:
+        return False
+    return gx > 0 and gy > 0 and gz > 0 and bx > 0 and by > 0 and bz > 0
+
+
 def _repair_pad_scalar_arg_names(
     *,
     io_spec: Mapping[str, Any],
@@ -1183,6 +1207,12 @@ def lower_cuda_contract_to_kernel(
             entry=str(exe_entry or contract.kernel_name or "intent"),
         )
         explicit_launch_override = (contract.artifacts or {}).get("cuda_real_mlir_launch_override")
+        # Real-MLIR / cpp_plugin contracts often carry a correct launch override
+        # via artifacts (including legitimate grid=[1,1,1] cases for small shapes).
+        # Do not second-guess these with 1D output-size heuristics.
+        if _looks_like_structured_launch_config(explicit_launch_override):
+            launch = dict(explicit_launch_override)
+            explicit_launch = True
         if (not explicit_launch) and (not _looks_like_explicit_launch_override(explicit_launch_override)):
             launch = _infer_launch_grid_x_from_ptx(
                 launch=launch,
